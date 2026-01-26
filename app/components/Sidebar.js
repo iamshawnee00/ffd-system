@@ -16,13 +16,15 @@ export default function Sidebar() {
     { name: 'Dashboard', path: '/' },
     { name: 'New Order', path: '/orders/new' },
     { name: 'Order List', path: '/orders/list' },
+    { name: 'Delivery / Reports', path: '/delivery' }, // <--- Added Delivery
+    { name: 'Price Trend', path: '/price-trend' },
     { name: 'Products', path: '/products' },
     { name: 'Stock Adjust', path: '/stock' },
     { name: 'Customers', path: '/customers' },
   ];
 
   return (
-    <div className="w-64 bg-gray-900 text-white min-h-screen flex flex-col fixed left-0 top-0">
+    <div className="w-64 bg-gray-900 text-white min-h-screen flex flex-col fixed left-0 top-0 h-full overflow-y-auto z-10">
       <div className="p-6 border-b border-gray-800">
         <h2 className="text-xl font-bold">FFD System</h2>
         <p className="text-xs text-gray-400 mt-1">Staff Portal</p>

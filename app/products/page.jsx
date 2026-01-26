@@ -167,10 +167,21 @@ export default function ProductManagementPage() {
     return getUOMOptions().filter(u => u !== formData.BaseUOM);
   };
 
-  const filteredProducts = products.filter(p => 
-    p.ProductName?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    p.ProductCode?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // FUZZY SEARCH LOGIC
+  const filteredProducts = products.filter(p => {
+    if (!searchTerm) return true;
+    const lowerTerm = searchTerm.toLowerCase();
+    const searchParts = lowerTerm.split(' '); // Split by space for multi-word matching
+
+    const combinedText = (
+      (p.ProductName || '') + ' ' + 
+      (p.ProductCode || '') + ' ' + 
+      (p.Category || '')
+    ).toLowerCase();
+
+    // Check if EVERY part of the search term exists in the combined text
+    return searchParts.every(part => combinedText.includes(part));
+  });
 
   if (loading) return <div className="p-10 ml-64">Loading Products...</div>;
 
@@ -194,8 +205,8 @@ export default function ProductManagementPage() {
         <div className="mb-6">
           <input 
             type="text" 
-            placeholder="Search by name or code..." 
-            className="w-full max-w-md p-3 border rounded shadow-sm"
+            placeholder="Search by name, code, or category..." 
+            className="w-full max-w-md p-3 border rounded shadow-sm focus:ring-2 focus:ring-blue-200 focus:outline-none"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
