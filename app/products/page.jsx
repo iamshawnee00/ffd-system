@@ -8,6 +8,10 @@ export default function ProductManagementPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Filter & Sort State
+  const [sortConfig, setSortConfig] = useState({ key: 'ProductName', direction: 'asc' });
+  const [categoryFilter, setCategoryFilter] = useState('');
+
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -23,8 +27,18 @@ export default function ProductManagementPage() {
     PurchaseUOM: 'KG'      
   });
 
-  // Conversion State: Stores factors like { "CTN": 28, "PKT": 5 }
+  // Conversion State
   const [conversionFactors, setConversionFactors] = useState({});
+
+  // Expanded Category List
+  const CATEGORY_OPTIONS = [
+    'VEGE',
+    'IMPORT FRUITS',
+    'LOCAL FRUITS',
+    'THAI FRUITS', // Added
+    'HERBS',       // Added
+    'OTHERS'
+  ];
 
   // 1. Fetch Products
   async function fetchProducts() {
@@ -59,42 +73,66 @@ export default function ProductManagementPage() {
 
     // --- SAVE PRODUCT MASTER ---
     if (editingProduct) {
+      // UPDATE: Use ProductCode instead of id to prevent "id does not exist" error
       const { error } = await supabase
         .from('ProductMaster')
         .update(cleanedData)
-        .eq('id', editingProduct.id);
+        .eq('ProductCode', editingProduct.ProductCode);
 
-      if (error) { alert('Error updating: ' + error.message); return; }
+      if (error) { alert('Error updating product: ' + error.message); return; }
     } else {
+      // CREATE NEW
       // Check duplicate
       const { data: existing } = await supabase
         .from('ProductMaster')
-        .select('id')
+        .select('ProductCode')
         .eq('ProductCode', formData.ProductCode)
-        .single();
+        .maybeSingle();
 
       if (existing) { alert('Error: Product Code already exists!'); return; }
 
       const { error } = await supabase.from('ProductMaster').insert([cleanedData]);
-      if (error) { alert('Error adding: ' + error.message); return; }
+      if (error) { alert('Error adding product: ' + error.message); return; }
     }
 
     // --- SAVE CONVERSIONS ---
-    // 1. Delete old conversions for this product (Clean slate approach)
-    await supabase.from('UOM_Conversions').delete().eq('ProductCode', formData.ProductCode);
+    // 1. Delete old conversions using CORRECT table name "UOM_Conversion"
+    // Using ProductCode as the key
+    const { error: delError } = await supabase
+        .from('UOM_Conversion')
+        .delete()
+        .eq('ProductCode', formData.ProductCode);
+        
+    if (delError) {
+        console.error("Error deleting old conversions:", delError);
+        // Continue anyway to try insert
+    }
 
     // 2. Prepare new rows
+    // Only save rows where a valid factor (>0) is provided
     const otherUOMs = getUOMOptions().filter(u => u !== formData.BaseUOM);
-    const conversionRows = otherUOMs.map(uom => ({
-        "ProductCode": formData.ProductCode,
-        "BaseUOM": formData.BaseUOM,
-        "ConversionUOM": uom,
-        "Factor": conversionFactors[uom] || 0 // Default to 0 if not set
-    }));
+    const conversionRows = [];
+    
+    otherUOMs.forEach(uom => {
+        const factor = parseFloat(conversionFactors[uom]);
+        // Only insert if factor is a valid number greater than 0
+        if (factor && factor > 0) {
+            conversionRows.push({
+                "ProductCode": formData.ProductCode,
+                "BaseUOM": formData.BaseUOM,
+                "ConversionUOM": uom,
+                "Factor": factor
+            });
+        }
+    });
 
     if (conversionRows.length > 0) {
-        const { error: convError } = await supabase.from('UOM_Conversions').insert(conversionRows);
-        if (convError) console.error("Error saving conversions:", convError);
+        const { error: convError } = await supabase.from('UOM_Conversion').insert(conversionRows);
+        if (convError) {
+            console.error("Error saving conversions:", convError);
+            alert('Error saving conversion rates: ' + convError.message);
+            return; 
+        }
     }
 
     alert('Product & Conversions saved successfully!');
@@ -103,12 +141,12 @@ export default function ProductManagementPage() {
   };
 
   // 3. Handle Delete
-  const handleDelete = async (id, name, code) => {
+  const handleDelete = async (code, name) => {
     if (confirm(`Are you sure you want to delete "${name}"?`)) {
       // Delete conversions first
-      await supabase.from('UOM_Conversions').delete().eq('ProductCode', code);
-      // Delete product
-      const { error } = await supabase.from('ProductMaster').delete().eq('id', id);
+      await supabase.from('UOM_Conversion').delete().eq('ProductCode', code);
+      // Delete product using ProductCode
+      const { error } = await supabase.from('ProductMaster').delete().eq('ProductCode', code);
 
       if (error) alert('Error deleting: ' + error.message);
       else fetchProducts();
@@ -138,15 +176,26 @@ export default function ProductManagementPage() {
       PurchaseUOM: product.PurchaseUOM || product.BaseUOM || 'KG'
     });
 
-    // Fetch existing conversions
-    const { data: convs } = await supabase
-        .from('UOM_Conversions')
-        .select('ConversionUOM, Factor')
+    // Fetch existing conversions from correct table "UOM_Conversion"
+    const { data: convs, error } = await supabase
+        .from('UOM_Conversion')
+        .select('*') 
         .eq('ProductCode', product.ProductCode);
     
+    if (error) {
+        console.error("Error fetching conversions:", error);
+        // Alert user if fetch fails (explains the question marks)
+        alert("Error loading conversion rates: " + error.message + ". Try reloading the schema cache in Supabase.");
+    }
+
     const factors = {};
     if (convs) {
-        convs.forEach(c => factors[c.ConversionUOM] = c.Factor);
+        convs.forEach(c => {
+            // Handle potential casing issues from DB columns
+            const uom = c.ConversionUOM || c.conversionUOM || c.conversionuom;
+            const factor = c.Factor || c.factor;
+            if (uom) factors[uom] = factor;
+        });
     }
     setConversionFactors(factors);
     setIsModalOpen(true);
@@ -162,26 +211,52 @@ export default function ProductManagementPage() {
     return formData.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u !== '');
   };
 
-  // Get UOMs that are NOT the base (need conversion)
   const getSecondaryUOMs = () => {
     return getUOMOptions().filter(u => u !== formData.BaseUOM);
   };
 
-  // FUZZY SEARCH LOGIC
+  // Sort Handler
+  const handleSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  // Fuzzy Search & Sort & Filter Logic
   const filteredProducts = products.filter(p => {
-    if (!searchTerm) return true;
-    const lowerTerm = searchTerm.toLowerCase();
-    const searchParts = lowerTerm.split(' '); // Split by space for multi-word matching
+    // 1. Search Filter
+    if (searchTerm) {
+      const lowerTerm = searchTerm.toLowerCase();
+      const searchParts = lowerTerm.split(' '); 
+      const combinedText = (
+        (p.ProductName || '') + ' ' + 
+        (p.ProductCode || '') + ' ' + 
+        (p.Category || '')
+      ).toLowerCase();
+      if (!searchParts.every(part => combinedText.includes(part))) return false;
+    }
 
-    const combinedText = (
-      (p.ProductName || '') + ' ' + 
-      (p.ProductCode || '') + ' ' + 
-      (p.Category || '')
-    ).toLowerCase();
+    // 2. Category Filter
+    if (categoryFilter && p.Category !== categoryFilter) return false;
 
-    // Check if EVERY part of the search term exists in the combined text
-    return searchParts.every(part => combinedText.includes(part));
+    return true;
+  }).sort((a, b) => {
+    if (a[sortConfig.key] < b[sortConfig.key]) {
+      return sortConfig.direction === 'asc' ? -1 : 1;
+    }
+    if (a[sortConfig.key] > b[sortConfig.key]) {
+      return sortConfig.direction === 'asc' ? 1 : -1;
+    }
+    return 0;
   });
+
+  // Unique categories for filter + default list merge to ensure filter has all options
+  const uniqueCategories = [...new Set([
+      ...products.map(p => p.Category).filter(Boolean),
+      ...CATEGORY_OPTIONS
+  ])].sort();
 
   if (loading) return <div className="p-10 ml-64">Loading Products...</div>;
 
@@ -190,7 +265,6 @@ export default function ProductManagementPage() {
       <Sidebar />
       <main className="ml-64 flex-1 p-8">
         
-        {/* HEADER */}
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold text-gray-800">Product Management</h1>
           <button 
@@ -201,25 +275,50 @@ export default function ProductManagementPage() {
           </button>
         </div>
 
-        {/* SEARCH BAR */}
-        <div className="mb-6">
+        {/* FILTERS BAR */}
+        <div className="mb-6 flex gap-4">
           <input 
             type="text" 
-            placeholder="Search by name, code, or category..." 
-            className="w-full max-w-md p-3 border rounded shadow-sm focus:ring-2 focus:ring-blue-200 focus:outline-none"
+            placeholder="Search by name, code..." 
+            className="flex-1 max-w-md p-3 border rounded shadow-sm focus:ring-2 focus:ring-blue-200 focus:outline-none"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          
+          <select 
+            className="p-3 border rounded shadow-sm bg-white focus:ring-2 focus:ring-blue-200 focus:outline-none min-w-[200px]"
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+          >
+            <option value="">All Categories</option>
+            {uniqueCategories.map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
         </div>
 
-        {/* PRODUCT TABLE */}
         <div className="bg-white rounded shadow overflow-hidden">
           <table className="w-full text-left border-collapse">
             <thead className="bg-gray-100 border-b">
               <tr>
-                <th className="p-4 font-semibold text-gray-600">Code</th>
-                <th className="p-4 font-semibold text-gray-600">Product Name</th>
-                <th className="p-4 font-semibold text-gray-600">Category</th>
+                <th 
+                  className="p-4 font-semibold text-gray-600 cursor-pointer hover:bg-gray-200 select-none"
+                  onClick={() => handleSort('ProductCode')}
+                >
+                  Code {sortConfig.key === 'ProductCode' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="p-4 font-semibold text-gray-600 cursor-pointer hover:bg-gray-200 select-none"
+                  onClick={() => handleSort('ProductName')}
+                >
+                  Product Name {sortConfig.key === 'ProductName' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                </th>
+                <th 
+                  className="p-4 font-semibold text-gray-600 cursor-pointer hover:bg-gray-200 select-none"
+                  onClick={() => handleSort('Category')}
+                >
+                  Category {sortConfig.key === 'Category' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                </th>
                 <th className="p-4 font-semibold text-gray-600">Base UOM</th>
                 <th className="p-4 font-semibold text-gray-600">Allowed UOMs</th>
                 <th className="p-4 font-semibold text-gray-600 text-right">Actions</th>
@@ -227,7 +326,7 @@ export default function ProductManagementPage() {
             </thead>
             <tbody>
               {filteredProducts.map((p) => (
-                <tr key={p.id} className="border-b hover:bg-gray-50">
+                <tr key={p.ProductCode} className="border-b hover:bg-gray-50">
                   <td className="p-4 font-mono text-sm text-blue-600 font-bold">{p.ProductCode}</td>
                   <td className="p-4 font-medium">{p.ProductName}</td>
                   <td className="p-4 text-sm text-gray-500">{p.Category}</td>
@@ -241,7 +340,7 @@ export default function ProductManagementPage() {
                       Edit
                     </button>
                     <button 
-                      onClick={() => handleDelete(p.id, p.ProductName, p.ProductCode)}
+                      onClick={() => handleDelete(p.ProductCode, p.ProductName)}
                       className="text-red-500 hover:text-red-700 font-semibold text-sm border border-red-200 px-3 py-1 rounded hover:bg-red-50"
                     >
                       Delete
@@ -258,7 +357,6 @@ export default function ProductManagementPage() {
           </table>
         </div>
 
-        {/* --- MODAL (POPUP) --- */}
         {isModalOpen && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white p-8 rounded shadow-xl w-full max-w-2xl overflow-y-auto max-h-[90vh]">
@@ -267,7 +365,6 @@ export default function ProductManagementPage() {
               </h2>
               
               <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Row 1: Code & Name */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="col-span-1">
                         <label className="block text-sm font-bold mb-1">Product Code</label>
@@ -292,7 +389,6 @@ export default function ProductManagementPage() {
                     </div>
                 </div>
 
-                {/* Row 2: Category & Allowed UOMs */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-bold mb-1">Category</label>
@@ -301,10 +397,9 @@ export default function ProductManagementPage() {
                             value={formData.Category}
                             onChange={(e) => setFormData({...formData, Category: e.target.value})}
                         >
-                            <option value="VEGE">VEGE</option>
-                            <option value="IMPORT FRUITS">IMPORT FRUITS</option>
-                            <option value="LOCAL FRUITS">LOCAL FRUITS</option>
-                            <option value="OTHERS">OTHERS</option>
+                            {CATEGORY_OPTIONS.map(cat => (
+                                <option key={cat} value={cat}>{cat}</option>
+                            ))}
                         </select>
                     </div>
                     <div>
@@ -320,7 +415,6 @@ export default function ProductManagementPage() {
                     </div>
                 </div>
 
-                {/* Row 3: UOM Settings */}
                 <div className="p-4 bg-gray-50 rounded border border-gray-200">
                     <h3 className="text-sm font-bold text-gray-700 mb-3 uppercase">Unit of Measure Settings</h3>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -356,7 +450,6 @@ export default function ProductManagementPage() {
                         </div>
                     </div>
 
-                    {/* CONVERSION RATES SECTION */}
                     {getSecondaryUOMs().length > 0 && (
                         <div className="mt-4 pt-4 border-t border-gray-200">
                             <h4 className="text-xs font-bold text-gray-500 mb-2">CONVERSION RATES (1 Unit = ? {formData.BaseUOM})</h4>
@@ -375,7 +468,7 @@ export default function ProductManagementPage() {
                                                 [uom]: e.target.value
                                             })}
                                             placeholder="?"
-                                            required
+                                            // REMOVED 'required' to make it optional
                                         />
                                         <span className="ml-2 text-gray-600 font-bold">{formData.BaseUOM}</span>
                                     </div>

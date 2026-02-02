@@ -6,44 +6,49 @@ import Sidebar from '../components/Sidebar';
 export default function DeliveryPage() {
   const [loading, setLoading] = useState(true);
   
-  // Helper to get local date string YYYY-MM-DD
-  const getLocalDateString = (date) => {
-    const offset = date.getTimezoneOffset() * 60000;
-    return new Date(date.getTime() - offset).toISOString().split('T')[0];
+  // --- DATE HELPERS (String Based to avoid Timezone Issues) ---
+  const getTodayString = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   };
 
-  // Calendar State
+  const formatDateLabel = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+  };
+
+  // --- STATE ---
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState(getLocalDateString(new Date()));
+  const [selectedDate, setSelectedDate] = useState(getTodayString());
   const [orderCounts, setOrderCounts] = useState({}); 
 
   // Data for the Selected Date
-  const [dayOrders, setDayOrders] = useState([]); // Flat list of items
-  const [groupedOrders, setGroupedOrders] = useState([]); // Grouped by DO
+  const [groupedOrders, setGroupedOrders] = useState([]); 
   const [usageSummary, setUsageSummary] = useState([]);
   
-  // Product Data (for editing/adding items)
+  // Products & Drivers
   const [products, setProducts] = useState([]);
-
-  // UI State
-  const [isUsageExpanded, setIsUsageExpanded] = useState(false);
-  const [selectedDOs, setSelectedDOs] = useState(new Set());
   const [targetDriver, setTargetDriver] = useState('');
-  
-  // Modal & Editing State
+  const [selectedDOs, setSelectedDOs] = useState(new Set());
+  const [isUsageExpanded, setIsUsageExpanded] = useState(false);
+
+  // Modal State (View/Edit)
   const [viewingOrder, setViewingOrder] = useState(null); 
   const [isEditing, setIsEditing] = useState(false);
   const [editedItems, setEditedItems] = useState([]);
   const [deletedItemIds, setDeletedItemIds] = useState([]);
   const [itemSearchTerm, setItemSearchTerm] = useState('');
 
-  // --- 1. INITIAL LOAD & CALENDAR DATA ---
+  // --- 1. INITIAL LOAD ---
   useEffect(() => {
     fetchMonthData(currentDate);
     fetchProducts();
   }, [currentDate]);
 
-  // --- 2. FETCH ORDERS WHEN DATE SELECTED ---
   useEffect(() => {
     fetchDayOrders(selectedDate);
   }, [selectedDate]);
@@ -55,19 +60,18 @@ export default function DeliveryPage() {
     if (data) setProducts(data);
   };
 
+  // --- 2. DATA FETCHING ---
+  
   const fetchMonthData = async (dateObj) => {
     const year = dateObj.getFullYear();
     const month = dateObj.getMonth();
     
-    // Construct simplified YYYY-MM-DD range to avoid timezone issues
-    // Start: 1st of current month
+    // Calculate start (1st of month) and end (1st of next month)
     const startStr = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-    // End: 1st of next month
-    const nextMonthDate = new Date(year, month + 1, 1);
-    const endStr = `${nextMonthDate.getFullYear()}-${String(nextMonthDate.getMonth() + 1).padStart(2, '0')}-01`;
+    // Careful month increment
+    const nextMonth = new Date(year, month + 1, 1);
+    const endStr = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`;
 
-    // Fetch all orders for the month to populate the calendar heatmap
-    // Using 50,000 limit to ensure full month data is retrieved even with high volume
     const { data } = await supabase
       .from('Orders')
       .select('DONumber, "Delivery Date"')
@@ -76,24 +80,18 @@ export default function DeliveryPage() {
       .limit(50000); 
 
     if (data) {
-      if (data.length === 50000) {
-        console.warn("DeliveryPage: Hit 50,000 row limit. Month data might be incomplete.");
-      }
-
       const counts = {};
       const uniqueSet = new Set();
+      
       data.forEach(row => {
         if (!row["Delivery Date"]) return;
         const key = `${row["Delivery Date"]}|${row.DONumber}`;
+        
         if (!uniqueSet.has(key)) {
           uniqueSet.add(key);
-          
-          // Ensure dKey is strictly YYYY-MM-DD (first 10 chars) to match calendar keys
+          // Extract YYYY-MM-DD safely
           let dKey = row["Delivery Date"];
-          if (dKey && typeof dKey === 'string') {
-             dKey = dKey.trim();
-             if (dKey.length > 10) dKey = dKey.substring(0, 10);
-          }
+          if (typeof dKey === 'string') dKey = dKey.substring(0, 10);
           
           counts[dKey] = (counts[dKey] || 0) + 1;
         }
@@ -104,32 +102,30 @@ export default function DeliveryPage() {
 
   const fetchDayOrders = async (dateStr) => {
     setLoading(true);
-    // Fetch detailed rows for the specific selected day
     const { data, error } = await supabase
       .from('Orders')
       .select('*')
       .eq('"Delivery Date"', dateStr)
       .order('DONumber');
 
-    if (error) {
-      console.error("Error fetching day orders:", error);
+    if (!error && data) {
+      processOrders(data);
     } else {
-      setDayOrders(data || []);
-      processOrders(data || []);
+      setGroupedOrders([]);
+      setUsageSummary([]);
     }
     setLoading(false);
   };
 
   const processOrders = (rows) => {
-    // 1. Group by DO for the List View
     const groups = {};
     const usage = {};
 
     rows.forEach(row => {
-      // Grouping
+      // Group by DO
       if (!groups[row.DONumber]) {
         groups[row.DONumber] = {
-          info: row, // Keep first row metadata
+          info: row,
           items: [],
           itemCount: 0
         };
@@ -137,7 +133,7 @@ export default function DeliveryPage() {
       groups[row.DONumber].items.push(row);
       groups[row.DONumber].itemCount += 1;
 
-      // Usage Calculation
+      // Usage
       const prodKey = row["Product Code"];
       if (!usage[prodKey]) {
         usage[prodKey] = {
@@ -154,120 +150,7 @@ export default function DeliveryPage() {
     setUsageSummary(Object.values(usage).sort((a,b) => a.name.localeCompare(b.name)));
   };
 
-  // --- EDITING LOGIC ---
-
-  const handleEditClick = () => {
-    setEditedItems(JSON.parse(JSON.stringify(viewingOrder.items))); // Deep copy
-    setDeletedItemIds([]);
-    setIsEditing(true);
-  };
-
-  const handleCancelEdit = () => {
-    setIsEditing(false);
-    setEditedItems([]);
-    setDeletedItemIds([]);
-  };
-
-  const handleEditItemChange = (index, field, value) => {
-    const newItems = [...editedItems];
-    newItems[index][field] = value;
-    setEditedItems(newItems);
-  };
-
-  const handleDeleteItem = (index) => {
-    const item = editedItems[index];
-    if (item.id) {
-      setDeletedItemIds([...deletedItemIds, item.id]);
-    }
-    const newItems = editedItems.filter((_, i) => i !== index);
-    setEditedItems(newItems);
-  };
-
-  const handleAddItem = (product) => {
-    const uomOptions = product.AllowedUOMs 
-      ? product.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u)
-      : [product.BaseUOM];
-
-    const newItem = {
-      // Temporary ID for UI key only (negative to distinguish from DB IDs)
-      tempId: Date.now(), 
-      DONumber: viewingOrder.info.DONumber,
-      "Delivery Date": viewingOrder.info["Delivery Date"],
-      "Customer Name": viewingOrder.info["Customer Name"],
-      "Delivery Address": viewingOrder.info["Delivery Address"],
-      "Contact Person": viewingOrder.info["Contact Person"],
-      "Contact Number": viewingOrder.info["Contact Number"],
-      "Delivery Mode": viewingOrder.info["Delivery Mode"],
-      Status: viewingOrder.info.Status,
-      DriverName: viewingOrder.info.DriverName,
-      "Product Code": product.ProductCode,
-      "Order Items": product.ProductName,
-      Quantity: 1,
-      UOM: product.BaseUOM || 'KG',
-      Price: 0,
-      SpecialNotes: ''
-    };
-    setEditedItems([...editedItems, newItem]);
-    setItemSearchTerm('');
-  };
-
-  const handleSaveOrder = async () => {
-    if (!confirm("Save changes to this order?")) return;
-
-    // 1. Delete removed items
-    if (deletedItemIds.length > 0) {
-      await supabase.from('Orders').delete().in('id', deletedItemIds);
-    }
-
-    // 2. Upsert (Update existing / Insert new)
-    // We need to strip 'tempId' and ensure 'id' is present for updates
-    const upsertData = editedItems.map(item => {
-      const { tempId, ...rest } = item; 
-      // If it has an ID, it updates. If no ID (new item), it inserts.
-      return rest;
-    });
-
-    const { error } = await supabase.from('Orders').upsert(upsertData);
-
-    if (error) {
-      alert("Error saving order: " + error.message);
-    } else {
-      alert("Order updated successfully!");
-      setIsEditing(false);
-      // Refresh Data
-      fetchDayOrders(selectedDate);
-      
-      // Update the local modal view immediately so it doesn't close/flash old data
-      // We re-fetch specifically this DO or just rely on fetchDayOrders
-      // For simplicity, we just close the modal to force refresh from the list, or re-open it
-      setViewingOrder(null); 
-    }
-  };
-
-  // FUZZY SEARCH LOGIC
-  const filteredProducts = products.filter(p => {
-    if (!itemSearchTerm) return false;
-    const lowerTerm = itemSearchTerm.toLowerCase();
-    // Split by space and remove empty strings to avoid matching everything on double space
-    const searchParts = lowerTerm.split(' ').filter(part => part.trim() !== '');
-
-    const combinedText = (
-      (p.ProductName || '') + ' ' + 
-      (p.ProductCode || '') + ' ' + 
-      (p.Category || '')
-    ).toLowerCase();
-
-    // Check if EVERY part of the search term exists in the combined text
-    return searchParts.every(part => combinedText.includes(part));
-  });
-
-  const getUOMOptions = (productCode) => {
-    const product = products.find(p => p.ProductCode === productCode);
-    if (!product || !product.AllowedUOMs) return [];
-    return product.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u);
-  };
-
-  // --- ACTIONS ---
+  // --- 3. ACTIONS ---
 
   const handleCheckbox = (doNum) => {
     const newSet = new Set(selectedDOs);
@@ -286,455 +169,273 @@ export default function DeliveryPage() {
 
   const handleAssignDriver = async () => {
     if (selectedDOs.size === 0) return alert("Select at least one order.");
-    if (!targetDriver) return alert("Please enter or select a driver name.");
+    if (!targetDriver) return alert("Please select a driver.");
 
     if (!confirm(`Assign ${targetDriver} to ${selectedDOs.size} orders?`)) return;
 
-    // We update rows where DONumber is in our selected list
     const { error } = await supabase
       .from('Orders')
       .update({ DriverName: targetDriver })
       .in('DONumber', Array.from(selectedDOs));
 
     if (error) {
-      alert("Error updating drivers: " + error.message);
+      alert("Error: " + error.message);
     } else {
-      alert("Drivers Assigned!");
-      fetchDayOrders(selectedDate); // Refresh
+      alert("Assigned!");
+      fetchDayOrders(selectedDate);
       setSelectedDOs(new Set());
     }
   };
 
-  // --- HELPER UI ---
-  const getColorClass = (count) => {
-    if (!count) return 'bg-gray-50';
-    if (count > 30) return 'bg-green-200 border-green-500 text-green-900';
-    if (count > 10) return 'bg-orange-200 border-orange-500 text-orange-900';
-    return 'bg-red-200 border-red-500 text-red-900';
-  };
+  // --- 4. CALENDAR LOGIC ---
 
   const changeMonth = (offset) => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1));
-  };
-  
-  // Calendar Helper Function (Inside component to access logic if needed, or outside is fine)
-  const getDaysInMonth = (date) => {
-    const year = date.getFullYear();
-    const month = date.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const firstDay = new Date(year, month, 1).getDay(); 
-    
-    const days = [];
-    for (let i = 0; i < firstDay; i++) days.push(null);
-    for (let i = 1; i <= daysInMonth; i++) {
-      // Use local time construction to ensure date string matches getLocalDateString
-      const d = new Date(year, month, i);
-      const offset = d.getTimezoneOffset() * 60000;
-      const localDateStr = new Date(d.getTime() - offset).toISOString().split('T')[0];
-      days.push(localDateStr);
-    }
-    return days;
+    const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1);
+    setCurrentDate(newDate);
   };
 
-  const days = getDaysInMonth(currentDate);
-  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const monthNames = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"];
+
+  const generateCalendarGrid = () => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const firstDayObj = new Date(year, month, 1);
+    const startDay = firstDayObj.getDay(); // 0 = Sunday, 1 = Monday...
+
+    const grid = [];
+    
+    // Empty slots for days before the 1st
+    for (let i = 0; i < startDay; i++) {
+      grid.push(null);
+    }
+
+    // Days of the month
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      grid.push({
+        day,
+        dateStr,
+        count: orderCounts[dateStr] || 0
+      });
+    }
+
+    return grid;
+  };
+
+  const gridCells = generateCalendarGrid();
+
+  // --- STYLING HELPERS ---
+  
+  const getCellClasses = (count, isSelected) => {
+    let base = "h-24 rounded-xl border p-2 flex flex-col justify-between cursor-pointer transition-all duration-200 relative overflow-hidden group ";
+    
+    if (isSelected) {
+      base += "ring-4 ring-blue-400 border-blue-600 z-10 shadow-lg transform -translate-y-1 ";
+    } else {
+      base += "hover:shadow-md hover:border-blue-300 ";
+    }
+
+    if (count > 30) return base + "bg-emerald-50 border-emerald-200";
+    if (count > 10) return base + "bg-orange-50 border-orange-200";
+    if (count > 0) return base + "bg-red-50 border-red-200";
+    
+    return base + "bg-white border-gray-200";
+  };
+
+  const getPillClasses = (count) => {
+    if (count > 30) return "bg-emerald-200 text-emerald-800";
+    if (count > 10) return "bg-orange-200 text-orange-800";
+    return "bg-red-200 text-red-800";
+  };
+
+  const getFilteredProducts = () => {
+    if (!itemSearchTerm) return [];
+    const term = itemSearchTerm.toLowerCase();
+    return products.filter(p => 
+      p.ProductName.toLowerCase().includes(term) || 
+      p.ProductCode.toLowerCase().includes(term)
+    ).slice(0, 10);
+  };
 
   return (
-    <div className="flex bg-gray-50 min-h-screen">
+    <div className="flex bg-gray-50 min-h-screen font-sans">
       <Sidebar />
       <main className="ml-64 flex-1 p-8">
-        <h1 className="text-3xl font-bold mb-6 text-gray-800">Delivery Dashboard</h1>
-
-        {/* --- CALENDAR SECTION --- */}
-        <div className="bg-white rounded shadow p-6 mb-8">
-            <div className="flex justify-between items-center mb-4">
-              <button onClick={() => changeMonth(-1)} className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">&lt;</button>
-              <h2 className="text-xl font-bold text-gray-700">{monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}</h2>
-              <button onClick={() => changeMonth(1)} className="px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">&gt;</button>
+        
+        {/* HEADER & ACTIONS */}
+        <div className="flex justify-between items-center mb-6 bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+            <div className="flex items-center gap-4">
+               <button onClick={() => changeMonth(-1)} className="w-10 h-10 flex items-center justify-center bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 font-bold transition">◀</button>
+               <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest">
+                  {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
+               </h2>
+               <button onClick={() => changeMonth(1)} className="w-10 h-10 flex items-center justify-center bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 font-bold transition">▶</button>
             </div>
             
-            <div className="grid grid-cols-7 gap-2 mb-2 text-center text-sm font-bold text-gray-500">
-               <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
-            </div>
-            <div className="grid grid-cols-7 gap-2">
-              {days.map((dateStr, idx) => {
-                if (!dateStr) return <div key={idx} className="h-20"></div>;
-                const count = orderCounts[dateStr] || 0;
-                const isSelected = dateStr === selectedDate;
-                return (
-                  <div key={dateStr} 
-                       onClick={() => setSelectedDate(dateStr)}
-                       className={`h-20 border rounded p-2 cursor-pointer flex flex-col justify-between transition-all 
-                         ${isSelected ? 'ring-2 ring-blue-600 shadow-lg scale-105 z-10' : ''} 
-                         ${getColorClass(count)}`}
-                  >
-                    <div className="text-right font-bold text-sm">{parseInt(dateStr.split('-')[2])}</div>
-                    {count > 0 && <div className="text-xs text-center font-bold bg-white bg-opacity-50 rounded px-1">{count} Orders</div>}
-                  </div>
-                );
-              })}
+            <div className="flex gap-2">
+                 <button onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')} className="bg-purple-600 text-white font-bold py-2.5 px-5 rounded-xl text-sm shadow hover:bg-purple-700 transition flex items-center gap-2">
+                    <span>📦</span> All DOs
+                 </button>
+                 <button className="bg-blue-600 text-white font-bold py-2.5 px-5 rounded-xl text-sm shadow hover:bg-blue-700 transition flex items-center gap-2">
+                    <span>📊</span> Daily Usage
+                 </button>
             </div>
         </div>
 
-        {/* --- MAIN CONTENT FOR SELECTED DATE --- */}
-        <div className="space-y-6">
-            <h2 className="text-2xl font-bold text-gray-800 border-b pb-2">
-                Orders for {selectedDate} ({groupedOrders.length})
-            </h2>
+        {/* CALENDAR GRID */}
+        <div className="mb-8">
+            <div className="grid grid-cols-7 gap-4 mb-3 text-center text-xs font-black text-gray-400 uppercase tracking-widest">
+               <div>SUN</div><div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div>
+            </div>
+            <div className="grid grid-cols-7 gap-3">
+               {gridCells.map((cell, idx) => {
+                  if (!cell) return <div key={idx} className="h-24 bg-transparent"></div>;
+                  
+                  const isSelected = cell.dateStr === selectedDate;
+                  
+                  return (
+                    <div 
+                        key={cell.dateStr} 
+                        onClick={() => setSelectedDate(cell.dateStr)}
+                        className={getCellClasses(cell.count, isSelected)}
+                    >
+                        <div className={`text-lg font-bold ml-1 ${isSelected ? 'text-blue-700' : 'text-gray-700'}`}>
+                            {cell.day}
+                        </div>
+                        {cell.count > 0 && (
+                            <div className={`w-full text-center py-1 rounded-lg text-[10px] font-black uppercase tracking-wide ${getPillClasses(cell.count)}`}>
+                                {cell.count} Orders
+                            </div>
+                        )}
+                    </div>
+                  );
+               })}
+            </div>
+        </div>
 
-            {/* 1. DAILY USAGE ACCORDION */}
-            <div className="bg-white rounded shadow border-l-4 border-purple-500">
+        {/* ORDERS LIST SECTION */}
+        <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
+            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
+                <h3 className="text-xl font-bold text-gray-800 flex items-center gap-3">
+                    Orders for {formatDateLabel(selectedDate)}
+                    <span className="bg-gray-200 text-gray-600 text-sm px-3 py-1 rounded-full">{groupedOrders.length}</span>
+                </h3>
+                
+                {/* Driver Assignment */}
+                <div className="flex gap-2">
+                    <input 
+                        list="drivers" 
+                        placeholder="Assign Driver..." 
+                        className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-48"
+                        value={targetDriver}
+                        onChange={e => setTargetDriver(e.target.value)}
+                    />
+                    <datalist id="drivers">
+                        <option value="Ali" /><option value="Muthu" /><option value="Ah Meng" /><option value="Lalamove" />
+                    </datalist>
+                    <button 
+                        onClick={handleAssignDriver}
+                        className="bg-blue-600 text-white font-bold px-4 py-2 rounded-lg text-sm hover:bg-blue-700"
+                    >
+                        Assign ({selectedDOs.size})
+                    </button>
+                </div>
+            </div>
+
+            {/* EXPANDABLE USAGE SUMMARY */}
+            <div className="border-b border-gray-100">
                 <button 
                     onClick={() => setIsUsageExpanded(!isUsageExpanded)}
-                    className="w-full flex justify-between items-center p-4 text-purple-800 font-bold hover:bg-purple-50"
+                    className="w-full flex justify-between items-center px-6 py-3 text-purple-700 font-bold bg-purple-50 hover:bg-purple-100 transition text-sm"
                 >
-                    <span>📋 Daily Usage Summary ({usageSummary.length} Items)</span>
+                    <span className="flex items-center gap-2">📋 View Daily Production Usage Summary</span>
                     <span>{isUsageExpanded ? '▲' : '▼'}</span>
                 </button>
-                
                 {isUsageExpanded && (
-                    <div className="p-4 border-t max-h-96 overflow-y-auto bg-gray-50">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-purple-100 text-purple-900 sticky top-0">
-                                <tr>
-                                    <th className="p-2">Item</th>
-                                    <th className="p-2 w-24 text-center">Total Qty</th>
-                                    <th className="p-2 w-20 text-center">UOM</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {usageSummary.map((item, idx) => (
-                                    <tr key={idx} className="border-b hover:bg-white">
-                                        <td className="p-2">{item.name}</td>
-                                        <td className="p-2 text-center font-bold">{item.qty}</td>
-                                        <td className="p-2 text-center uppercase text-xs text-gray-500">{item.uom}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                    <div className="max-h-60 overflow-y-auto p-4 bg-gray-50 border-t border-purple-100">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-2 text-sm">
+                            {usageSummary.map((u, i) => (
+                                <div key={i} className="flex justify-between border-b border-purple-200 pb-1">
+                                    <span className="text-gray-700">{u.name}</span>
+                                    <span className="font-bold text-purple-800">{u.qty} {u.uom}</span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 )}
             </div>
 
-            {/* 2. DRIVER ASSIGNMENT TOOLBAR */}
-            <div className="bg-white rounded shadow p-4 flex flex-wrap gap-4 items-end border-l-4 border-blue-500">
-                <div className="flex-1 min-w-[200px]">
-                    <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Assign Driver</label>
-                    <div className="flex gap-2">
-                        <input 
-                            type="text" 
-                            list="drivers"
-                            placeholder="Select or Type Driver Name..."
-                            className="flex-1 border p-2 rounded"
-                            value={targetDriver}
-                            onChange={e => setTargetDriver(e.target.value)}
-                        />
-                        <datalist id="drivers">
-                            <option value="Ali" />
-                            <option value="Muthu" />
-                            <option value="Ah Meng" />
-                            <option value="Lalamove" />
-                            <option value="Self Pick-up" />
-                        </datalist>
-                        <button 
-                            onClick={handleAssignDriver}
-                            className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2 rounded"
-                        >
-                            Assign to Selected ({selectedDOs.size})
-                        </button>
-                    </div>
-                </div>
-                <div>
-                     <button 
-                        onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')}
-                        className="bg-gray-800 hover:bg-black text-white font-bold px-4 py-2 rounded flex items-center gap-2"
-                     >
-                        <span>🖨️</span> Print All DOs
-                     </button>
-                </div>
-            </div>
-
-            {/* 3. ORDER LIST */}
-            <div className="bg-white rounded shadow overflow-hidden">
-                <table className="w-full text-left border-collapse">
-                    <thead className="bg-gray-100 text-gray-600 text-sm uppercase">
-                        <tr>
-                            <th className="p-3 w-10 text-center">
-                                <input type="checkbox" onChange={handleSelectAll} checked={selectedDOs.size > 0 && selectedDOs.size === groupedOrders.length} />
-                            </th>
-                            <th className="p-3">DO Number</th>
-                            <th className="p-3">Customer</th>
-                            <th className="p-3">Location</th>
-                            <th className="p-3">Items</th>
-                            <th className="p-3">Driver</th>
-                            <th className="p-3 text-center">Status</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {groupedOrders.length === 0 ? (
-                            <tr><td colSpan="7" className="p-8 text-center text-gray-400">No orders for this date.</td></tr>
-                        ) : (
-                            groupedOrders.map(group => (
-                                <tr key={group.info.DONumber} className="border-b hover:bg-blue-50 transition-colors cursor-pointer">
-                                    <td className="p-3 text-center">
-                                        <input 
-                                            type="checkbox" 
-                                            checked={selectedDOs.has(group.info.DONumber)}
-                                            onChange={(e) => { e.stopPropagation(); handleCheckbox(group.info.DONumber); }}
-                                        />
-                                    </td>
-                                    <td className="p-3 font-medium text-blue-600" onClick={() => setViewingOrder(group)}>
-                                        {group.info.DONumber}
-                                    </td>
-                                    <td className="p-3 font-bold" onClick={() => setViewingOrder(group)}>
-                                        {group.info["Customer Name"]}
-                                    </td>
-                                    <td className="p-3 text-sm text-gray-500 truncate max-w-[200px]" onClick={() => setViewingOrder(group)}>
-                                        {group.info["Delivery Address"]}
-                                    </td>
-                                    <td className="p-3 text-center" onClick={() => setViewingOrder(group)}>
-                                        <span className="bg-gray-200 text-xs px-2 py-1 rounded-full">{group.itemCount}</span>
-                                    </td>
-                                    <td className="p-3" onClick={() => setViewingOrder(group)}>
-                                        {group.info.DriverName ? (
-                                            <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-2 py-1 rounded">
-                                                {group.info.DriverName}
-                                            </span>
-                                        ) : (
-                                            <span className="text-gray-300 text-xs italic">Unassigned</span>
-                                        )}
-                                    </td>
-                                    <td className="p-3 text-center" onClick={() => setViewingOrder(group)}>
-                                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${
-                                            group.info.Status === 'Completed' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'
-                                        }`}>
-                                            {group.info.Status || 'Pending'}
-                                        </span>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        {/* --- ORDER DETAIL MODAL --- */}
-        {viewingOrder && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-                    
-                    {/* MODAL HEADER */}
-                    <div className="p-6 border-b flex justify-between items-center bg-gray-50">
-                        <div>
-                            <h3 className="text-2xl font-bold text-gray-800">
-                                {isEditing ? 'Editing Order' : 'Order Details'}
-                            </h3>
-                            <p className="text-gray-500 text-sm">
-                                {viewingOrder.info.DONumber} • {viewingOrder.info["Delivery Date"]}
-                            </p>
-                        </div>
-                        <div className="flex items-center gap-3">
-                            {!isEditing && (
-                                <button 
-                                    onClick={handleEditClick}
-                                    className="bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded font-bold shadow"
-                                >
-                                    ✏️ Edit Order
-                                </button>
-                            )}
-                            <button 
-                                onClick={() => { setViewingOrder(null); setIsEditing(false); }}
-                                className="text-gray-400 hover:text-red-500 font-bold text-2xl px-2"
-                            >
-                                ✕
-                            </button>
-                        </div>
-                    </div>
-                    
-                    {/* MODAL BODY */}
-                    <div className="p-6 overflow-y-auto flex-1">
-                        
-                        {/* READ-ONLY INFO (Customer) */}
-                        <div className="grid grid-cols-3 gap-4 mb-6 text-sm bg-blue-50 p-4 rounded border border-blue-100">
-                            <div>
-                                <p className="text-gray-500 uppercase text-xs font-bold">Customer</p>
-                                <p className="font-bold text-gray-800">{viewingOrder.info["Customer Name"]}</p>
-                            </div>
-                            <div>
-                                <p className="text-gray-500 uppercase text-xs font-bold">Driver</p>
-                                <p className="font-bold text-gray-800">{viewingOrder.info.DriverName || "Unassigned"}</p>
-                            </div>
-                            <div>
-                                <p className="text-gray-500 uppercase text-xs font-bold">Contact</p>
-                                <p className="text-gray-800">{viewingOrder.info["Contact Number"]}</p>
-                            </div>
-                            <div className="col-span-3">
-                                <p className="text-gray-500 uppercase text-xs font-bold">Address</p>
-                                <p className="text-gray-800">{viewingOrder.info["Delivery Address"]}</p>
-                            </div>
-                        </div>
-
-                        {/* EDIT MODE: ADD ITEM SEARCH */}
-                        {isEditing && (
-                            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded">
-                                <label className="block text-xs font-bold text-green-800 uppercase mb-2">Add Item to Order</label>
-                                <div className="relative">
+            {/* ORDER TABLE */}
+            <table className="w-full text-left border-collapse">
+                <thead className="bg-gray-50 text-gray-500 text-xs font-bold uppercase tracking-wider">
+                    <tr>
+                        <th className="p-4 w-10 text-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedDOs.size > 0 && selectedDOs.size === groupedOrders.length} /></th>
+                        <th className="p-4">DO Details</th>
+                        <th className="p-4">Customer</th>
+                        <th className="p-4">Delivery Info</th>
+                        <th className="p-4 text-center">Items</th>
+                        <th className="p-4">Driver</th>
+                        <th className="p-4 text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                    {groupedOrders.length === 0 ? (
+                        <tr><td colSpan="7" className="p-12 text-center text-gray-400 italic">No orders found.</td></tr>
+                    ) : (
+                        groupedOrders.map(group => (
+                            <tr key={group.info.DONumber} className="hover:bg-blue-50/40 transition-colors group">
+                                <td className="p-4 text-center">
                                     <input 
-                                        type="text"
-                                        placeholder="Search product to add..."
-                                        className="w-full p-2 border rounded"
-                                        value={itemSearchTerm}
-                                        onChange={e => setItemSearchTerm(e.target.value)}
+                                        type="checkbox" 
+                                        checked={selectedDOs.has(group.info.DONumber)} 
+                                        onChange={() => handleCheckbox(group.info.DONumber)} 
                                     />
-                                    {itemSearchTerm && (
-                                        <div className="absolute z-10 w-full bg-white border shadow-lg max-h-40 overflow-y-auto mt-1">
-                                            {filteredProducts.map(p => (
-                                                <div 
-                                                    key={p.ProductCode} 
-                                                    onClick={() => handleAddItem(p)}
-                                                    className="p-2 hover:bg-green-100 cursor-pointer flex justify-between"
-                                                >
-                                                    <span className="font-bold">{p.ProductName}</span>
-                                                    <span className="text-xs text-gray-500">{p.ProductCode}</span>
-                                                </div>
-                                            ))}
-                                        </div>
+                                </td>
+                                <td className="p-4">
+                                    <span className="font-mono text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded">
+                                        {group.info.DONumber}
+                                    </span>
+                                </td>
+                                <td className="p-4">
+                                    <div className="font-bold text-gray-800 text-sm">{group.info["Customer Name"]}</div>
+                                    <div className="text-xs text-gray-500">{group.info["Contact Person"]}</div>
+                                </td>
+                                <td className="p-4">
+                                    <div className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded w-fit font-bold mb-1">
+                                        {group.info["Delivery Mode"] || 'Standard'}
+                                    </div>
+                                    <div className="text-xs text-gray-500 truncate max-w-[200px]" title={group.info["Delivery Address"]}>
+                                        {group.info["Delivery Address"]}
+                                    </div>
+                                </td>
+                                <td className="p-4 text-center">
+                                    <span className="bg-gray-100 text-gray-700 text-xs font-bold px-3 py-1 rounded-full">{group.itemCount}</span>
+                                </td>
+                                <td className="p-4">
+                                    {group.info.DriverName ? (
+                                        <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-1 rounded">
+                                            {group.info.DriverName}
+                                        </span>
+                                    ) : (
+                                        <span className="text-gray-300 text-xs italic">--</span>
                                     )}
-                                </div>
-                            </div>
-                        )}
-
-                        {/* ITEMS TABLE */}
-                        <h4 className="font-bold text-gray-700 mb-2">Items ({(isEditing ? editedItems : viewingOrder.items).length})</h4>
-                        <table className="w-full text-sm border-collapse">
-                            <thead className="bg-gray-100 text-gray-600 uppercase text-xs">
-                                <tr>
-                                    <th className="p-3 text-left">Item</th>
-                                    <th className="p-3 text-center w-20">Qty</th>
-                                    <th className="p-3 text-center w-24">UOM</th>
-                                    <th className="p-3 text-right w-24">Price</th>
-                                    <th className="p-3 text-left">Notes</th>
-                                    {isEditing && <th className="p-3 text-center w-10"></th>}
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y">
-                                {(isEditing ? editedItems : viewingOrder.items).map((item, i) => (
-                                    <tr key={item.id || item.tempId || i} className="hover:bg-gray-50">
-                                        
-                                        {/* Product Name */}
-                                        <td className="p-3">
-                                            <div className="font-medium text-gray-800">{item["Order Items"]}</div>
-                                            <div className="text-xs text-gray-400">{item["Product Code"]}</div>
-                                        </td>
-
-                                        {/* Quantity */}
-                                        <td className="p-3 text-center">
-                                            {isEditing ? (
-                                                <input 
-                                                    type="number" 
-                                                    className="w-16 p-1 border rounded text-center"
-                                                    value={item.Quantity}
-                                                    onChange={(e) => handleEditItemChange(i, 'Quantity', e.target.value)}
-                                                />
-                                            ) : (
-                                                <span className="font-bold">{item["Quantity"]}</span>
-                                            )}
-                                        </td>
-
-                                        {/* UOM */}
-                                        <td className="p-3 text-center">
-                                            {isEditing ? (
-                                                <select 
-                                                    className="w-20 p-1 border rounded text-xs"
-                                                    value={item.UOM}
-                                                    onChange={(e) => handleEditItemChange(i, 'UOM', e.target.value)}
-                                                >
-                                                    {getUOMOptions(item["Product Code"]).length > 0 
-                                                        ? getUOMOptions(item["Product Code"]).map(u => <option key={u} value={u}>{u}</option>)
-                                                        : <option value={item.UOM}>{item.UOM}</option>
-                                                    }
-                                                </select>
-                                            ) : (
-                                                <span className="text-xs uppercase bg-gray-200 px-2 py-1 rounded">{item["UOM"]}</span>
-                                            )}
-                                        </td>
-
-                                        {/* Price */}
-                                        <td className="p-3 text-right">
-                                            {isEditing ? (
-                                                <input 
-                                                    type="number" 
-                                                    className="w-20 p-1 border rounded text-right"
-                                                    value={item.Price}
-                                                    onChange={(e) => handleEditItemChange(i, 'Price', e.target.value)}
-                                                />
-                                            ) : (
-                                                item.Price || '-'
-                                            )}
-                                        </td>
-
-                                        {/* Notes */}
-                                        <td className="p-3">
-                                            {isEditing ? (
-                                                <input 
-                                                    type="text" 
-                                                    className="w-full p-1 border rounded text-xs"
-                                                    value={item.SpecialNotes || ''}
-                                                    onChange={(e) => handleEditItemChange(i, 'SpecialNotes', e.target.value)}
-                                                />
-                                            ) : (
-                                                <span className="text-xs italic text-gray-500">{item.SpecialNotes}</span>
-                                            )}
-                                        </td>
-
-                                        {/* Delete Action */}
-                                        {isEditing && (
-                                            <td className="p-3 text-center">
-                                                <button 
-                                                    onClick={() => handleDeleteItem(i)}
-                                                    className="text-red-500 hover:text-red-700 font-bold"
-                                                    title="Remove Item"
-                                                >
-                                                    🗑️
-                                                </button>
-                                            </td>
-                                        )}
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    {/* MODAL FOOTER */}
-                    <div className="p-4 border-t bg-gray-100 flex justify-end gap-3">
-                        {isEditing ? (
-                            <>
-                                <button 
-                                    onClick={handleCancelEdit}
-                                    className="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-800 rounded font-bold"
-                                >
-                                    Cancel
-                                </button>
-                                <button 
-                                    onClick={handleSaveOrder}
-                                    className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-bold shadow"
-                                >
-                                    Save Changes
-                                </button>
-                            </>
-                        ) : (
-                            <button 
-                                onClick={() => window.open(`/orders/${viewingOrder.info.id}/print`, '_blank')}
-                                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold flex items-center gap-2"
-                            >
-                                <span>🖨️</span> Print DO
-                            </button>
-                        )}
-                    </div>
-                </div>
-            </div>
-        )}
+                                </td>
+                                <td className="p-4 text-right">
+                                    <button 
+                                        onClick={() => setViewingOrder(group)} 
+                                        className="text-gray-400 hover:text-blue-600 p-2 rounded-lg hover:bg-blue-50 transition"
+                                    >
+                                        👁️ View
+                                    </button>
+                                </td>
+                            </tr>
+                        ))
+                    )}
+                </tbody>
+            </table>
+        </div>
 
       </main>
     </div>

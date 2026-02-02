@@ -20,7 +20,14 @@ export default function NewOrderPage() {
     DeliveryAddress: '' 
   });
   
-  const [deliveryDate, setDeliveryDate] = useState('');
+  // Default date to tomorrow
+  const getTomorrow = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  };
+
+  const [deliveryDate, setDeliveryDate] = useState(getTomorrow());
   const [deliveryMode, setDeliveryMode] = useState('Driver'); 
   
   // Cart State
@@ -28,23 +35,23 @@ export default function NewOrderPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Temp State for product cards (to hold qty/uom/price before adding)
+  const [productInputs, setProductInputs] = useState({});
+
   // 1. Fetch Customers & Products on Load
   useEffect(() => {
     async function loadData() {
-      // Get User Session first
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         router.push('/login');
         return;
       }
 
-      // Fetch Customers
       const { data: custData } = await supabase
         .from('Customers')
         .select('CompanyName, ContactPerson, DeliveryAddress, ContactNumber')
         .order('CompanyName');
 
-      // Fetch Products (Added AllowedUOMs)
       const { data: prodData } = await supabase
         .from('ProductMaster')
         .select('ProductCode, ProductName, BaseUOM, Category, StockBalance, ReportingUOM, AllowedUOMs')
@@ -57,88 +64,88 @@ export default function NewOrderPage() {
     loadData();
   }, []);
 
-  // Handle Customer Selection / Typing
+  // Handle Customer Selection
   const handleCustomerChange = (e) => {
     const custName = e.target.value;
     setSelectedCustomer(custName);
-    
-    // Check if the typed name matches an existing customer
     const details = customers.find(c => c.CompanyName.toLowerCase() === custName.toLowerCase());
     
     if (details) {
-      // Auto-fill details if match found
       setCustDetails({
         ContactPerson: details.ContactPerson || '',
         ContactNumber: details.ContactNumber || '',
         DeliveryAddress: details.DeliveryAddress || ''
       });
-    } else {
-      // Don't clear immediately if user is just typing a new name
-      // Only clear if it was previously populated and now they are typing something else? 
-      // Actually, standard behavior for "New" is blank details.
-      // But if editing a name, we might want to keep details. 
-      // For simplicity: If no match, we assume it's new/custom, but we let the user fill it. 
-      // We won't auto-clear to avoid frustration if they fix a typo in the name.
-      // If they want to clear, they can delete the text.
     }
   };
 
-  // Helper to update specific detail fields
   const handleDetailChange = (field, value) => {
     setCustDetails(prev => ({ ...prev, [field]: value }));
   };
 
+  // Helper to manage inputs for each product card independently
+  const getProductInput = (code, field, defaultValue) => {
+    return productInputs[code]?.[field] ?? defaultValue;
+  };
+
+  const updateProductInput = (code, field, value) => {
+    setProductInputs(prev => ({
+      ...prev,
+      [code]: { ...prev[code], [field]: value }
+    }));
+  };
+
   // 2. Add Item to Cart
   const addToCart = (product) => {
+    const inputs = productInputs[product.ProductCode] || {};
+    const qty = parseFloat(inputs.qty || 0);
+    
+    if (!qty || qty <= 0) {
+      alert("Please enter a valid quantity.");
+      return;
+    }
+
     const exists = cart.find(item => item.ProductCode === product.ProductCode);
     if (exists) {
       alert("Item already in cart!");
       return;
     }
 
-    // Parse AllowedUOMs string into array
-    const uomOptions = product.AllowedUOMs 
-      ? product.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u)
-      : [product.BaseUOM];
-
     const newItem = {
       ...product,
-      qty: 1,
-      uom: product.BaseUOM, // Default to Base
-      uomOptions: uomOptions, // Store options for the dropdown
-      price: 0,
+      qty: qty,
+      uom: inputs.uom || product.BaseUOM,
+      price: inputs.price || 0,
+      isReplacement: inputs.isReplacement || false,
       notes: ''
     };
+
     setCart([...cart, newItem]);
-    setSearchTerm('');
+    
+    // Reset inputs for this product
+    setProductInputs(prev => {
+      const newState = { ...prev };
+      delete newState[product.ProductCode];
+      return newState;
+    });
+    setSearchTerm(''); // Clear search to show "done" state
   };
 
-  // 3. Remove Item
   const removeFromCart = (code) => {
     setCart(cart.filter(item => item.ProductCode !== code));
   };
 
-  // 4. Update Cart Item
-  const updateItem = (code, field, value) => {
-    setCart(cart.map(item => 
-      item.ProductCode === code ? { ...item, [field]: value } : item
-    ));
-  };
-
-  // 5. Submit Order
   const handleSubmit = async () => {
     if (!selectedCustomer || !deliveryDate || cart.length === 0) {
-      alert("Please select a customer, date, and at least one item.");
+      alert("Please check fields. Customer, Date, and Items are required.");
       return;
     }
 
     setSubmitting(true);
-
     const dateStr = new Date().toISOString().slice(2,10).replace(/-/g,'');
     const random = Math.floor(1000 + Math.random() * 9000); 
     const doNumber = `DO-${dateStr}-${random}`;
 
-    // Prepare Rows
     const orderRows = cart.map(item => ({
       "Timestamp": new Date(),
       "Status": "Pending",
@@ -153,8 +160,8 @@ export default function NewOrderPage() {
       "Order Items": item.ProductName,
       "Quantity": item.qty,
       "UOM": item.uom,
-      "Price": item.price,
-      "SpecialNotes": item.notes
+      "Price": item.isReplacement ? 0 : item.price,
+      "SpecialNotes": item.isReplacement ? "REPLACEMENT" : item.notes
     }));
 
     const { error } = await supabase.from('Orders').insert(orderRows);
@@ -168,7 +175,6 @@ export default function NewOrderPage() {
     }
   };
 
-  // Improved "Fuzzy" Search
   const filteredProducts = products.filter(p => {
     if (!searchTerm) return false;
     const lowerTerm = searchTerm.toLowerCase();
@@ -177,62 +183,87 @@ export default function NewOrderPage() {
     return searchParts.every(part => combinedText.includes(part));
   });
 
-  // Stock Color Logic
   const getStockColor = (balance) => {
-    if (balance === null || balance === undefined) return 'bg-gray-200 text-gray-600'; 
     const qty = Number(balance);
-    if (qty < 20) return 'bg-red-100 text-red-800 border-red-200';
-    if (qty <= 50) return 'bg-orange-100 text-orange-800 border-orange-200';
-    return 'bg-green-100 text-green-800 border-green-200';
+    if (!balance) return 'bg-gray-100 text-gray-500';
+    if (qty < 20) return 'bg-red-100 text-red-600';
+    return 'bg-green-100 text-green-600';
   };
 
-  if (loading) return <div className="p-10 ml-64">Loading Order Form...</div>;
+  if (loading) return <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-500">Loading Order System...</div>;
 
   return (
-    <div className="flex bg-gray-50 min-h-screen">
+    <div className="flex bg-gray-50 min-h-screen font-sans text-gray-800">
       <Sidebar />
-      <main className="ml-64 flex-1 p-8">
-        <h1 className="text-3xl font-bold mb-6 text-gray-800">Create New Order</h1>
+      
+      <main className="ml-64 flex-1 p-6 lg:p-8">
+        {/* Page Header */}
+        <div className="flex justify-between items-center mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Create New Order</h1>
+            <p className="text-sm text-gray-400 mt-1">Fill in the details below to generate a Delivery Order.</p>
+          </div>
+        </div>
 
-        {/* --- 1. CUSTOMER & DELIVERY --- */}
-        <div className="bg-white p-6 rounded shadow mb-6 border-l-4 border-blue-500">
-          <h2 className="text-xl font-bold mb-4 text-gray-700">1. Customer & Delivery Info</h2>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Left Column: Selection */}
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-bold mb-1 text-gray-600">Customer Name</label>
-                {/* Editable Input with Datalist for Autocomplete */}
-                <input 
-                  list="customer-list"
-                  type="text"
-                  className="w-full border p-2 rounded focus:ring-2 focus:ring-blue-200 focus:outline-none"
-                  placeholder="Type name or select from list..."
-                  value={selectedCustomer}
-                  onChange={handleCustomerChange}
-                />
-                <datalist id="customer-list">
-                  {customers.map(c => (
-                    <option key={c.CompanyName} value={c.CompanyName} />
-                  ))}
-                </datalist>
-              </div>
+          {/* LEFT COLUMN: Transaction Details & Product Search */}
+          <div className="lg:col-span-2 space-y-6">
+            
+            {/* 1. Transaction Details Card */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+              <h2 className="text-lg font-bold text-gray-800 mb-5 border-b border-gray-100 pb-2">Transaction Details</h2>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Company Name</label>
+                  <input 
+                    list="customer-list"
+                    type="text"
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white transition-all text-sm font-medium"
+                    placeholder="Search customer..."
+                    value={selectedCustomer}
+                    onChange={handleCustomerChange}
+                  />
+                  <datalist id="customer-list">
+                    {customers.map(c => <option key={c.CompanyName} value={c.CompanyName} />)}
+                  </datalist>
+                </div>
 
-              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-bold mb-1 text-gray-600">Delivery Date</label>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Contact Person</label>
+                  <input 
+                    type="text" 
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white transition-all text-sm"
+                    value={custDetails.ContactPerson}
+                    onChange={(e) => handleDetailChange('ContactPerson', e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Contact Number</label>
+                  <input 
+                    type="text" 
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white transition-all text-sm"
+                    value={custDetails.ContactNumber}
+                    onChange={(e) => handleDetailChange('ContactNumber', e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Delivery Date</label>
                   <input 
                     type="date" 
-                    className="w-full border p-2 rounded"
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white transition-all text-sm"
                     value={deliveryDate}
                     onChange={e => setDeliveryDate(e.target.value)}
                   />
                 </div>
+
                 <div>
-                  <label className="block text-sm font-bold mb-1 text-gray-600">Delivery Mode</label>
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Delivery Mode</label>
                   <select 
-                    className="w-full border p-2 rounded"
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white transition-all text-sm appearance-none"
                     value={deliveryMode}
                     onChange={e => setDeliveryMode(e.target.value)}
                   >
@@ -241,199 +272,184 @@ export default function NewOrderPage() {
                     <option value="Self Pick-up">Self Pick-up</option>
                   </select>
                 </div>
+
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1.5 ml-1">Delivery Address</label>
+                  <input 
+                    type="text" 
+                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white transition-all text-sm"
+                    value={custDetails.DeliveryAddress}
+                    onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)}
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Right Column: Editable Details */}
-            <div className="bg-gray-50 p-4 rounded border border-gray-200 text-sm h-full">
-               <h3 className="font-bold text-gray-500 uppercase mb-3 text-xs tracking-wider border-b pb-1">Delivery Details (Editable)</h3>
-               <div className="space-y-3">
-                 <div>
-                    <label className="text-gray-500 text-xs uppercase block mb-1">Contact Person</label>
-                    <input 
-                      type="text" 
-                      className="w-full border p-1 rounded bg-white"
-                      value={custDetails.ContactPerson}
-                      onChange={(e) => handleDetailChange('ContactPerson', e.target.value)}
-                      placeholder="Name..."
-                    />
-                 </div>
-                 <div>
-                    <label className="text-gray-500 text-xs uppercase block mb-1">Phone Number</label>
-                    <input 
-                      type="text" 
-                      className="w-full border p-1 rounded bg-white"
-                      value={custDetails.ContactNumber}
-                      onChange={(e) => handleDetailChange('ContactNumber', e.target.value)}
-                      placeholder="01x-xxxxxxx"
-                    />
-                 </div>
-                 <div>
-                    <label className="text-gray-500 text-xs uppercase block mb-1">Delivery Address</label>
-                    <textarea 
-                      className="w-full border p-1 rounded bg-white h-16 resize-none"
-                      value={custDetails.DeliveryAddress}
-                      onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)}
-                      placeholder="Full Address..."
-                    />
-                 </div>
-               </div>
-            </div>
-          </div>
-        </div>
+            {/* 2. Product Search & Cards */}
+            <div>
+              <div className="relative mb-4">
+                <input 
+                  type="text"
+                  placeholder="🔍  Start typing to search products..."
+                  className="w-full p-4 pl-5 rounded-2xl border border-gray-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 text-lg transition-all"
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                />
+              </div>
 
-        {/* --- 2. PRODUCT SEARCH --- */}
-        <div className="bg-white p-6 rounded shadow mb-6 border-l-4 border-green-500">
-          <h2 className="text-xl font-bold mb-4 text-gray-700">2. Add Products</h2>
-          <div className="relative">
-            <input 
-              type="text"
-              placeholder="Start typing to search (e.g. 'apple fuji')..."
-              className="w-full border p-3 rounded shadow-sm focus:ring-2 focus:ring-green-200 focus:outline-none"
-              value={searchTerm}
-              onChange={e => setSearchTerm(e.target.value)}
-            />
-            
-            {/* Search Results Dropdown */}
-            {searchTerm && (
-              <div className="absolute z-10 w-full mt-1 max-h-80 overflow-y-auto border rounded-b bg-white shadow-xl">
-                {filteredProducts.slice(0, 15).map(p => {
-                    const stockColor = getStockColor(p.StockBalance);
-                    
-                    return (
-                      <div key={p.ProductCode} className="flex justify-between items-center p-3 hover:bg-blue-50 border-b transition-colors group">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                             <span className="font-bold text-gray-800">{p.ProductName}</span>
-                             <span className="text-xs text-gray-400 font-mono bg-gray-100 px-1 rounded">{p.ProductCode}</span>
-                          </div>
-                          
-                          {/* Stock Balance Badge */}
-                          <div className="mt-1 flex items-center gap-2">
-                             <span className={`text-xs font-bold px-2 py-0.5 rounded border ${stockColor}`}>
-                               Stock: {p.StockBalance ?? 0} {p.ReportingUOM || p.BaseUOM}
-                             </span>
-                             <span className="text-xs text-gray-400">({p.Category})</span>
-                          </div>
+              {/* Product Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredProducts.slice(0, 10).map(p => {
+                  const stockColor = getStockColor(p.StockBalance);
+                  const inputs = productInputs[p.ProductCode] || {};
+                  const uomOptions = p.AllowedUOMs 
+                    ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u)
+                    : [p.BaseUOM];
+
+                  return (
+                    <div key={p.ProductCode} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-shadow">
+                      {/* Card Header */}
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <h3 className="font-bold text-gray-800 text-sm">{p.ProductName}</h3>
+                          <p className="text-xs text-gray-400 font-mono mt-0.5">{p.ProductCode}</p>
                         </div>
-                        
-                        <button 
-                          onClick={() => addToCart(p)}
-                          className="bg-white border border-green-600 text-green-600 hover:bg-green-600 hover:text-white px-4 py-1.5 rounded text-sm font-bold transition-all"
-                        >
-                          + Add
-                        </button>
+                        <span className={`text-[10px] font-bold px-2 py-1 rounded-lg ${stockColor}`}>
+                          {p.StockBalance ? `${p.StockBalance} ${p.BaseUOM}` : 'NO STOCK'}
+                        </span>
                       </div>
-                    );
+
+                      {/* Controls */}
+                      <div className="space-y-3">
+                        <div className="flex gap-2">
+                          <select 
+                            className="flex-1 bg-gray-50 border border-gray-200 rounded-lg text-sm p-2 font-medium focus:ring-2 focus:ring-green-500 outline-none"
+                            value={inputs.uom || p.BaseUOM}
+                            onChange={(e) => updateProductInput(p.ProductCode, 'uom', e.target.value)}
+                          >
+                            {uomOptions.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                          <input 
+                            type="number" 
+                            placeholder="Qty"
+                            className="w-20 bg-gray-50 border border-gray-200 rounded-lg text-sm p-2 text-center font-bold focus:ring-2 focus:ring-green-500 outline-none"
+                            value={inputs.qty || ''}
+                            onChange={(e) => updateProductInput(p.ProductCode, 'qty', e.target.value)}
+                          />
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <input 
+                            type="checkbox" 
+                            id={`rep-${p.ProductCode}`}
+                            className="w-4 h-4 text-green-600 rounded focus:ring-green-500 border-gray-300"
+                            checked={inputs.isReplacement || false}
+                            onChange={(e) => updateProductInput(p.ProductCode, 'isReplacement', e.target.checked)}
+                          />
+                          <label htmlFor={`rep-${p.ProductCode}`} className="text-xs font-bold text-red-400 uppercase tracking-wide cursor-pointer select-none">
+                            Replacement
+                          </label>
+                        </div>
+
+                        <div className="flex gap-2">
+                          <div className="relative flex-1">
+                            <span className="absolute left-3 top-2 text-xs font-bold text-gray-400">RM</span>
+                            <input 
+                              type="number" 
+                              placeholder="0.00" 
+                              className="w-full bg-gray-50 border border-gray-200 rounded-lg text-sm p-2 pl-8 font-bold focus:ring-2 focus:ring-green-500 outline-none disabled:bg-gray-100 disabled:text-gray-400"
+                              value={inputs.price || ''}
+                              onChange={(e) => updateProductInput(p.ProductCode, 'price', e.target.value)}
+                              disabled={inputs.isReplacement}
+                            />
+                          </div>
+                          <button 
+                            onClick={() => addToCart(p)}
+                            className="bg-green-600 hover:bg-green-700 text-white rounded-lg w-10 flex items-center justify-center text-xl font-bold shadow-sm transition-colors active:scale-95"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
                 })}
-                {filteredProducts.length === 0 && (
-                   <p className="p-4 text-gray-500 text-center italic">No products found matching "{searchTerm}"</p>
+                
+                {filteredProducts.length === 0 && searchTerm && (
+                  <div className="col-span-2 text-center p-8 text-gray-400 italic bg-white rounded-2xl border border-dashed border-gray-200">
+                    No products found matching "{searchTerm}"
+                  </div>
                 )}
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* --- 3. CART --- */}
-        <div className="bg-white p-6 rounded shadow mb-6 border-l-4 border-yellow-500">
-          <h2 className="text-xl font-bold mb-4 text-gray-700">3. Order Summary ({cart.length} items)</h2>
-          
-          {cart.length === 0 ? (
-            <div className="text-center py-8 text-gray-400 bg-gray-50 rounded border border-dashed border-gray-300">
-              Your cart is empty. Search for products above to add them.
             </div>
-          ) : (
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-gray-100 border-b text-sm text-gray-600 uppercase">
-                  <th className="p-3">Product</th>
-                  <th className="p-3 w-24">Qty</th>
-                  <th className="p-3 w-32">UOM</th>
-                  <th className="p-3 w-28">Price</th>
-                  <th className="p-3">Notes</th>
-                  <th className="p-3 w-10"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {cart.map((item) => (
-                  <tr key={item.ProductCode} className="border-b hover:bg-gray-50 transition-colors">
-                    <td className="p-3">
-                      <div className="font-bold text-gray-800">{item.ProductName}</div>
-                      <div className="text-xs text-gray-500 font-mono">{item.ProductCode}</div>
-                    </td>
-                    <td className="p-3">
-                      <input 
-                        type="number" 
-                        className="w-full border p-1 rounded text-center focus:border-blue-500"
-                        value={item.qty}
-                        onChange={e => updateItem(item.ProductCode, 'qty', e.target.value)}
-                      />
-                    </td>
-                    <td className="p-3">
-                      {/* Dropdown for Allowed UOMs */}
-                      <select 
-                        className="w-full border p-1 rounded bg-white text-center focus:border-blue-500"
-                        value={item.uom}
-                        onChange={e => updateItem(item.ProductCode, 'uom', e.target.value)}
-                      >
-                        {item.uomOptions && item.uomOptions.length > 0 ? (
-                           item.uomOptions.map(u => (
-                             <option key={u} value={u}>{u}</option>
-                           ))
-                        ) : (
-                           <option value={item.BaseUOM}>{item.BaseUOM}</option>
-                        )}
-                      </select>
-                    </td>
-                    <td className="p-3">
-                       <input 
-                        type="number" 
-                        className="w-full border p-1 rounded text-right"
-                        value={item.price}
-                        placeholder="0.00"
-                        onChange={e => updateItem(item.ProductCode, 'price', e.target.value)}
-                      />
-                    </td>
-                    <td className="p-3">
-                      <input 
-                        type="text" 
-                        placeholder="Special requests..."
-                        className="w-full border p-1 rounded text-sm"
-                        value={item.notes}
-                        onChange={e => updateItem(item.ProductCode, 'notes', e.target.value)}
-                      />
-                    </td>
-                    <td className="p-3 text-center">
+          </div>
+
+          {/* RIGHT COLUMN: Cart */}
+          <div className="lg:col-span-1">
+            <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-100 sticky top-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-lg font-bold text-gray-800">My Cart</h2>
+                <span className="bg-gray-100 text-gray-600 text-xs font-bold px-3 py-1 rounded-full">{cart.length}</span>
+              </div>
+
+              {/* Cart Items List */}
+              <div className="bg-gray-50 rounded-xl p-4 min-h-[250px] max-h-[400px] overflow-y-auto space-y-3 mb-4 border border-gray-100 custom-scrollbar">
+                {cart.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-gray-400 text-sm italic">
+                    Cart is empty
+                  </div>
+                ) : (
+                  cart.map((item, idx) => (
+                    <div key={`${item.ProductCode}-${idx}`} className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm flex justify-between items-center group">
+                      <div className="flex-1">
+                        <div className="font-bold text-sm text-gray-800">
+                          {item.ProductName} 
+                          {item.isReplacement && <span className="text-[10px] text-red-500 font-bold bg-red-50 px-1 ml-2 rounded">REP</span>}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-0.5">
+                          <span className="font-bold text-gray-700">{item.qty} {item.uom}</span>
+                          {!item.isReplacement && item.price > 0 && ` • RM ${item.price}`}
+                        </div>
+                      </div>
                       <button 
                         onClick={() => removeFromCart(item.ProductCode)}
-                        className="text-gray-400 hover:text-red-600 font-bold px-2"
-                        title="Remove Item"
+                        className="text-gray-300 hover:text-red-500 font-bold px-2 transition-colors"
                       >
                         ✕
                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+                    </div>
+                  ))
+                )}
+              </div>
 
-        {/* --- SUBMIT BUTTON --- */}
-        <div className="text-right">
-          <button 
-            onClick={handleSubmit}
-            disabled={submitting}
-            className={`px-8 py-4 rounded text-white font-bold text-lg shadow-lg transform transition-all ${
-              submitting 
-                ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-green-600 hover:bg-green-700 hover:scale-105 active:scale-95'
-            }`}
-          >
-            {submitting ? 'Creating Order...' : '✅ Submit Order'}
-          </button>
-        </div>
+              <textarea 
+                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:bg-white transition-all mb-4 resize-none"
+                rows="3"
+                placeholder="Notes..."
+                value={cart[0]?.notes || ""} // Simplified notes handling for demo, ideally per item or global
+                onChange={(e) => {
+                   // Updating notes for all items for simplicity in this view, 
+                   // or add a global note state if preferred.
+                   const val = e.target.value;
+                   setCart(cart.map(i => ({...i, notes: val})));
+                }}
+              ></textarea>
 
+              <button 
+                onClick={handleSubmit}
+                disabled={submitting}
+                className={`w-full py-4 rounded-xl text-white font-bold text-lg shadow-lg transform transition-all duration-200 
+                  ${submitting 
+                    ? 'bg-gray-400 cursor-not-allowed' 
+                    : 'bg-green-600 hover:bg-green-700 hover:scale-[1.02] hover:shadow-xl active:scale-95'
+                  }`}
+              >
+                {submitting ? 'Submitting...' : 'Submit Order'}
+              </button>
+            </div>
+          </div>
+
+        </div>
       </main>
     </div>
   );
