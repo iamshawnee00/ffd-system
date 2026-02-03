@@ -224,6 +224,15 @@ export default function OrderListPage() {
     }
   };
 
+  const sendToShipday = async () => {
+    // Placeholder for Shipday integration logic
+    alert(`Sending Order ${editingOrder.DONumber} to Shipday... (Feature coming soon)`);
+  };
+
+  const printOrder = () => {
+    window.open(`/orders/${editingOrder.id}/print`, '_blank');
+  };
+
   // --- SELECTION & FILTER LOGIC ---
 
   const filteredOrders = orders.filter(order => {
@@ -365,8 +374,12 @@ export default function OrderListPage() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {filteredOrders.map((order) => (
-                  <tr key={order.id} className="hover:bg-green-50/30 transition-colors group">
-                    <td className="p-5 text-center">
+                  <tr 
+                    key={order.id} 
+                    className="hover:bg-green-50/30 transition-colors group cursor-pointer"
+                    onClick={() => openEditModal(order)} // Row click triggers modal
+                  >
+                    <td className="p-5 text-center" onClick={(e) => e.stopPropagation()}>
                       <input 
                         type="checkbox" 
                         className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-gray-300 cursor-pointer"
@@ -396,7 +409,7 @@ export default function OrderListPage() {
                         {order["Delivery Address"]}
                       </div>
                     </td>
-                    <td className="p-5 text-right">
+                    <td className="p-5 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-2">
                         {/* Print Button */}
                         <Link href={`/orders/${order.id}/print`} target="_blank" className="p-2 text-gray-400 hover:text-gray-700 bg-gray-50 hover:bg-gray-100 rounded-lg transition" title="Print Invoice">🖨️</Link>
@@ -405,7 +418,7 @@ export default function OrderListPage() {
                           <>
                             {/* EDIT BUTTON */}
                             <button 
-                              onClick={() => openEditModal(order)}
+                              onClick={(e) => { e.stopPropagation(); openEditModal(order); }}
                               className="p-2 text-orange-400 hover:text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-lg transition"
                               title="Edit Order"
                             >
@@ -423,7 +436,7 @@ export default function OrderListPage() {
 
                         {activeTab === 'Completed' && (
                           <button 
-                            onClick={() => updateOrderStatus(order.DONumber, 'Packing')} // Returns to 'Packing' (which includes Pending)
+                            onClick={() => updateOrderStatus(order.DONumber, 'Packing')} 
                             className="text-xs font-bold text-gray-400 hover:text-red-500 py-2 px-3 transition"
                             title="Return to Packing"
                           >
@@ -445,64 +458,77 @@ export default function OrderListPage() {
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up">
               
               {/* Modal Header */}
-              <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50">
                 <div>
                   <h3 className="text-xl font-bold text-gray-800">Edit Order: {editingOrder.DONumber}</h3>
-                  <p className="text-xs text-gray-500">Modify items, prices, or delivery details.</p>
+                  <p className="text-xs text-gray-500 mt-1">Modify items, prices, or delivery details.</p>
                 </div>
-                <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold px-2">×</button>
+                <div className="flex gap-2">
+                    <button onClick={sendToShipday} className="px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                        🚀 Send to Shipday
+                    </button>
+                    <button onClick={printOrder} className="px-4 py-2 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg text-xs font-bold transition flex items-center gap-2">
+                        🖨️ Print DO
+                    </button>
+                    <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold px-2 ml-2">×</button>
+                </div>
               </div>
 
               {/* Modal Body */}
-              <div className="p-6 overflow-y-auto flex-1 space-y-6">
+              <div className="p-6 overflow-y-auto flex-1 space-y-6 bg-gray-50/30">
                 
-                {/* 1. Header Fields */}
-                <div className="grid grid-cols-2 gap-4 bg-blue-50 p-4 rounded-xl border border-blue-100">
-                   <div>
-                      <label className="text-xs font-bold text-blue-700 uppercase block mb-1">Customer Name</label>
-                      <input 
-                        list="edit-customer-list"
-                        className="w-full p-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                        value={editingOrder["Customer Name"]}
-                        onChange={e => handleEditHeaderChange("Customer Name", e.target.value)}
-                        placeholder="Type to search or add new..."
-                      />
-                      <datalist id="edit-customer-list">
-                        {customers.map(c => <option key={c.CompanyName} value={c.CompanyName} />)}
-                      </datalist>
-                   </div>
-                   <div>
-                      <label className="text-xs font-bold text-blue-700 uppercase block mb-1">Delivery Address</label>
-                      <input 
-                        className="w-full p-2 border border-blue-200 rounded-lg text-sm" 
-                        value={editingOrder["Delivery Address"]}
-                        onChange={e => handleEditHeaderChange("Delivery Address", e.target.value)}
-                      />
-                   </div>
-                   <div>
-                      <label className="text-xs font-bold text-blue-700 uppercase block mb-1">Contact Person</label>
-                      <input 
-                        className="w-full p-2 border border-blue-200 rounded-lg text-sm" 
-                        value={editingOrder["Contact Person"]}
-                        onChange={e => handleEditHeaderChange("Contact Person", e.target.value)}
-                      />
-                   </div>
-                   <div>
-                      <label className="text-xs font-bold text-blue-700 uppercase block mb-1">Contact Number</label>
-                      <input 
-                        className="w-full p-2 border border-blue-200 rounded-lg text-sm" 
-                        value={editingOrder["Contact Number"]}
-                        onChange={e => handleEditHeaderChange("Contact Number", e.target.value)}
-                      />
+                {/* 1. Customer Details Section */}
+                <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
+                   <div className="grid grid-cols-2 gap-6">
+                       <div>
+                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Customer Name</label>
+                          <input 
+                            list="edit-customer-list"
+                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                            value={editingOrder["Customer Name"]}
+                            onChange={e => handleEditHeaderChange("Customer Name", e.target.value)}
+                            placeholder="Type to search or add new..."
+                          />
+                          <datalist id="edit-customer-list">
+                            {customers.map(c => <option key={c.CompanyName} value={c.CompanyName} />)}
+                          </datalist>
+                       </div>
+                       <div>
+                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Delivery Address</label>
+                          <input 
+                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white" 
+                            value={editingOrder["Delivery Address"]}
+                            onChange={e => handleEditHeaderChange("Delivery Address", e.target.value)}
+                          />
+                       </div>
+                       <div>
+                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Contact Person</label>
+                          <input 
+                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white" 
+                            value={editingOrder["Contact Person"]}
+                            onChange={e => handleEditHeaderChange("Contact Person", e.target.value)}
+                          />
+                       </div>
+                       <div>
+                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Contact Number</label>
+                          <input 
+                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white" 
+                            value={editingOrder["Contact Number"]}
+                            onChange={e => handleEditHeaderChange("Contact Number", e.target.value)}
+                          />
+                       </div>
                    </div>
                 </div>
 
                 {/* 2. Add Item Search */}
                 <div className="relative">
+                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <span className="text-gray-400">🔍</span>
+                   </div>
                    <input 
                       type="text"
-                      placeholder="🔍 Search product to add..."
-                      className="w-full p-3 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-green-500 outline-none"
+                      placeholder="Search product to add..."
+                      className="w-full p-3 pl-10 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-green-500 outline-none bg-white"
                       value={productSearchTerm}
                       onChange={e => setProductSearchTerm(e.target.value)}
                    />
@@ -518,90 +544,87 @@ export default function OrderListPage() {
                                <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500">{p.ProductCode}</span>
                             </div>
                          ))}
-                         {filteredProducts.length === 0 && <div className="p-3 text-center text-gray-400 text-sm">No match.</div>}
+                         {filteredProducts.length === 0 && <div className="p-3 text-center text-gray-400 text-sm">No match found.</div>}
                       </div>
                    )}
                 </div>
 
-                {/* 3. Items Table */}
-                <table className="w-full text-left border-collapse text-sm">
-                  <thead className="bg-gray-100 text-gray-500 uppercase text-xs">
-                    <tr>
-                      <th className="p-3">Item</th>
-                      <th className="p-3 w-20 text-center">Qty</th>
-                      <th className="p-3 w-24 text-center">UOM</th>
-                      <th className="p-3 w-24 text-right">Price</th>
-                      <th className="p-3 w-10"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {editingItems.map((item, idx) => (
-                      <tr key={item.id || idx} className="hover:bg-gray-50">
-                        <td className="p-3">
-                          {/* Editable Item Name with Datalist */}
-                          <input 
-                            list="global-product-list"
-                            className="w-full p-1 border rounded text-sm font-medium text-gray-800 focus:ring-2 focus:ring-blue-100"
-                            value={item["Order Items"]}
-                            onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}
-                          />
-                          <div className="text-xs text-gray-400 mt-1">{item["Product Code"]}</div>
-                        </td>
-                        <td className="p-3">
-                          <input 
-                            type="number" 
-                            className="w-full p-1 border rounded text-center"
-                            value={item.Quantity}
-                            onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)}
-                          />
-                        </td>
-                        <td className="p-3">
-                          <select 
-                            className="w-full p-1 border rounded text-xs bg-white"
-                            value={item.UOM}
-                            onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}
-                          >
-                             {getUOMOptions(item["Product Code"]).length > 0 ? (
-                               getUOMOptions(item["Product Code"]).map(u => <option key={u} value={u}>{u}</option>)
-                             ) : (
-                               <option value={item.UOM}>{item.UOM}</option>
-                             )}
-                          </select>
-                        </td>
-                        <td className="p-3">
-                          <input 
-                            type="number" 
-                            className="w-full p-1 border rounded text-right"
-                            value={item.Price}
-                            onChange={e => handleEditItemChange(idx, 'Price', e.target.value)}
-                          />
-                        </td>
-                        <td className="p-3 text-center">
-                          <button 
-                            onClick={() => handleDeleteItem(idx)}
-                            className="text-red-400 hover:text-red-600 font-bold"
-                          >
-                            ✕
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                {/* 3. Items List */}
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                    <div className="grid grid-cols-12 gap-4 p-3 bg-gray-50 border-b border-gray-200 text-[10px] font-bold text-gray-500 uppercase">
+                        <div className="col-span-5">Item</div>
+                        <div className="col-span-2 text-center">Qty</div>
+                        <div className="col-span-2 text-center">UOM</div>
+                        <div className="col-span-2 text-right">Price</div>
+                        <div className="col-span-1"></div>
+                    </div>
+                    <div className="divide-y divide-gray-100">
+                        {editingItems.map((item, idx) => (
+                          <div key={item.id || idx} className="grid grid-cols-12 gap-4 p-3 items-center hover:bg-gray-50">
+                            <div className="col-span-5">
+                              <input 
+                                list="global-product-list"
+                                className="w-full p-1.5 border border-gray-200 rounded text-sm font-bold text-gray-800 focus:ring-2 focus:ring-blue-100 outline-none"
+                                value={item["Order Items"]}
+                                onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}
+                              />
+                              <div className="text-[10px] text-gray-400 mt-1 pl-1">{item["Product Code"]}</div>
+                            </div>
+                            <div className="col-span-2">
+                              <input 
+                                type="number" 
+                                className="w-full p-1.5 border border-gray-200 rounded text-center text-sm"
+                                value={item.Quantity}
+                                onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)}
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <select 
+                                className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white text-center uppercase"
+                                value={item.UOM}
+                                onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}
+                              >
+                                 {getUOMOptions(item["Product Code"]).length > 0 ? (
+                                   getUOMOptions(item["Product Code"]).map(u => <option key={u} value={u}>{u}</option>)
+                                 ) : (
+                                   <option value={item.UOM}>{item.UOM}</option>
+                                 )}
+                              </select>
+                            </div>
+                            <div className="col-span-2">
+                              <input 
+                                type="number" 
+                                className="w-full p-1.5 border border-gray-200 rounded text-right text-sm"
+                                value={item.Price}
+                                onChange={e => handleEditItemChange(idx, 'Price', e.target.value)}
+                              />
+                            </div>
+                            <div className="col-span-1 text-center">
+                              <button 
+                                onClick={() => handleDeleteItem(idx)}
+                                className="text-red-300 hover:text-red-600 font-bold text-lg transition"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                </div>
 
               </div>
 
               {/* Modal Footer */}
-              <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3">
+              <div className="p-4 border-t border-gray-100 bg-white flex justify-end gap-3">
                 <button 
                   onClick={() => setIsEditModalOpen(false)}
-                  className="px-6 py-2 rounded-xl border border-gray-300 text-gray-600 font-bold hover:bg-gray-100 transition"
+                  className="px-6 py-2.5 rounded-xl border border-gray-300 text-gray-600 font-bold hover:bg-gray-50 transition text-sm"
                 >
                   Cancel
                 </button>
                 <button 
                   onClick={saveEditedOrder}
-                  className="px-6 py-2 rounded-xl bg-green-600 text-white font-bold hover:bg-green-700 shadow-lg transform active:scale-95 transition"
+                  className="px-8 py-2.5 rounded-xl bg-green-600 text-white font-bold hover:bg-green-700 shadow-lg transform active:scale-95 transition text-sm"
                 >
                   Save Changes
                 </button>

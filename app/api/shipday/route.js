@@ -6,16 +6,15 @@ export async function POST(request) {
     const { order } = body; 
 
     // Debugging: Log what we received
-    console.log("Shipday API Route received order:", order ? "Yes" : "No");
+    console.log("Shipday API Route received order:", order?.info?.DONumber);
 
     // 1. Validate Payload Structure
     if (!order || !order.info || !order.items) {
-      console.error("Invalid payload structure. Received:", JSON.stringify(body).substring(0, 200));
+      console.error("Invalid payload structure.");
       return NextResponse.json({ error: "Invalid order data structure. Expected { info, items }" }, { status: 400 });
     }
 
     // 2. Map Data to Shipday Format
-    // Access properties via 'order.info'
     const payload = {
       orderNumber: order.info.DONumber,
       customerName: order.info["Customer Name"],
@@ -35,9 +34,11 @@ export async function POST(request) {
     };
 
     // 3. Check API Key
-    const apiKey = process.env.rcYWeuw04H.hZp9ci8IDz8XDjA0URsP;
+    // NOTE: Ideally, store this in .env.local as SHIPDAY_API_KEY
+    const apiKey = "rcYWeuw04H.hZp9ci8IDz8XDjA0URsP"; 
+    
     if (!apiKey) {
-        console.error("Server Error: SHIPDAY_API_KEY is not set in .env.local");
+        console.error("Server Error: Missing API Key");
         return NextResponse.json({ error: "Server Configuration Error: Missing API Key" }, { status: 500 });
     }
 
