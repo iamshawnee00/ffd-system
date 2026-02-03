@@ -266,7 +266,6 @@ export default function OrderListPage() {
     let successCount = 0;
     let failCount = 0;
 
-    // Convert Set to Array
     const doNumbers = Array.from(selectedOrders);
 
     for (const doNum of doNumbers) {
@@ -283,12 +282,27 @@ export default function OrderListPage() {
           continue;
         }
 
-        // 2. Send to Shipday API using the FRESHLY fetched 'items'
-        // Construct payload structure expected by API locally
-        const orderPayload = {
-          info: items[0], // Header info from first item of THIS order
-          items: items    // All items of THIS order
+        // Force format Date to YYYY-MM-DD string to ensure Shipday parses it correctly
+        let formattedDate = items[0]["Delivery Date"];
+        if (formattedDate) {
+             const d = new Date(formattedDate);
+             if(!isNaN(d.getTime())) {
+                 formattedDate = d.toISOString().split('T')[0];
+             }
+        }
+        
+        const orderInfo = {
+             ...items[0],
+             "Delivery Date": formattedDate
         };
+
+        // 2. Send to Shipday API using the FRESHLY fetched 'items'
+        const orderPayload = {
+          info: orderInfo, 
+          items: items   
+        };
+        
+        console.log(`Sending DO: ${doNum}, Date: ${formattedDate}`);
 
         const response = await fetch('/api/shipday', {
           method: 'POST',

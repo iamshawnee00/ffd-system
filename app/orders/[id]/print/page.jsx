@@ -1,21 +1,23 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { supabase } from '../../../lib/supabaseClient'; // Fixed path (3 levels up)
+import { supabase } from '../../../lib/supabaseClient';
 import { useParams } from 'next/navigation';
 
 export default function PrintOrderPage() {
-  const params = useParams(); // Get ID from URL
+  const params = useParams();
   const { id } = params;
   
   const [orderData, setOrderData] = useState(null);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Constants: Adjusted for A4 fit with fixed footer
+  const ITEMS_PER_PAGE = 18;
+
   useEffect(() => {
     async function fetchFullOrder() {
       if (!id) return;
 
-      // 1. Get the specific row clicked to find the DONumber
       const { data: currentItem, error: fetchError } = await supabase
         .from('Orders')
         .select('DONumber')
@@ -28,7 +30,6 @@ export default function PrintOrderPage() {
         return;
       }
 
-      // 2. Fetch ALL items with this DONumber
       const { data: allItems, error: listError } = await supabase
         .from('Orders')
         .select('*')
@@ -37,7 +38,6 @@ export default function PrintOrderPage() {
       if (listError) {
         console.error("Error fetching items:", listError);
       } else {
-        // Use the first item to populate header info (Customer, Date, etc.)
         setOrderData(allItems[0]);
         setItems(allItems);
       }
@@ -50,106 +50,24 @@ export default function PrintOrderPage() {
   if (loading) return <div className="p-10 text-center">Loading Invoice...</div>;
   if (!orderData) return <div className="p-10 text-center text-red-500">Order not found.</div>;
 
+  const pages = [];
+  for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
+    pages.push(items.slice(i, i + ITEMS_PER_PAGE));
+  }
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '';
+    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+        const [y, m, d] = dateStr.split('-');
+        return `${d}/${m}/${y}`;
+    }
+    const d = new Date(dateStr);
+    return !isNaN(d) ? d.toLocaleDateString('en-GB') : dateStr;
+  };
+
   return (
-    <div className="bg-gray-100 min-h-screen p-8 print:p-0 print:bg-white">
-      {/* PAPER CONTAINER */}
-      <div className="max-w-[210mm] mx-auto bg-white shadow-lg p-10 print:shadow-none print:w-full print:max-w-none">
-        
-        {/* --- HEADER --- */}
-        <div className="flex justify-between items-start mb-8 border-b-2 border-gray-800 pb-4">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">FRESHER FARM DIRECT SDN BHD</h1>
-            <p className="text-xs text-gray-500 mt-1">Reg No: 200701010054 | TIN: C20176000020</p>
-            <div className="text-sm mt-3 space-y-1 text-gray-700">
-              <p>Lot 18 & 19, Kompleks Selayang, Batu 8-1/2</p>
-              <p>Jalan Ipoh, 68100 Batu Caves, Selangor</p>
-              <p><strong>Tel:</strong> 011-2862 8667</p>
-              <p><strong>Email:</strong> fresherfarmdirect2.0@gmail.com</p>
-            </div>
-          </div>
-          <div className="text-right">
-            <h2 className="text-4xl font-bold text-gray-800 uppercase tracking-widest mb-4">Delivery Order</h2>
-            <table className="text-sm ml-auto">
-              <tbody>
-                <tr>
-                  <td className="font-bold text-gray-600 pr-4">DO No:</td>
-                  <td className="font-bold">{orderData.DONumber}</td>
-                </tr>
-                <tr>
-                  <td className="font-bold text-gray-600 pr-4">Date:</td>
-                  <td>{orderData["Delivery Date"]}</td>
-                </tr>
-                <tr>
-                  <td className="font-bold text-gray-600 pr-4">Mode:</td>
-                  <td>{orderData["Delivery Mode"] || 'Standard'}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* --- CUSTOMER INFO --- */}
-        <div className="mb-8 p-4 bg-gray-50 rounded border border-gray-200 print:bg-transparent print:border-none print:p-0">
-          <h3 className="text-xs font-bold text-gray-500 uppercase mb-2">Deliver To:</h3>
-          <p className="text-xl font-bold text-gray-900">{orderData["Customer Name"]}</p>
-          <p className="text-sm text-gray-700 whitespace-pre-line mt-1 max-w-md">
-            {orderData["Delivery Address"] || "Address not provided"}
-          </p>
-          {(orderData["Contact Person"] || orderData["Contact Number"]) && (
-            <p className="text-sm mt-2 text-gray-600">
-              <strong>Contact:</strong> {orderData["Contact Person"]} ({orderData["Contact Number"]})
-            </p>
-          )}
-        </div>
-
-        {/* --- ITEMS TABLE --- */}
-        <table className="w-full text-sm mb-8 border-collapse">
-          <thead>
-            <tr className="bg-gray-100 print:bg-gray-100 border-y-2 border-gray-800">
-              <th className="py-3 px-2 text-left w-12">#</th>
-              <th className="py-3 px-2 text-left">Item Description</th>
-              <th className="py-3 px-2 text-left w-24">Code</th>
-              <th className="py-3 px-2 text-center w-20">Qty</th>
-              <th className="py-3 px-2 text-center w-20">UOM</th>
-              <th className="py-3 px-2 text-left">Notes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item, index) => (
-              <tr key={index} className="border-b border-gray-300">
-                <td className="py-3 px-2 text-gray-500">{index + 1}</td>
-                <td className="py-3 px-2 font-medium">{item["Order Items"]}</td>
-                <td className="py-3 px-2 text-gray-500 text-xs">{item["Product Code"]}</td>
-                <td className="py-3 px-2 text-center font-bold">{item["Quantity"]}</td>
-                <td className="py-3 px-2 text-center text-xs uppercase">{item["UOM"]}</td>
-                <td className="py-3 px-2 italic text-gray-500 text-xs">{item["SpecialNotes"]}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {/* --- FOOTER / SIGNATURES --- */}
-        <div className="mt-16 grid grid-cols-2 gap-20 text-center break-inside-avoid">
-          <div>
-            <div className="h-20 border-b border-black mb-2"></div>
-            <p className="text-sm font-bold">Driver / Storekeeper</p>
-            <p className="text-xs text-gray-500">Sign & Date</p>
-          </div>
-          <div>
-            <div className="h-20 border-b border-black mb-2"></div>
-            <p className="text-sm font-bold">Received By</p>
-            <p className="text-xs text-gray-500">Sign & Chop</p>
-          </div>
-        </div>
-
-        <div className="mt-8 text-center text-xs text-gray-400">
-          <p>Notes: All goods delivered are subject to inspection upon receipt.</p>
-          <p>Please return any rejected goods immediately via the driver.</p>
-        </div>
-
-      </div>
-
-      {/* --- FLOATING PRINT BUTTON --- */}
+    <div className="bg-gray-200 min-h-screen p-8 print:p-0 print:bg-white text-black font-sans">
+      
       <button 
         onClick={() => window.print()}
         className="fixed bottom-8 right-8 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full shadow-2xl print:hidden flex items-center gap-2 z-50 transition-all transform hover:scale-105"
@@ -157,10 +75,143 @@ export default function PrintOrderPage() {
         <span className="text-xl">🖨️</span> Print DO
       </button>
 
+      {pages.map((pageItems, pageIndex) => (
+        <div key={pageIndex} 
+             className="mx-auto bg-white shadow-xl mb-8 print:shadow-none print:mb-0 flex flex-col relative page-break-after overflow-hidden box-border" 
+             style={{ width: '210mm', height: '297mm', padding: '10mm' }}>
+          
+          {/* --- MODULE 1: COMPANY INFO --- */}
+          <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-2 h-[28mm]">
+             <div className="flex gap-3 h-full items-center">
+                <div className="w-16 h-16 relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" alt="Logo" className="w-full h-full object-contain" />
+                </div>
+                <div>
+                    <h1 className="text-xl font-black uppercase tracking-tight mb-1">FRESHER FARM DIRECT SDN BHD</h1>
+                    <div className="text-[9px] leading-tight text-gray-800 font-medium">
+                        <p>Reg No: 200701010054 | TIN No: C20176000020 | MSIC Code: 46319</p>
+                        <p>Address: Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, 68100 Batu Caves, Selangor</p>
+                        <p>Tel: 011-2862 8667 | Email: fresherfarmdirect2.0@gmail.com</p>
+                    </div>
+                </div>
+             </div>
+             
+             {/* DELIVERY ORDER TITLE */}
+             <div className="text-right self-center">
+                  <h2 className="text-3xl font-black uppercase tracking-widest leading-none">DELIVERY<br/>ORDER</h2>
+             </div>
+          </div>
+
+          {/* --- MODULE 2: HEADER & CUSTOMER --- */}
+          <div className="h-[30mm] flex justify-between items-start text-xs pt-1 mb-0">
+              <div className="w-[60%] pr-2">
+                  <div className="mb-2">
+                      <span className="font-bold text-[10px] text-gray-500 uppercase tracking-widest block mb-1">Deliver To:</span>
+                      <div className="font-black text-lg uppercase leading-tight mb-1">{orderData["Customer Name"]}</div>
+                      <div className="whitespace-pre-line leading-tight text-gray-700 mb-1">{orderData["Delivery Address"]}</div>
+                      <div className="font-bold text-gray-800">
+                          {orderData["Contact Number"]} {orderData["Contact Person"] ? `(${orderData["Contact Person"]})` : ''}
+                      </div>
+                  </div>
+              </div>
+
+              <div className="w-[30%]">
+                  <div className="grid grid-cols-[60px_1fr] gap-y-1 text-right border-l-2 border-gray-100 pl-4 py-1">
+                      <span className="font-bold text-gray-500">DO No:</span>
+                      <span className="font-bold text-black text-sm">{orderData.DONumber}</span>
+
+                      <span className="font-bold text-gray-500">Date:</span>
+                      <span className="font-bold text-black">{formatDate(orderData["Delivery Date"])}</span>
+
+                      <span className="font-bold text-gray-500">Status:</span>
+                      <span className="font-bold uppercase text-black">{orderData["Delivery Mode"] || 'DRIVER'}</span>
+
+                      <span className="font-bold text-gray-500">Page:</span>
+                      <span className="font-bold text-black">{pageIndex + 1} / {pages.length}</span>
+                  </div>
+              </div>
+          </div>
+
+          {/* --- MODULE 3: ITEMS TABLE --- */}
+          <div className="flex-grow border-t-2 border-black relative mt-0">
+            <table className="w-full text-xs border-collapse table-fixed">
+              <thead className="h-8">
+                <tr className="border-b-2 border-black text-black uppercase font-bold bg-gray-100 print:bg-transparent">
+                  <th className="py-1 px-1 text-center w-8 border-r border-black">No</th>
+                  <th className="py-1 px-2 text-left border-r border-black w-auto">Description</th>
+                  <th className="py-1 px-1 text-center w-10 border-r border-black">Qty</th>
+                  <th className="py-1 px-1 text-center w-12 border-r border-black">UOM</th>
+                  <th className="py-1 px-1 text-center w-16 border-r border-black">Wgt</th>
+                  <th className="py-1 px-1 text-right w-16">Price</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageItems.map((item, index) => (
+                  <tr key={index} className="border-b border-gray-200 h-5">
+                    <td className="py-1 px-1 text-center border-r border-gray-300 text-[10px]">{index + 1 + (pageIndex * ITEMS_PER_PAGE)}</td>
+                    <td className="py-1 px-2 border-r border-gray-300 font-bold truncate text-[11px]">
+                        {item["Order Items"]}
+                    </td>
+                    <td className="py-1 px-1 text-center border-r border-gray-300 font-bold text-[11px]">{item["Quantity"]}</td>
+                    <td className="py-1 px-1 text-center border-r border-gray-300 uppercase text-[10px]">{item["UOM"]}</td>
+                    <td className="py-1 px-1 text-center border-r border-gray-300"></td>
+                    <td className="py-1 px-1 text-right text-[11px]">{item.Price > 0 ? Number(item.Price).toFixed(2) : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* --- FIXED BOTTOM SECTION (Modules 4 & 5) --- */}
+          <div className="h-[60mm] mt-auto">
+              {/* --- MODULE 4: NOTES --- */}
+              <div className="mb-2 h-[20mm]">
+                  <div className="font-bold text-[10px] uppercase mb-0.5">NOTE</div>
+                  <div className="border border-black h-full p-1 text-[12px] leading-tight overflow-hidden flex flex-col gap-1">
+                      {orderData.notes && <div className="whitespace-pre-line">{orderData.notes}</div>}
+                      
+                      {/* Deduplicate item special notes and display each on a new line */}
+                      {[...new Set(pageItems
+                        .filter(i => i.SpecialNotes && i.SpecialNotes.trim() !== "")
+                        .map(i => i.SpecialNotes)
+                      )].map((note, idx) => (
+                          <div key={idx} className="whitespace-pre-line">{note}</div>
+                      ))} 
+                  </div>
+              </div>
+
+              {/* --- MODULE 5: SIGNATURES --- */}
+              <div className="h-[35mm] relative">
+                 <div className="grid grid-cols-3 gap-4 pt-1 absolute bottom-0 w-full">
+                    {/* Driver */}
+                    <div className="mt-8 pt-1 text-center">
+                        <div className="border-t border-black w-3/4 mx-auto"></div>
+                        <p className="font-bold uppercase text-[10px] mt-1">PEMANDU</p>
+                    </div>
+                    {/* QC */}
+                    <div className="mt-8 pt-1 text-center">
+                        <div className="border-t border-black w-3/4 mx-auto"></div>
+                        <p className="font-bold uppercase text-[10px] mt-1">TEAM QC</p>
+                    </div>
+                    {/* Receiver */}
+                    <div className="mt-8 pt-1 text-center">
+                        <div className="border-t border-black w-3/4 mx-auto"></div>
+                        <p className="font-bold uppercase text-[10px] mt-1">TEAM PENGUTIP</p>
+                    </div>
+                 </div>
+              </div>
+          </div>
+          
+        </div>
+      ))}
+
       <style jsx global>{`
         @media print {
-          body { background: white; }
-          @page { margin: 0; size: auto; }
+          @page { size: A4; margin: 0; }
+          body { background: white; -webkit-print-color-adjust: exact; }
+          .page-break-after { page-break-after: always; }
+          .page-break-after:last-child { page-break-after: auto; }
         }
       `}</style>
     </div>
