@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { supabase } from '../../../lib/supabaseClient';
+import { supabase } from '../../lib/supabaseClient';
 import { useSearchParams } from 'next/navigation';
 
 export default function UsageReportPage() {
@@ -11,6 +11,10 @@ export default function UsageReportPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  // Constants for A4 Layout
+  // 3. Limit the number of product to 35
+  const ITEMS_PER_PAGE = 35; 
+
   useEffect(() => {
     async function fetchUsage() {
       if (!date) return;
@@ -18,8 +22,7 @@ export default function UsageReportPage() {
 
       let startDate = date;
       let endDate = date;
-      let titleDate = date;
-
+      
       if (type === 'weekly') {
         // Calculate start/end of week
         const d = new Date(date);
@@ -30,38 +33,31 @@ export default function UsageReportPage() {
         
         startDate = start.toISOString().slice(0, 10);
         endDate = end.toISOString().slice(0, 10);
-        titleDate = `${startDate} to ${endDate}`;
       }
 
       // Fetch Orders for range
-      // Note: We need to sum quantities for duplicate items
       const { data, error } = await supabase
         .from('Orders')
-        .select('"Product Code", "Order Items", Quantity, UOM')
+        .select('"Product Code", "Order Items", Quantity, UOM, "Customer Name"')
         .gte('"Delivery Date"', startDate)
         .lte('"Delivery Date"', endDate);
 
       if (error) {
         console.error("Error:", error);
       } else {
-        // Aggregation Logic
-        const aggregated = {};
-        data.forEach(row => {
-          const key = row["Product Code"];
-          if (!aggregated[key]) {
-            aggregated[key] = {
-              code: key,
-              name: row["Order Items"],
-              uom: row.UOM,
-              total: 0
-            };
-          }
-          aggregated[key].total += Number(row.Quantity || 0);
-        });
+        // Flatten data for the report: One row per order line item
+        const usageList = data.map((row, index) => ({
+            id: index,
+            description: row["Order Items"],
+            qty: Number(row.Quantity || 0),
+            uom: row.UOM,
+            customer: row["Customer Name"]
+        }));
+        
+        // Sort by Item Name
+        usageList.sort((a, b) => a.description.localeCompare(b.description));
 
-        // Convert to array and sort by Name
-        const list = Object.values(aggregated).sort((a, b) => a.name.localeCompare(b.name));
-        setItems(list);
+        setItems(usageList);
       }
       setLoading(false);
     }
@@ -69,61 +65,124 @@ export default function UsageReportPage() {
     fetchUsage();
   }, [date, type]);
 
-  return (
-    <div className="bg-white min-h-screen p-8 text-black">
-      <div className="max-w-4xl mx-auto">
-        <div className="text-center mb-8 border-b-2 border-black pb-4">
-          <h1 className="text-3xl font-bold uppercase mb-2">
-            {type === 'weekly' ? 'Weekly' : 'Daily'} Usage Report
-          </h1>
-          <p className="text-lg font-mono">Date: {date} {type === 'weekly' && '(Week Range)'}</p>
-        </div>
+  if (loading) return <div className="p-10 text-center">Generating Usage Report...</div>;
+  if (items.length === 0) return <div className="p-10 text-center text-gray-500">No orders found for {date}.</div>;
 
-        {loading ? (
-          <p className="text-center">Calculating usage...</p>
-        ) : (
-          <>
-            <table className="w-full text-left border-collapse border border-black">
-              <thead>
-                <tr className="bg-gray-200">
-                  <th className="border border-black p-2 w-16 text-center">#</th>
-                  <th className="border border-black p-2">Item Description</th>
-                  <th className="border border-black p-2 w-32 text-center">Total Qty</th>
-                  <th className="border border-black p-2 w-24 text-center">UOM</th>
+  // Pagination Logic
+  const pages = [];
+  for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
+    pages.push(items.slice(i, i + ITEMS_PER_PAGE));
+  }
+
+  // Format Date for Header (DD-MM-YYYY)
+  const formatDate = (dStr) => {
+      const d = new Date(dStr);
+      return !isNaN(d) ? d.toLocaleDateString('en-CA') : dStr;
+  };
+
+  return (
+    <div className="bg-gray-200 min-h-screen p-8 print:p-0 print:bg-white text-black font-sans text-xs">
+      
+      {/* Floating Print Button */}
+      <button 
+        onClick={() => window.print()}
+        className="fixed bottom-8 right-8 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full shadow-2xl print:hidden flex items-center gap-2 z-50 transition-all transform hover:scale-105"
+      >
+        <span className="text-xl">🖨️</span> Print Report
+      </button>
+
+      {pages.map((pageItems, pageIndex) => (
+        <div key={pageIndex} 
+             className="mx-auto bg-white shadow-xl mb-8 print:shadow-none print:mb-0 flex flex-col relative page-break-after overflow-hidden box-border" 
+             style={{ width: '210mm', height: '297mm', padding: '10mm', paddingBottom: '20mm' }}> 
+             {/* 5. There will be .8" (~20mm) space for each page bottom handled by paddingBottom */}
+          
+          {/* --- HEADER (Module 1) --- */}
+          <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-2 h-[35mm]">
+             <div className="flex gap-3 h-full items-center">
+                <div className="w-16 h-16 relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" alt="Logo" className="w-full h-full object-contain" />
+                </div>
+                <div>
+                    <h1 className="text-xl font-black uppercase tracking-tight mb-1">FRESHER FARM DIRECT SDN BHD</h1>
+                    <div className="text-[9px] leading-tight text-gray-800 font-medium">
+                        <p>Reg No: 200701010054 | TIN No: C20176000020 | MSIC Code: 46319</p>
+                        <p>Address: Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, 68100 Batu Caves, Selangor</p>
+                        <p>Tel: 011-2862 8667 | Email: fresherfarmdirect2.0@gmail.com</p>
+                    </div>
+                </div>
+             </div>
+             
+             {/* DAILY USAGE FORM TITLE (Moved to Right) */}
+             <div className="text-right self-center">
+                  <h2 className="text-3xl font-black uppercase tracking-average leading-none">DAILY USAGE<br/>FORM</h2>
+             </div>
+          </div>
+
+          {/* --- TITLE & METADATA (Module 2) --- */}
+          <div className="mb-2 flex justify-between items-end">
+              {/* Date (Moved to Left & Enlarged) */}
+              <div className="text-left">
+                  <span className="text-gray-500 font-bold block text-xs uppercase mb-1">Date:</span>
+                  <span className="text-3xl font-black tracking-tight">{formatDate(date)}</span>
+              </div>
+
+              
+          </div>
+
+          {/* --- TABLE (Module 3) --- */}
+          <div className="flex-grow border-t-2 border-black relative">
+            <table className="w-full border-collapse table-fixed text-[10px]">
+              <thead className="h-6 bg-gray-100 print:bg-transparent">
+                <tr className="border-b-2 border-black text-black uppercase font-bold">
+                  <th className="py-1 px-1 text-center w-8 border-r border-black">Item</th>
+                  {/* 4. Larger width for product (increased from 40% to ~55%) */}
+                  <th className="py-1 px-2 text-left border-r border-black w-[50%]">Description</th>
+                  <th className="py-1 px-1 text-center w-10 border-r border-black">QTY</th>
+                  <th className="py-1 px-1 text-center w-10 border-r border-black">UOM</th>
+                  {/* 4. Reduce width for customer. No second line (handled by truncate) */}
+                  <th className="py-1 px-2 text-left w-[35%]">CUSTOMER</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((item, idx) => (
-                  <tr key={item.code}>
-                    <td className="border border-black p-2 text-center">{idx + 1}</td>
-                    <td className="border border-black p-2 font-medium">
-                      {item.name} <span className="text-xs text-gray-500 block">{item.code}</span>
-                    </td>
-                    <td className="border border-black p-2 text-center font-bold text-lg">{item.total}</td>
-                    <td className="border border-black p-2 text-center uppercase">{item.uom}</td>
+                {pageItems.map((item, index) => (
+                  <tr key={index} className="border-b border-gray-300 h-5">
+                    <td className="py-1 px-1 text-center border-r border-gray-300 font-bold">{items.indexOf(item) + 1}</td>
+                    <td className="py-1 px-2 border-r border-gray-300 font-bold truncate">{item.description}</td>
+                    <td className="py-1 px-1 text-center border-r border-gray-300 font-bold">{item.qty}</td>
+                    <td className="py-1 px-1 text-center border-r border-gray-300 uppercase">{item.uom}</td>
+                    <td className="py-1 px-2 truncate font-medium text-gray-700">{item.customer}</td>
                   </tr>
                 ))}
-                {items.length === 0 && (
-                   <tr><td colSpan="4" className="p-4 text-center italic">No orders found for this period.</td></tr>
-                )}
+                {/* Filler Rows */}
+                {Array.from({ length: Math.max(0, ITEMS_PER_PAGE - pageItems.length) }).map((_, idx) => (
+                    <tr key={`fill-${idx}`} className="border-b border-gray-100 h-5">
+                        <td className="border-r border-gray-100"></td>
+                        <td className="border-r border-gray-100"></td>
+                        <td className="border-r border-gray-100"></td>
+                        <td className="border-r border-gray-100"></td>
+                        <td></td>
+                    </tr>
+                ))}
               </tbody>
             </table>
+          </div>
 
-            <div className="mt-8 flex justify-center print:hidden">
-              <button 
-                onClick={() => window.print()}
-                className="bg-purple-600 text-white font-bold py-3 px-8 rounded shadow hover:bg-purple-700"
-              >
-                Print Usage Report
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+          {/* Page Number Footer */}
+          <div className="absolute bottom-4 right-10 text-[9px] text-gray-400">
+              Page {pageIndex + 1} of {pages.length}
+          </div>
+
+        </div>
+      ))}
+
       <style jsx global>{`
         @media print {
-          body { background: white; }
-          button { display: none; }
+          @page { size: A4; margin: 0; }
+          body { background: white; -webkit-print-color-adjust: exact; }
+          .page-break-after { page-break-after: always; }
+          .page-break-after:last-child { page-break-after: auto; }
         }
       `}</style>
     </div>
