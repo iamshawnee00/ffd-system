@@ -19,6 +19,8 @@ export default function OrderListPage() {
   const [editingItems, setEditingItems] = useState([]); // Holds line items
   const [deletedItemIds, setDeletedItemIds] = useState([]);
   const [productSearchTerm, setProductSearchTerm] = useState('');
+  const [isSendingToShipday, setIsSendingToShipday] = useState(false);
+  const [isBulkSending, setIsBulkSending] = useState(false);
 
   const router = useRouter();
 
@@ -225,8 +227,91 @@ export default function OrderListPage() {
   };
 
   const sendToShipday = async () => {
-    // Placeholder for Shipday integration logic
-    alert(`Sending Order ${editingOrder.DONumber} to Shipday... (Feature coming soon)`);
+    if (!editingOrder) return;
+    setIsSendingToShipday(true);
+
+    try {
+      const response = await fetch('/api/shipday', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order: {
+            info: editingOrder,
+            items: editingItems
+          }
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        alert(`Successfully sent order ${editingOrder.DONumber} to Shipday!`);
+      } else {
+        alert(`Failed to send to Shipday: ${result.error?.message || JSON.stringify(result.error) || "Unknown error"}`);
+      }
+    } catch (error) {
+      console.error("API Request failed:", error);
+      alert("Error connecting to server. Please try again.");
+    } finally {
+      setIsSendingToShipday(false);
+    }
+  };
+
+  // --- BULK SHIPDAY SEND ---
+  const sendSelectedToShipday = async () => {
+    if (selectedOrders.size === 0) return;
+    if (!confirm(`Send ${selectedOrders.size} orders to Shipday?`)) return;
+
+    setIsBulkSending(true);
+    let successCount = 0;
+    let failCount = 0;
+
+    // Convert Set to Array
+    const doNumbers = Array.from(selectedOrders);
+
+    for (const doNum of doNumbers) {
+      try {
+        // 1. Fetch full order details for this DO specific to THIS iteration
+        const { data: items, error } = await supabase
+          .from('Orders')
+          .select('*')
+          .eq('DONumber', doNum);
+
+        if (error || !items || items.length === 0) {
+          console.error(`Failed to fetch items for ${doNum}`);
+          failCount++;
+          continue;
+        }
+
+        // 2. Send to Shipday API using the FRESHLY fetched 'items'
+        // Construct payload structure expected by API locally
+        const orderPayload = {
+          info: items[0], // Header info from first item of THIS order
+          items: items    // All items of THIS order
+        };
+
+        const response = await fetch('/api/shipday', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: orderPayload }),
+        });
+
+        if (response.ok) {
+          successCount++;
+        } else {
+          console.error(`Shipday API failed for ${doNum}`);
+          failCount++;
+        }
+
+      } catch (err) {
+        console.error(`Exception sending ${doNum}:`, err);
+        failCount++;
+      }
+    }
+
+    setIsBulkSending(false);
+    alert(`Bulk Send Complete:\n✅ Success: ${successCount}\n❌ Failed: ${failCount}`);
+    setSelectedOrders(new Set()); // Clear selection
   };
 
   const printOrder = () => {
@@ -329,20 +414,31 @@ export default function OrderListPage() {
 
         {/* Selection Toolbar */}
         {selectedOrders.size > 0 && (
-          <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex items-center gap-4 animate-fade-in">
-            <span className="text-sm font-bold text-blue-700 ml-2">{selectedOrders.size} Selected</span>
-            <button 
-              className="text-xs bg-white border border-blue-200 text-blue-600 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-100"
-              onClick={() => {
-                 if (activeTab === 'Packing') {
-                    if(confirm(`Mark ${selectedOrders.size} orders as Done?`)) {
-                        selectedOrders.forEach(doNum => updateOrderStatus(doNum, 'Completed'));
-                        setSelectedOrders(new Set());
+          <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex items-center gap-4 animate-fade-in justify-between">
+            <div className="flex items-center gap-4">
+                <span className="text-sm font-bold text-blue-700 ml-2">{selectedOrders.size} Selected</span>
+                <button 
+                className="text-xs bg-white border border-blue-200 text-blue-600 font-bold px-3 py-1.5 rounded-lg hover:bg-blue-100"
+                onClick={() => {
+                    if (activeTab === 'Packing') {
+                        if(confirm(`Mark ${selectedOrders.size} orders as Done?`)) {
+                            selectedOrders.forEach(doNum => updateOrderStatus(doNum, 'Completed'));
+                            setSelectedOrders(new Set());
+                        }
                     }
-                 }
-              }}
+                }}
+                >
+                {activeTab === 'Packing' ? 'Mark All Done' : 'Move Back to Packing'}
+                </button>
+            </div>
+            
+            {/* Bulk Shipday Button */}
+            <button 
+                onClick={sendSelectedToShipday}
+                disabled={isBulkSending}
+                className={`text-xs bg-indigo-600 text-white font-bold px-4 py-1.5 rounded-lg shadow hover:bg-indigo-700 flex items-center gap-2 transition ${isBulkSending ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
-              {activeTab === 'Packing' ? 'Mark All Done' : 'Bulk Action'}
+                {isBulkSending ? 'Sending...' : '🚀 Send to Shipday'}
             </button>
           </div>
         )}
@@ -464,8 +560,12 @@ export default function OrderListPage() {
                   <p className="text-xs text-gray-500 mt-1">Modify items, prices, or delivery details.</p>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={sendToShipday} className="px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-xs font-bold transition flex items-center gap-2">
-                        🚀 Send to Shipday
+                    <button 
+                      onClick={sendToShipday} 
+                      disabled={isSendingToShipday}
+                      className={`px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-xs font-bold transition flex items-center gap-2 ${isSendingToShipday ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                        {isSendingToShipday ? 'Sending...' : '🚀 Send to Shipday'}
                     </button>
                     <button onClick={printOrder} className="px-4 py-2 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg text-xs font-bold transition flex items-center gap-2">
                         🖨️ Print DO
@@ -480,7 +580,7 @@ export default function OrderListPage() {
                 {/* 1. Customer Details Section */}
                 <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
                    <div className="grid grid-cols-2 gap-6">
-                       <div>
+                       <div className="col-span-2 md:col-span-1">
                           <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Customer Name</label>
                           <input 
                             list="edit-customer-list"
@@ -493,7 +593,16 @@ export default function OrderListPage() {
                             {customers.map(c => <option key={c.CompanyName} value={c.CompanyName} />)}
                           </datalist>
                        </div>
-                       <div>
+                       <div className="col-span-2 md:col-span-1">
+                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Delivery Date</label>
+                          <input 
+                            type="date"
+                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                            value={editingOrder["Delivery Date"]}
+                            onChange={e => handleEditHeaderChange("Delivery Date", e.target.value)}
+                          />
+                       </div>
+                       <div className="col-span-2">
                           <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Delivery Address</label>
                           <input 
                             className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white" 
