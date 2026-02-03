@@ -116,7 +116,7 @@ export default function UsageReportPage() {
              
              {/* DAILY USAGE FORM TITLE (Moved to Right) */}
              <div className="text-right self-center">
-                  <h2 className="text-3xl font-black uppercase tracking-average leading-none">DAILY USAGE<br/>FORM</h2>
+                  <h2 className="text-4xl font-black uppercase tracking-average leading-none">DAILY<br/>usage</h2>
              </div>
           </div>
 

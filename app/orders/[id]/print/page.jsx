@@ -104,7 +104,7 @@ export default function PrintOrderPage() {
           </div>
 
           {/* --- MODULE 2: HEADER & CUSTOMER --- */}
-          <div className="h-[30mm] flex justify-between items-start text-xs pt-1 mb-0">
+          <div className="h-[35mm] flex justify-between items-start text-xs pt-1 mb-0">
               <div className="w-[60%] pr-2">
                   <div className="mb-2">
                       <span className="font-bold text-[10px] text-gray-500 uppercase tracking-widest block mb-1">Deliver To:</span>
@@ -164,7 +164,7 @@ export default function PrintOrderPage() {
           </div>
 
           {/* --- FIXED BOTTOM SECTION (Modules 4 & 5) --- */}
-          <div className="h-[60mm] mt-auto">
+          <div className="h-[55mm] mt-auto">
               {/* --- MODULE 4: NOTES --- */}
               <div className="mb-2 h-[20mm]">
                   <div className="font-bold text-[10px] uppercase mb-0.5">NOTE</div>
@@ -182,7 +182,7 @@ export default function PrintOrderPage() {
               </div>
 
               {/* --- MODULE 5: SIGNATURES --- */}
-              <div className="h-[35mm] relative">
+              <div className="h-[25mm] relative">
                  <div className="grid grid-cols-3 gap-4 pt-1 absolute bottom-0 w-full">
                     {/* Driver */}
                     <div className="mt-8 pt-1 text-center">
