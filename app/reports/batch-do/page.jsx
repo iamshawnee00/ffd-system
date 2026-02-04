@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import BatchDoReportContent from './BatchDoReportContent';
+import BatchDoReportContent from './reportcontent';
 
 /**
  * This is a Server Component by default in the App Router.
