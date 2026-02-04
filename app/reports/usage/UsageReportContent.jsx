@@ -23,8 +23,13 @@ export default function UsageReportContent() {
       }
       setLoading(true);
 
-      let startDate = date;
-      let endDate = date;
+      let query = supabase
+        .from('Orders')
+        .select('"Product Code", "Order Items", Quantity, UOM, "Customer Name"');
+
+      // LOGIC FIX: Handle Daily vs Weekly differently
+      // Batch DO page uses .eq('"Delivery Date"', date) and works.
+      // So for daily usage, we should do the same.
       
       if (type === 'weekly') {
         const d = new Date(date);
@@ -33,19 +38,20 @@ export default function UsageReportContent() {
         const start = new Date(d.setDate(diff));
         const end = new Date(d.setDate(diff + 6));
         
-        startDate = start.toISOString().slice(0, 10);
-        endDate = end.toISOString().slice(0, 10);
+        const startDate = start.toISOString().slice(0, 10);
+        const endDate = end.toISOString().slice(0, 10);
+        
+        console.log(`Fetching WEEKLY usage from ${startDate} to ${endDate}`);
+        
+        // Use range for weekly
+        query = query.gte('"Delivery Date"', startDate).lte('"Delivery Date"', endDate);
+      } else {
+        // Daily Usage: Use exact match like Batch DO page
+        console.log(`Fetching DAILY usage for ${date}`);
+        query = query.eq('"Delivery Date"', date);
       }
 
-      console.log(`Fetching usage from ${startDate} to ${endDate}`);
-
-      // Fetch Orders for range
-      // FIX: Use double quotes for "Delivery Date" to match the working Batch DO logic
-      const { data, error } = await supabase
-        .from('Orders')
-        .select('"Product Code", "Order Items", Quantity, UOM, "Customer Name"')
-        .gte('"Delivery Date"', startDate) 
-        .lte('"Delivery Date"', endDate);
+      const { data, error } = await query;
 
       if (error) {
         console.error("Supabase Error:", error);
