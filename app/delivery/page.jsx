@@ -20,7 +20,7 @@ export default function DeliveryPage() {
   };
 
   // --- STATE ---
-  const [currentDate, setCurrentDate] = useState(new Date()); // Tracks the month being viewed
+  const [currentDate, setCurrentDate] = useState(new Date()); 
   const [selectedDate, setSelectedDate] = useState(toLocalISOString(new Date()));
   const [orderCounts, setOrderCounts] = useState({}); 
   const [calendarDays, setCalendarDays] = useState([]);
@@ -29,21 +29,20 @@ export default function DeliveryPage() {
   const [usageSummary, setUsageSummary] = useState([]);
   
   const [products, setProducts] = useState([]);
-  const [customers, setCustomers] = useState([]); // Added customers state
+  const [customers, setCustomers] = useState([]); 
   const [targetDriver, setTargetDriver] = useState('');
   const [selectedDOs, setSelectedDOs] = useState(new Set());
   const [isUsageExpanded, setIsUsageExpanded] = useState(false);
   const [isBulkSending, setIsBulkSending] = useState(false); 
-  const [isSyncing, setIsSyncing] = useState(false); // Sync state
+  const [isSyncing, setIsSyncing] = useState(false); 
 
   // Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingOrder, setEditingOrder] = useState(null); // Holds header info
-  const [editingItems, setEditingItems] = useState([]); // Holds line items
+  const [editingOrder, setEditingOrder] = useState(null); 
+  const [editingItems, setEditingItems] = useState([]); 
   const [deletedItemIds, setDeletedItemIds] = useState([]);
   const [productSearchTerm, setProductSearchTerm] = useState('');
   const [isSendingToShipday, setIsSendingToShipday] = useState(false);
-
 
   // --- 1. INITIAL LOAD ---
   useEffect(() => {
@@ -51,12 +50,10 @@ export default function DeliveryPage() {
     fetchCustomers();
   }, []);
 
-  // Fetch Calendar Data whenever the viewed month (currentDate) changes
   useEffect(() => {
     fetchCalendarData();
   }, [currentDate]);
 
-  // Fetch Orders whenever a specific date is selected
   useEffect(() => {
     fetchDayOrders(selectedDate);
     setSelectedDOs(new Set()); 
@@ -82,22 +79,15 @@ export default function DeliveryPage() {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
 
-    // 1. Calculate Grid Range (Start of Month to End of Month)
     const firstDayOfMonth = new Date(year, month, 1);
     const lastDayOfMonth = new Date(year, month + 1, 0);
     
-    // We need to pad the start to align with the grid (Sunday start)
     const startDayOfWeek = firstDayOfMonth.getDay(); // 0 = Sun
     
-    // Generate Days Array
     const daysArr = [];
-    
-    // Add empty slots for days before the 1st
     for (let i = 0; i < startDayOfWeek; i++) {
         daysArr.push(null);
     }
-
-    // Add actual days
     for (let d = 1; d <= lastDayOfMonth.getDate(); d++) {
         const dateObj = new Date(year, month, d);
         const dStr = toLocalISOString(dateObj);
@@ -110,7 +100,6 @@ export default function DeliveryPage() {
     }
     setCalendarDays(daysArr);
 
-    // 2. Fetch Counts for this Month Range
     const startStr = toLocalISOString(firstDayOfMonth);
     const endStr = toLocalISOString(lastDayOfMonth);
 
@@ -125,14 +114,9 @@ export default function DeliveryPage() {
       const uniqueSet = new Set();
       data.forEach(row => {
         if (!row["Delivery Date"]) return;
-        
         let dKey = row["Delivery Date"];
-        // Ensure dKey is strictly YYYY-MM-DD
-        if (typeof dKey === 'string' && dKey.length >= 10) {
-             dKey = dKey.substring(0, 10);
-        } else if (dKey instanceof Date) {
-             dKey = toLocalISOString(dKey);
-        }
+        if (typeof dKey === 'string' && dKey.length >= 10) dKey = dKey.substring(0, 10);
+        else if (dKey instanceof Date) dKey = toLocalISOString(dKey);
 
         const key = `${dKey}|${row.DONumber}`;
         if (!uniqueSet.has(key)) {
@@ -228,7 +212,6 @@ export default function DeliveryPage() {
   // --- SYNC WITH SHIPDAY ---
   const syncWithShipday = async () => {
     setIsSyncing(true);
-    // Get all DO numbers currently on screen
     const currentDOs = groupedOrders.map(g => g.info.DONumber);
     
     if (currentDOs.length === 0) {
@@ -290,7 +273,7 @@ export default function DeliveryPage() {
     }
   };
 
-  // --- BULK SHIPDAY SEND (Robust Implementation) ---
+  // --- BULK SHIPDAY SEND ---
   const sendSelectedToShipday = async () => {
     if (selectedDOs.size === 0) return alert("Select orders to send.");
     if (!confirm(`Send ${selectedDOs.size} orders to Shipday?`)) return;
@@ -313,42 +296,17 @@ export default function DeliveryPage() {
           continue;
         }
 
-        // --- ROBUST DATE FIX ---
-        // Explicitly get the date string from the item, ignoring local timezones if possible
-        // Ideally, the DB returns 'YYYY-MM-DD'. If it returns a full ISO string with T, split it.
-        let rawDate = items[0]["Delivery Date"];
-        let finalDate = "";
-        
-        if (rawDate) {
-            // Check if it's already a simple date string (e.g. "2026-02-13")
-            if (typeof rawDate === 'string' && rawDate.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                finalDate = rawDate;
-            } else {
-                // If it's a full ISO string or Date object, convert carefully to avoid timezone shift
-                const d = new Date(rawDate);
-                if (!isNaN(d.getTime())) {
-                    // Use toLocalISOString to ensure we get the date part relative to local/system time
-                    // but since the DB stores YYYY-MM-DD, the best way is often just to slice the string
-                    // if it comes back as ISO from Supabase
-                    if (typeof rawDate === 'string' && rawDate.includes('T')) {
-                        finalDate = rawDate.split('T')[0];
-                    } else {
-                        // Fallback
-                        finalDate = d.toISOString().split('T')[0];
-                    }
-                }
-            }
+        let formattedDate = items[0]["Delivery Date"];
+        if (formattedDate) {
+             const d = new Date(formattedDate);
+             if(!isNaN(d.getTime())) {
+                 formattedDate = d.toISOString().split('T')[0];
+             }
         }
         
-        // If finalDate is still empty, fallback to today (which is the error behavior, but we try to avoid it)
-        if (!finalDate) {
-            console.warn(`Date missing for ${doNum}, defaulting to today.`);
-            finalDate = new Date().toISOString().split('T')[0];
-        }
-
         const orderInfo = {
              ...items[0],
-             "Delivery Date": finalDate // Explicitly set correct date
+             "Delivery Date": formattedDate
         };
 
         const orderPayload = {
@@ -524,7 +482,6 @@ export default function DeliveryPage() {
     window.open(`/orders/${editingOrder.id}/print`, '_blank');
   };
 
-
   // --- CALENDAR NAVIGATION ---
   const changeMonth = (offset) => {
     const newDate = new Date(currentDate);
@@ -565,6 +522,16 @@ export default function DeliveryPage() {
     const term = productSearchTerm.toLowerCase();
     return (p.ProductName.toLowerCase().includes(term) || p.ProductCode.toLowerCase().includes(term));
   });
+  
+  // New helper to get badge style for delivery info column
+  const getDeliveryModeStyle = (mode) => {
+      if (!mode) return 'bg-purple-100 text-purple-700'; // Default Driver
+      const m = mode.toLowerCase();
+      if (m.includes('lalamove')) return 'bg-orange-100 text-orange-800 border-orange-200';
+      if (m.includes('pick') || m.includes('self')) return 'bg-blue-100 text-blue-800 border-blue-200';
+      // Default Driver
+      return 'bg-purple-100 text-purple-700 border-purple-200'; 
+  };
 
   return (
     <div className="flex bg-gray-50 min-h-screen font-sans">
@@ -582,10 +549,7 @@ export default function DeliveryPage() {
                  <button onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')} className="bg-purple-600 text-white font-bold py-3 px-6 rounded-2xl text-sm shadow-lg hover:bg-purple-700 transition transform active:scale-95 flex items-center gap-2">
                     <span>📦</span> All DOs
                  </button>
-                 <button 
-                    onClick={() => window.open(`/reports/usage?date=${selectedDate}`, '_blank')}
-                    className="bg-blue-600 text-white font-bold py-3 px-6 rounded-2xl text-sm shadow-lg hover:bg-blue-700 transition transform active:scale-95 flex items-center gap-2"
-                 >
+                 <button className="bg-blue-600 text-white font-bold py-3 px-6 rounded-2xl text-sm shadow-lg hover:bg-blue-700 transition transform active:scale-95 flex items-center gap-2">
                     <span>📊</span> Daily Usage
                  </button>
             </div>
@@ -744,7 +708,8 @@ export default function DeliveryPage() {
                                     <div className="text-xs text-gray-400 mt-0.5">{group.info["Contact Person"]}</div>
                                 </td>
                                 <td className="p-5">
-                                    <div className="text-[10px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded w-fit font-bold mb-1 uppercase tracking-wide">
+                                    {/* COLOR-CODED DELIVERY MODE BADGE */}
+                                    <div className={`text-[10px] px-2 py-0.5 rounded w-fit font-bold mb-1 uppercase tracking-wide border ${getDeliveryModeStyle(group.info["Delivery Mode"])}`}>
                                         {group.info["Delivery Mode"] || 'Standard'}
                                     </div>
                                     <div className="text-xs text-gray-500 truncate max-w-[200px]" title={group.info["Delivery Address"]}>
@@ -873,7 +838,7 @@ export default function DeliveryPage() {
                    />
                    {productSearchTerm && (
                       <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 max-h-48 overflow-y-auto">
-                         {filteredProducts.map(p => (
+                         {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).map(p => (
                             <div 
                               key={p.ProductCode} 
                               className="p-3 hover:bg-green-50 cursor-pointer flex justify-between items-center border-b border-gray-50 last:border-0"
@@ -883,7 +848,7 @@ export default function DeliveryPage() {
                                <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500">{p.ProductCode}</span>
                             </div>
                          ))}
-                         {filteredProducts.length === 0 && <div className="p-3 text-center text-gray-400 text-sm">No match found.</div>}
+                         {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).length === 0 && <div className="p-3 text-center text-gray-400 text-sm">No match found.</div>}
                       </div>
                    )}
                 </div>
@@ -934,7 +899,7 @@ export default function DeliveryPage() {
                               <input 
                                 type="number" 
                                 className="w-full p-1.5 border border-gray-200 rounded text-right text-sm"
-                                value={item.Price ?? ''}
+                                value={item.Price}
                                 onChange={e => handleEditItemChange(idx, 'Price', e.target.value)}
                               />
                             </div>

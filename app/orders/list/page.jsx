@@ -270,7 +270,6 @@ export default function OrderListPage() {
 
     for (const doNum of doNumbers) {
       try {
-        // 1. Fetch full order details for this DO specific to THIS iteration
         const { data: items, error } = await supabase
           .from('Orders')
           .select('*')
@@ -282,7 +281,6 @@ export default function OrderListPage() {
           continue;
         }
 
-        // Force format Date to YYYY-MM-DD string to ensure Shipday parses it correctly
         let formattedDate = items[0]["Delivery Date"];
         if (formattedDate) {
              const d = new Date(formattedDate);
@@ -296,14 +294,11 @@ export default function OrderListPage() {
              "Delivery Date": formattedDate
         };
 
-        // 2. Send to Shipday API using the FRESHLY fetched 'items'
         const orderPayload = {
           info: orderInfo, 
           items: items   
         };
         
-        console.log(`Sending DO: ${doNum}, Date: ${formattedDate}`);
-
         const response = await fetch('/api/shipday', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -378,6 +373,15 @@ export default function OrderListPage() {
     const term = productSearchTerm.toLowerCase();
     return (p.ProductName.toLowerCase().includes(term) || p.ProductCode.toLowerCase().includes(term));
   });
+
+  // Updated Delivery Mode Style Helper
+  const getDeliveryModeStyle = (mode) => {
+      if (!mode) return 'bg-purple-100 text-purple-700 border-purple-200'; // Default Driver
+      const m = mode.toLowerCase();
+      if (m.includes('lalamove')) return 'bg-orange-100 text-orange-800 border-orange-200';
+      if (m.includes('pick') || m.includes('self')) return 'bg-blue-100 text-blue-800 border-blue-200';
+      return 'bg-purple-100 text-purple-700 border-purple-200'; // Default Driver
+  };
 
   if (loading) return <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-500">Loading Orders...</div>;
 
@@ -508,11 +512,8 @@ export default function OrderListPage() {
                       <div className="text-xs text-gray-500 mt-0.5">{order["Contact Person"]}</div>
                     </td>
                     <td className="p-5">
-                      <span className={`text-[10px] font-bold px-2 py-1 rounded border ${
-                        order["Delivery Mode"] === 'Driver' ? 'bg-blue-50 text-blue-600 border-blue-100' :
-                        order["Delivery Mode"] === 'Lalamove' ? 'bg-orange-50 text-orange-600 border-orange-100' :
-                        'bg-purple-50 text-purple-600 border-purple-100'
-                      }`}>
+                      {/* COLOR-CODED DELIVERY MODE BADGE */}
+                      <span className={`text-[10px] px-2 py-0.5 rounded w-fit font-bold mb-1 uppercase tracking-wide border ${getDeliveryModeStyle(order["Delivery Mode"])}`}>
                         {order["Delivery Mode"] || 'Driver'}
                       </span>
                       <div className="text-xs text-gray-400 mt-2 truncate max-w-[200px]" title={order["Delivery Address"]}>
@@ -718,7 +719,7 @@ export default function OrderListPage() {
                               <input 
                                 type="number" 
                                 className="w-full p-1.5 border border-gray-200 rounded text-right text-sm"
-                                value={item.Price ?? ''}
+                                value={item.Price}
                                 onChange={e => handleEditItemChange(idx, 'Price', e.target.value)}
                               />
                             </div>

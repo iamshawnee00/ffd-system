@@ -13,8 +13,8 @@ import {
   AdjustmentsHorizontalIcon, 
   UserGroupIcon,
   ArrowLeftOnRectangleIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon
+  Bars3Icon, // Changed to Burger Menu
+  ShoppingBagIcon // Added for Purchase
 } from '@heroicons/react/24/outline';
 
 export default function Sidebar() {
@@ -30,6 +30,7 @@ export default function Sidebar() {
   const menuItems = [
     { name: 'Dashboard', path: '/', icon: HomeIcon },
     { name: 'New Order', path: '/orders/new', icon: PlusCircleIcon },
+    { name: 'Log Purchase', path: '/purchase/new', icon: ShoppingBagIcon }, // New Purchase Link
     { name: 'Order List', path: '/orders/list', icon: ClipboardDocumentListIcon },
     { name: 'Delivery / Reports', path: '/delivery', icon: TruckIcon },
     { name: 'Price Trend', path: '/price-trend', icon: ChartBarIcon },
@@ -46,24 +47,24 @@ export default function Sidebar() {
     >
       {/* HEADER / LOGO */}
       <div className="p-6 border-b border-slate-800 flex items-center justify-between">
-        {!isCollapsed && (
-          <div>
-            <h1 className="text-2xl font-bold text-green-400 tracking-tight font-poppins">FFD<span className="text-white">System</span></h1>
-            <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Internal Portal</p>
-          </div>
-        )}
-        {isCollapsed && (
-           <span className="text-green-400 font-bold text-xl mx-auto">FFD</span>
-        )}
+        <div className={`flex items-center ${isCollapsed ? 'justify-center w-full' : 'justify-between w-full'}`}>
+            {!isCollapsed && (
+              <div>
+                <h1 className="text-2xl font-bold text-green-400 tracking-tight font-poppins">FFD<span className="text-white">System</span></h1>
+                <p className="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Internal Portal</p>
+              </div>
+            )}
+            
+            {/* Toggle Button - Burger Menu */}
+            <button 
+              onClick={() => setIsCollapsed(!isCollapsed)}
+              className={`text-slate-400 hover:text-white transition-colors p-1 rounded-md hover:bg-slate-800 ${isCollapsed ? 'mx-auto' : ''}`}
+              title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+            >
+              <Bars3Icon className="w-6 h-6" />
+            </button>
+        </div>
       </div>
-
-      {/* TOGGLE BUTTON (Absolute positioning to overlap border) */}
-      <button 
-        onClick={() => setIsCollapsed(!isCollapsed)}
-        className="absolute -right-3 top-20 bg-green-500 text-white p-1 rounded-full shadow-lg hover:bg-green-600 transition-colors z-50 border border-slate-900"
-      >
-        {isCollapsed ? <ChevronRightIcon className="w-4 h-4" /> : <ChevronLeftIcon className="w-4 h-4" />}
-      </button>
 
       {/* MENU */}
       <nav className="flex-1 p-4 space-y-2 overflow-y-auto custom-scrollbar">
