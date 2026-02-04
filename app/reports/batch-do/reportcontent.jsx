@@ -1,9 +1,10 @@
 'use client';
+
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useSearchParams } from 'next/navigation';
 
-export default function BatchDOPage() {
+export default function BatchDoReportContent() {
   const searchParams = useSearchParams();
   const date = searchParams.get('date');
   const driverFilter = searchParams.get('driver'); // Optional: Filter by driver name
@@ -16,7 +17,10 @@ export default function BatchDOPage() {
 
   useEffect(() => {
     async function fetchAllDOs() {
-      if (!date) return;
+      if (!date) {
+        setLoading(false); // Stop loading if no date provided
+        return;
+      }
       setLoading(true);
 
       // 1. Fetch raw rows
@@ -26,8 +30,7 @@ export default function BatchDOPage() {
         .eq('"Delivery Date"', date)
         .order('DONumber');
 
-      // If driver filter is present (and not "UNASSIGNED" logic which might need special handling, 
-      // but assuming exact match here)
+      // If driver filter is present
       if (driverFilter) {
           query = query.eq('DriverName', driverFilter);
       }
@@ -50,44 +53,71 @@ export default function BatchDOPage() {
       }
       setLoading(false);
     }
-    fetchAllDOs();
+    // Ensure we only run this when date or filters change
+    if (date || driverFilter) {
+        fetchAllDOs();
+    } else {
+        setLoading(false);
+    }
   }, [date, driverFilter]);
 
-  if (loading) return <div className="p-10 text-center">Generating Batch DOs...</div>;
-  if (doList.length === 0) return <div className="p-10 text-center text-gray-500">No orders found for {date} {driverFilter ? `assigned to ${driverFilter}` : ''}.</div>;
-
+  // STABLE ROOT ELEMENT: We always return this wrapper div to prevent "NotFoundError" during hydration
   return (
     <div className="bg-gray-100 min-h-screen p-8 print:p-0 print:bg-white text-black font-sans">
       
-      {/* Print Controls */}
-      <div className="fixed top-4 right-4 print:hidden z-50 flex gap-2">
-        <button 
-            onClick={() => window.print()}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition transform hover:scale-105"
-        >
-            🖨️ Print All ({doList.length})
-        </button>
-      </div>
-
-      {doList.map((order, idx) => (
-        <div key={order.info.DONumber} className="page-break-after">
-            <SingleDOComponent orderData={order.info} items={order.items} itemsPerPage={ITEMS_PER_PAGE} />
-        </div>
-      ))}
-
-      <style jsx global>{`
+      {/* FIX: Using standard style tag via dangerouslySetInnerHTML prevents 
+        "Runtime NotFoundError" associated with styled-jsx in Client Components 
+      */}
+      <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { size: A4; margin: 0; }
           body { background: white; -webkit-print-color-adjust: exact; }
           .page-break-after { page-break-after: always; }
           .page-break-after:last-child { page-break-after: auto; }
+          .print-hidden { display: none !important; }
         }
-      `}</style>
+      `}} />
+
+      {/* Loading State */}
+      {loading && (
+        <div className="p-10 text-center">Generating Batch DOs...</div>
+      )}
+
+      {/* No Date State */}
+      {!loading && !date && (
+        <div className="p-10 text-center text-gray-500">Please provide a date parameter (e.g., ?date=YYYY-MM-DD).</div>
+      )}
+
+      {/* No Orders Found State */}
+      {!loading && date && doList.length === 0 && (
+        <div className="p-10 text-center text-gray-500">No orders found for {date} {driverFilter ? `assigned to ${driverFilter}` : ''}.</div>
+      )}
+
+      {/* Data Content State */}
+      {!loading && doList.length > 0 && (
+        <>
+          {/* Print Controls */}
+          <div className="fixed top-4 right-4 print-hidden z-50 flex gap-2">
+            <button 
+                onClick={() => window.print()}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition transform hover:scale-105"
+            >
+                🖨️ Print All ({doList.length})
+            </button>
+          </div>
+
+          {doList.map((order, idx) => (
+            <div key={order.info.DONumber} className="page-break-after">
+                <SingleDOComponent orderData={order.info} items={order.items} itemsPerPage={ITEMS_PER_PAGE} />
+            </div>
+          ))}
+        </>
+      )}
     </div>
   );
 }
 
-// --- REUSABLE COMPONENT (Exact copy of the finalized single print page logic) ---
+// --- REUSABLE COMPONENT (Exact copy of your finalized single print page logic) ---
 function SingleDOComponent({ orderData, items, itemsPerPage }) {
   // Pagination for this specific order
   const pages = [];
@@ -136,7 +166,6 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
           </div>
 
           {/* --- MODULE 2: HEADER & CUSTOMER --- */}
-          {/* Reduced height from 35mm to 28mm to reduce space between Module 2 & 3 by ~50% visual gap */}
           <div className="h-[35mm] flex justify-between items-start text-xs pt-1 mb-0">
               <div className="w-[60%] pr-2">
                   <div className="mb-2">
