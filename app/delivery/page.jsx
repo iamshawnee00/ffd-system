@@ -3,7 +3,6 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import Sidebar from '../components/Sidebar';
 
-
 export default function DeliveryPage() {
   const [loading, setLoading] = useState(true);
   
@@ -231,7 +230,7 @@ export default function DeliveryPage() {
         const result = await response.json();
         
         if (response.ok && result.success) {
-            const driversToUpdate = result.foundDrivers; // Expecting [{doNumber: '...', driverName: '...'}]
+            const driversToUpdate = result.foundDrivers; 
             
             if (driversToUpdate && driversToUpdate.length > 0) {
                 // 1. Update Supabase
@@ -245,11 +244,10 @@ export default function DeliveryPage() {
                     if (!error) updateCount++;
                 }
 
-                // 2. Optimistic UI Update (Important fix!)
+                // 2. Optimistic UI Update
                 setGroupedOrders(prevOrders => prevOrders.map(group => {
                    const match = driversToUpdate.find(d => d.doNumber === group.info.DONumber);
                    if (match) {
-                       // Return new object with updated DriverName in info
                        return {
                            ...group,
                            info: { ...group.info, DriverName: match.driverName }
@@ -517,20 +515,12 @@ export default function DeliveryPage() {
     if (!p || !p.AllowedUOMs) return [];
     return p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean);
   };
-
-  const filteredProducts = products.filter(p => {
-    if (!productSearchTerm) return false;
-    const term = productSearchTerm.toLowerCase();
-    return (p.ProductName.toLowerCase().includes(term) || p.ProductCode.toLowerCase().includes(term));
-  });
   
-  // New helper to get badge style for delivery info column
   const getDeliveryModeStyle = (mode) => {
-      if (!mode) return 'bg-purple-100 text-purple-700'; // Default Driver
+      if (!mode) return 'bg-purple-100 text-purple-700'; 
       const m = mode.toLowerCase();
       if (m.includes('lalamove')) return 'bg-orange-100 text-orange-800 border-orange-200';
       if (m.includes('pick') || m.includes('self')) return 'bg-blue-100 text-blue-800 border-blue-200';
-      // Default Driver
       return 'bg-purple-100 text-purple-700 border-purple-200'; 
   };
 
@@ -550,15 +540,17 @@ export default function DeliveryPage() {
                  <button onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')} className="bg-purple-600 text-white font-bold py-3 px-6 rounded-2xl text-sm shadow-lg hover:bg-purple-700 transition transform active:scale-95 flex items-center gap-2">
                     <span>📦</span> All DOs
                  </button>
-                 <button className="bg-blue-600 text-white font-bold py-3 px-6 rounded-2xl text-sm shadow-lg hover:bg-blue-700 transition transform active:scale-95 flex items-center gap-2">
+                 <button 
+                    onClick={() => window.open(`/reports/usage?date=${selectedDate}`, '_blank')} 
+                    className="bg-blue-600 text-white font-bold py-3 px-6 rounded-2xl text-sm shadow-lg hover:bg-blue-700 transition transform active:scale-95 flex items-center gap-2"
+                 >
                     <span>📊</span> Daily Usage
                  </button>
             </div>
         </div>
 
-        {/* CALENDAR GRID (Month View) */}
+        {/* CALENDAR GRID */}
         <div className="mb-10 bg-white p-6 rounded-3xl shadow-lg border border-gray-100">
-            {/* Month Navigation */}
             <div className="flex items-center justify-between mb-6">
                 <button onClick={() => changeMonth(-1)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition">◀</button>
                 <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest">
@@ -573,7 +565,6 @@ export default function DeliveryPage() {
             <div className="grid grid-cols-7 gap-3">
                {calendarDays.map((day, idx) => {
                   if (!day) return <div key={`empty-${idx}`} className="h-28 bg-transparent"></div>;
-                  
                   const count = orderCounts[day.dateStr] || 0;
                   const isSelected = day.dateStr === selectedDate;
                   return (
@@ -602,14 +593,13 @@ export default function DeliveryPage() {
         </div>
 
         {/* ORDERS LIST SECTION */}
-        <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden animate-fade-in-up">
+        <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
                 <h3 className="text-xl font-bold text-gray-800 flex items-center gap-3">
                     Orders for <span className="text-blue-600">{formatDateLabel(selectedDate)}</span>
                     <span className="bg-gray-200 text-gray-600 text-sm px-3 py-1 rounded-full font-black">{groupedOrders.length}</span>
                 </h3>
                 
-                {/* Driver Assignment & Bulk Send */}
                 <div className="flex gap-2">
                     <input 
                         list="drivers" 
@@ -627,7 +617,6 @@ export default function DeliveryPage() {
                     >
                         Assign
                     </button>
-                    {/* SYNC BUTTON */}
                     <button 
                         onClick={syncWithShipday}
                         disabled={isSyncing}
@@ -645,7 +634,6 @@ export default function DeliveryPage() {
                 </div>
             </div>
 
-            {/* EXPANDABLE USAGE SUMMARY */}
             <div className="border-b border-gray-100">
                 <button 
                     onClick={() => setIsUsageExpanded(!isUsageExpanded)}
@@ -668,7 +656,6 @@ export default function DeliveryPage() {
                 )}
             </div>
 
-            {/* ORDER TABLE */}
             <table className="w-full text-left border-collapse">
                 <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase tracking-wider border-b border-gray-100">
                     <tr>
@@ -689,7 +676,7 @@ export default function DeliveryPage() {
                             <tr 
                                 key={group.info.DONumber} 
                                 className="hover:bg-blue-50/40 transition-colors group cursor-pointer"
-                                onClick={() => openEditModal(group)} // Row click triggers modal
+                                onClick={() => openEditModal(group)} 
                             >
                                 <td className="p-5 text-center" onClick={(e) => e.stopPropagation()}>
                                     <input 
@@ -709,7 +696,6 @@ export default function DeliveryPage() {
                                     <div className="text-xs text-gray-400 mt-0.5">{group.info["Contact Person"]}</div>
                                 </td>
                                 <td className="p-5">
-                                    {/* COLOR-CODED DELIVERY MODE BADGE */}
                                     <div className={`text-[10px] px-2 py-0.5 rounded w-fit font-bold mb-1 uppercase tracking-wide border ${getDeliveryModeStyle(group.info["Delivery Mode"])}`}>
                                         {group.info["Delivery Mode"] || 'Standard'}
                                     </div>
@@ -749,7 +735,6 @@ export default function DeliveryPage() {
           <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up">
               
-              {/* Modal Header */}
               <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50">
                 <div>
                   <h3 className="text-xl font-bold text-gray-800">Edit Order: {editingOrder.DONumber}</h3>
@@ -770,10 +755,7 @@ export default function DeliveryPage() {
                 </div>
               </div>
 
-              {/* Modal Body */}
               <div className="p-6 overflow-y-auto flex-1 space-y-6 bg-gray-50/30">
-                
-                {/* 1. Customer Details Section */}
                 <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
                    <div className="grid grid-cols-2 gap-6">
                        <div className="col-span-2 md:col-span-1">
@@ -783,7 +765,7 @@ export default function DeliveryPage() {
                             className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" 
                             value={editingOrder["Customer Name"]}
                             onChange={e => handleEditHeaderChange("Customer Name", e.target.value)}
-                            placeholder="Type to search or add new..."
+                            placeholder="Type to search..."
                           />
                           <datalist id="edit-customer-list">
                             {customers.map(c => <option key={c.CompanyName} value={c.CompanyName} />)}
@@ -825,7 +807,6 @@ export default function DeliveryPage() {
                    </div>
                 </div>
 
-                {/* 2. Add Item Search */}
                 <div className="relative">
                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                       <span className="text-gray-400">🔍</span>
@@ -849,12 +830,10 @@ export default function DeliveryPage() {
                                <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500">{p.ProductCode}</span>
                             </div>
                          ))}
-                         {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).length === 0 && <div className="p-3 text-center text-gray-400 text-sm">No match found.</div>}
                       </div>
                    )}
                 </div>
 
-                {/* 3. Items List */}
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
                     <div className="grid grid-cols-12 gap-4 p-3 bg-gray-50 border-b border-gray-200 text-[10px] font-bold text-gray-500 uppercase">
                         <div className="col-span-5">Item</div>
@@ -868,7 +847,6 @@ export default function DeliveryPage() {
                           <div key={item.id || idx} className="grid grid-cols-12 gap-4 p-3 items-center hover:bg-gray-50">
                             <div className="col-span-5">
                               <input 
-                                list="global-product-list"
                                 className="w-full p-1.5 border border-gray-200 rounded text-sm font-bold text-gray-800 focus:ring-2 focus:ring-blue-100 outline-none"
                                 value={item["Order Items"]}
                                 onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}
@@ -916,10 +894,8 @@ export default function DeliveryPage() {
                         ))}
                     </div>
                 </div>
-
               </div>
 
-              {/* Modal Footer */}
               <div className="p-4 border-t border-gray-100 bg-white flex justify-end gap-3">
                 <button 
                   onClick={() => setIsEditModalOpen(false)}
@@ -934,11 +910,9 @@ export default function DeliveryPage() {
                   Save Changes
                 </button>
               </div>
-
             </div>
           </div>
         )}
-
       </main>
     </div>
   );
