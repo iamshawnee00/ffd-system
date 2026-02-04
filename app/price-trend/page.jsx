@@ -22,60 +22,54 @@ export default function PriceTrendPage() {
   const [chartData, setChartData] = useState([]);
   const [salesHistory, setSalesHistory] = useState([]);
   const [purchaseHistory, setPurchaseHistory] = useState([]);
-  // Stats now refer to COST PRICE (Purchases)
-  const [stats, setStats] = useState({ maxCost: 0, minCost: 0, avgCost: 0 });
+  const [stats, setStats] = useState({ maxSell: 0, minSell: 0, avgSell: 0 });
   
-  // Date Range State
+  // Date Range State - Default to ALL TIME
   const [dateRange, setDateRange] = useState('all');
 
-  // 1. Fetch Product List (Restricted to Last 2 Days Purchases)
+  // 1. Fetch Product List (Show ALL products, sorted by activity)
   useEffect(() => {
     async function fetchProducts() {
       setLoading(true);
 
-      // A. Calculate date 2 days ago
-      const twoDaysAgo = new Date();
-      twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-      const isoDate = twoDaysAgo.toISOString();
+      // A. Get ALL Products from Master
+      const { data: prodData } = await supabase
+        .from('ProductMaster')
+        .select('ProductCode, ProductName, Category, SalesUOM, BaseUOM');
 
-      // B. Fetch unique ProductCodes from Purchases in the last 2 days
-      const { data: recentPurchases, error: purError } = await supabase
+      // B. Get Latest Purchase Date for EACH product to sort
+      // We fetch the most recent purchase for every product to determine "active" items
+      const { data: latestPurchases } = await supabase
         .from('Purchase')
         .select('ProductCode, Timestamp')
-        .gte('Timestamp', isoDate)
         .order('Timestamp', { ascending: false });
-        
-      if (purError) console.error("Error fetching recent purchases:", purError);
+        // Note: Fetching all might be heavy if thousands of rows. 
+        // For efficiency, we just grab them and process in JS, or use a DB view.
+        // For MVP, this is fine.
 
-      if (!recentPurchases || recentPurchases.length === 0) {
-          setProducts([]);
-          setLoading(false);
-          return;
+      // Create a map of Code -> Latest Timestamp
+      const latestMap = {};
+      if (latestPurchases) {
+        latestPurchases.forEach(p => {
+          // Only keep the *first* (latest) timestamp encountered for each code
+          if (!latestMap[p.ProductCode]) {
+            latestMap[p.ProductCode] = new Date(p.Timestamp).getTime();
+          }
+        });
       }
 
-      // Deduplicate codes and keep latest timestamp
-      const latestMap = {};
-      const uniqueCodes = [];
-      recentPurchases.forEach(p => {
-          if (!latestMap[p.ProductCode]) {
-              latestMap[p.ProductCode] = new Date(p.Timestamp).getTime();
-              uniqueCodes.push(p.ProductCode);
-          }
-      });
-
-      // C. Fetch Product Details for these codes
-      const { data: prodData, error: prodError } = await supabase
-        .from('ProductMaster')
-        .select('ProductCode, ProductName, Category, SalesUOM, BaseUOM')
-        .in('ProductCode', uniqueCodes);
-
-      if (prodError) console.error("Error fetching product details:", prodError);
-
-      // D. Merge and Sort
+      // Merge and Sort
+      // Items with NO purchase history get timestamp 0 (appear at bottom)
       const sortedProducts = (prodData || []).map(p => ({
         ...p,
-        latestPurchase: latestMap[p.ProductCode] || 0
-      })).sort((a, b) => b.latestPurchase - a.latestPurchase); // Newest first
+        latestPurchase: latestMap[p.ProductCode] || 0 
+      })).sort((a, b) => {
+          // Sort by latest purchase DESC, then by Name ASC
+          if (b.latestPurchase !== a.latestPurchase) {
+              return b.latestPurchase - a.latestPurchase;
+          }
+          return a.ProductName.localeCompare(b.ProductName);
+      });
 
       setProducts(sortedProducts);
       setLoading(false);
@@ -147,13 +141,14 @@ export default function PriceTrendPage() {
     const { data: costData, error: costError } = await purchaseQuery;
     if (costError) console.error("Purchase Error:", costError);
 
-    // Update Tables
+    // Update Tables (Show latest first)
     setSalesHistory(salesData ? [...salesData].reverse() : []);
     setPurchaseHistory(costData ? [...costData].reverse() : []);
 
     // C. Process Chart Data
     const combinedMap = {};
 
+    // 1. Map Sales
     if (salesData) {
         salesData.forEach(row => {
             // Filter out 0.00 / Replacement sales from CHART
@@ -166,9 +161,8 @@ export default function PriceTrendPage() {
         });
     }
 
-    // Process Costs & Calculate Stats from THIS data
+    // 2. Map Purchases
     const validCosts = [];
-
     if (costData) {
         costData.forEach(row => {
             const d = row.Timestamp.substring(0, 10);
@@ -190,15 +184,16 @@ export default function PriceTrendPage() {
     // Calculate Stats based on COST PRICE (Purchases)
     if (validCosts.length > 0) {
         setStats({
-            maxCost: Math.max(...validCosts),
-            minCost: Math.min(...validCosts),
-            avgCost: (validCosts.reduce((a, b) => a + b, 0) / validCosts.length).toFixed(2)
+            maxSell: Math.max(...validCosts),
+            minSell: Math.min(...validCosts),
+            avgSell: (validCosts.reduce((a, b) => a + b, 0) / validCosts.length).toFixed(2)
         });
     } else {
-        setStats({ maxCost: 0, minCost: 0, avgCost: 0 });
+        setStats({ maxSell: 0, minSell: 0, avgSell: 0 });
     }
   };
 
+  // Filter List based on Search Term
   const filteredProducts = products.filter(p => {
     if (!searchTerm) return true;
     const lowerTerm = searchTerm.toLowerCase();
@@ -221,13 +216,12 @@ export default function PriceTrendPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             
-            {/* LEFT COLUMN: Product List (Recent Purchases Only) */}
+            {/* LEFT COLUMN: Product List */}
             <div className="bg-white p-6 rounded-3xl shadow-xl border border-gray-100 lg:col-span-1 h-[85vh] flex flex-col">
                 <h2 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">Select Product</h2>
-                <p className="text-[10px] text-gray-400 mb-4 italic">Showing items purchased in last 48 hours</p>
                 <input 
                     type="text"
-                    placeholder="🔍 Search active product..."
+                    placeholder="🔍 Search all products..."
                     className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-100 transition-all mb-4"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
@@ -253,15 +247,22 @@ export default function PriceTrendPage() {
                                         {p.ProductCode}
                                     </div>
                                 </div>
-                                <div className="text-[9px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-lg whitespace-nowrap ml-2">
-                                    {new Date(p.latestPurchase).toLocaleDateString('en-GB', {day:'2-digit', month:'short'})}
-                                </div>
+                                {/* Show date only if it exists */}
+                                {p.latestPurchase > 0 ? (
+                                    <div className="text-[9px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-lg whitespace-nowrap ml-2">
+                                        {new Date(p.latestPurchase).toLocaleDateString('en-GB', {day:'2-digit', month:'short'})}
+                                    </div>
+                                ) : (
+                                    <div className="text-[9px] font-bold text-gray-300 bg-gray-50 px-2 py-1 rounded-lg whitespace-nowrap ml-2">
+                                        No Data
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ))}
                     {filteredProducts.length === 0 && (
                         <div className="text-center py-10 text-gray-400 text-sm italic">
-                            {searchTerm ? "No match found." : "No purchases in last 2 days."}
+                            No matching products found.
                         </div>
                     )}
                 </div>
@@ -297,19 +298,19 @@ export default function PriceTrendPage() {
                             </div>
                         </div>
 
-                        {/* Stats Cards (NOW SHOWING COST PRICE) */}
+                        {/* Stats Cards (Cost Based) */}
                         <div className="grid grid-cols-3 gap-4">
                             <div className="bg-green-50 p-5 rounded-3xl border border-green-100 text-center shadow-sm">
                                 <p className="text-[10px] font-black text-green-400 uppercase tracking-widest mb-1">Max Cost</p>
-                                <p className="text-2xl font-black text-green-700">RM {Number(stats.maxCost).toFixed(2)}</p>
+                                <p className="text-2xl font-black text-green-700">RM {Number(stats.maxSell).toFixed(2)}</p>
                             </div>
                             <div className="bg-blue-50 p-5 rounded-3xl border border-blue-100 text-center shadow-sm">
                                 <p className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Avg Cost</p>
-                                <p className="text-2xl font-black text-blue-700">RM {Number(stats.avgCost).toFixed(2)}</p>
+                                <p className="text-2xl font-black text-blue-700">RM {Number(stats.avgSell).toFixed(2)}</p>
                             </div>
                             <div className="bg-orange-50 p-5 rounded-3xl border border-orange-100 text-center shadow-sm">
                                 <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest mb-1">Min Cost</p>
-                                <p className="text-2xl font-black text-orange-700">RM {Number(stats.minCost).toFixed(2)}</p>
+                                <p className="text-2xl font-black text-orange-700">RM {Number(stats.minSell).toFixed(2)}</p>
                             </div>
                         </div>
 
