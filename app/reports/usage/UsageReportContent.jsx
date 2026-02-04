@@ -26,10 +26,10 @@ export default function UsageReportContent() {
       console.log(`Fetching DAILY usage for ${date}`);
 
       // Fetch Orders for the specific date using exact match
-      // We select the specific columns needed for the usage report
+      // Using select('*') to avoid potential column name mismatches compared to Batch DO which works
       const { data, error } = await supabase
         .from('Orders')
-        .select('"Product Code", "Order Items", Quantity, UOM, "Customer Name", "Delivery Date"')
+        .select('*') 
         .eq('"Delivery Date"', date);
 
       if (error) {
@@ -41,7 +41,8 @@ export default function UsageReportContent() {
         // Map to flat structure for display
         const usageList = data.map((row, index) => ({
             id: index,
-            description: row["Order Items"],
+            // Ensure we access properties that might have spaces safely
+            description: row["Order Items"], 
             qty: Number(row.Quantity || 0),
             uom: row.UOM,
             customer: row["Customer Name"]
