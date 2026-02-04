@@ -7,7 +7,7 @@ import { useSearchParams } from 'next/navigation';
 export default function UsageReportContent() {
   const searchParams = useSearchParams();
   const date = searchParams.get('date');
-  const type = searchParams.get('type'); // 'daily' or 'weekly'
+  // We are focusing only on daily usage as requested, so 'type' is ignored for now.
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -23,49 +23,14 @@ export default function UsageReportContent() {
       }
       setLoading(true);
 
-      // Initialize query selecting needed columns
-      // Note: Ensure column names match your DB exactly.
-      let query = supabase
+      console.log(`Fetching DAILY usage for ${date}`);
+
+      // Fetch Orders for the specific date using exact match
+      // We select the specific columns needed for the usage report
+      const { data, error } = await supabase
         .from('Orders')
-        .select('"Product Code", "Order Items", Quantity, UOM, "Customer Name", "Delivery Date"');
-
-      let startDate, endDate;
-
-      if (type === 'weekly') {
-        const d = new Date(date);
-        const day = d.getDay(); 
-        // Adjust to Monday start
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
-        const start = new Date(d.setDate(diff));
-        const end = new Date(d.setDate(diff + 6));
-        
-        startDate = start.toISOString().slice(0, 10);
-        endDate = end.toISOString().slice(0, 10);
-        
-        console.log(`Fetching WEEKLY usage from ${startDate} to ${endDate}`);
-      } else {
-        // DAILY USAGE
-        // Use the selected date directly
-        startDate = date;
-        endDate = date;
-        console.log(`Fetching DAILY usage for ${date}`);
-      }
-
-      // Use .gte and .lte for potentially safer date comparison 
-      // (works for both DATE and TIMESTAMP types if time is 00:00:00 or ranges overlap)
-      // If your DB is purely DATE type, .eq is fine, but range is safer generally.
-      // However, since Batch DO uses .eq and works, let's try to mimic that exact success pattern first,
-      // but if that failed for you here, let's try the range approach which covers more edge cases.
-      
-      if (startDate === endDate) {
-         // Exact match for daily to mimic Batch DO success
-         query = query.eq('"Delivery Date"', startDate);
-      } else {
-         // Range for weekly
-         query = query.gte('"Delivery Date"', startDate).lte('"Delivery Date"', endDate);
-      }
-
-      const { data, error } = await query;
+        .select('"Product Code", "Order Items", Quantity, UOM, "Customer Name", "Delivery Date"')
+        .eq('"Delivery Date"', date);
 
       if (error) {
         console.error("Supabase Error:", error);
@@ -73,7 +38,7 @@ export default function UsageReportContent() {
       } else if (data) {
         console.log(`Fetched ${data.length} rows`);
         
-        // Map to flat structure
+        // Map to flat structure for display
         const usageList = data.map((row, index) => ({
             id: index,
             description: row["Order Items"],
@@ -82,7 +47,7 @@ export default function UsageReportContent() {
             customer: row["Customer Name"]
         }));
         
-        // Sort by Description (A-Z)
+        // Sort by Description (A-Z) so similar items are grouped visually
         usageList.sort((a, b) => (a.description || "").localeCompare(b.description || ""));
 
         setItems(usageList);
@@ -95,7 +60,7 @@ export default function UsageReportContent() {
     } else {
         setLoading(false);
     }
-  }, [date, type]);
+  }, [date]);
 
   // Format Date for Header (DD-MM-YYYY)
   const formatDate = (dStr) => {
