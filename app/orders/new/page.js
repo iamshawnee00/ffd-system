@@ -23,8 +23,9 @@ export default function NewOrderPage() {
     DeliveryAddress: '' 
   });
   
+  // Initialize date to today's date in YYYY-MM-DD format
   const [deliveryDate, setDeliveryDate] = useState(() => {
-    return new Date().toISOString().split('T')[0];
+    return new Date().toISOString().split('T')[0]; // Current date
   });
   const [deliveryMode, setDeliveryMode] = useState('Driver'); 
   const [salesChannel, setSalesChannel] = useState('Online / FnB'); 
@@ -33,9 +34,11 @@ export default function NewOrderPage() {
   const [cart, setCart] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Temporary input state for quantities in the product list
   const [productInputs, setProductInputs] = useState({});
 
-  // 1. Fetch Data & User on Load
+  // 1. Fetch Customers & Products on Load
   useEffect(() => {
     async function loadData() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -44,7 +47,7 @@ export default function NewOrderPage() {
         return;
       }
 
-      // Extract username from email (e.g., "ali@ffd.system" -> "ali")
+      // Auto capture user
       const email = session.user.email || "";
       const username = email.split('@')[0].toUpperCase();
       setCurrentUser(username);
@@ -66,6 +69,7 @@ export default function NewOrderPage() {
     loadData();
   }, []);
 
+  // Handle Customer Selection
   const handleCustomerChange = (e) => {
     const custName = e.target.value;
     setSelectedCustomer(custName);
@@ -84,6 +88,7 @@ export default function NewOrderPage() {
     setCustDetails(prev => ({ ...prev, [field]: value }));
   };
 
+  // Handle inputs for individual product cards
   const handleProductInputChange = (code, field, value) => {
     setProductInputs(prev => ({
       ...prev,
@@ -91,12 +96,15 @@ export default function NewOrderPage() {
     }));
   };
 
+  // Add Item to Cart
   const addToCart = (product) => {
     const inputs = productInputs[product.ProductCode] || {};
     const qty = parseFloat(inputs.qty);
-    const price = inputs.price === undefined || inputs.price === '' ? 0 : parseFloat(inputs.price);
+    const price = inputs.price === undefined || inputs.price === '' ? 0 : parseFloat(inputs.price); 
     
-    if (!qty || qty <= 0) return;
+    if (!qty || qty <= 0) {
+      return; 
+    }
 
     const exists = cart.find(item => item.ProductCode === product.ProductCode);
     if (exists) {
@@ -123,26 +131,35 @@ export default function NewOrderPage() {
     setSearchTerm(''); 
   };
 
+  // Remove Item
   const removeFromCart = (code) => {
     setCart(cart.filter(item => item.ProductCode !== code));
   };
 
+  // Update Cart Item 
   const updateCartItem = (code, field, value) => {
     setCart(cart.map(item => 
       item.ProductCode === code ? { ...item, [field]: value } : item
     ));
   };
 
+  // Submit Order
   const handleSubmit = async () => {
     if (!selectedCustomer || !deliveryDate || cart.length === 0) {
-      alert("Please select a customer, date, and items.");
+      alert("Please select a customer, date, and at least one item.");
       return;
     }
 
     setSubmitting(true);
 
-    const dateStr = new Date().toISOString().slice(2,10).replace(/-/g,'');
+    // 1. Format Date string from YYYY-MM-DD to YYMMDD based on DELIVERY DATE
+    // deliveryDate is "2026-02-04" -> split -> ["2026", "02", "04"] -> "260204"
+    const [year, month, day] = deliveryDate.split('-');
+    const dateStr = `${year.slice(2)}${month}${day}`;
+
+    // 2. Generate Random 4-digit number
     const random = Math.floor(1000 + Math.random() * 9000); 
+    
     const doNumber = `DO-${dateStr}-${random}`;
 
     const orderRows = cart.map(item => ({
@@ -162,7 +179,7 @@ export default function NewOrderPage() {
       "Price": item.isReplacement ? 0 : item.price,
       "Replacement": item.isReplacement ? "YES" : "",
       "SpecialNotes": item.notes,
-      "LoggedBy": currentUser // Auto-captured user
+      "LoggedBy": currentUser
     }));
 
     const { error } = await supabase.from('Orders').insert(orderRows);
@@ -199,6 +216,7 @@ export default function NewOrderPage() {
       <Sidebar />
       <main className="ml-64 flex-1 p-8">
         
+        {/* Page Header */}
         <div className="mb-4 flex justify-between items-end"> 
            <div>
                <h1 className="text-xl font-black text-gray-800 tracking-tight">Create New Order</h1> 
@@ -212,13 +230,16 @@ export default function NewOrderPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
+          {/* --- LEFT COLUMN (2/3 width) --- */}
           <div className="lg:col-span-2 space-y-4">
             
+            {/* 1. Transaction Details Card - Compact Layout */}
             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100"> 
               <h2 className="text-xs font-bold text-gray-800 mb-3 border-b border-gray-100 pb-1">Transaction Details</h2>
               
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3"> 
                  
+                 {/* Sales Channel */}
                  <div className="col-span-1">
                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Sales Channel</label>
                      <select 
@@ -232,6 +253,7 @@ export default function NewOrderPage() {
                      </select>
                  </div>
 
+                 {/* Company Name */}
                  <div className="col-span-1 md:col-span-2">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Company Name</label>
                     <input 
@@ -247,6 +269,7 @@ export default function NewOrderPage() {
                     </datalist>
                  </div>
 
+                 {/* Contact Person */}
                  <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Contact Person</label>
                     <input 
@@ -257,6 +280,7 @@ export default function NewOrderPage() {
                     />
                  </div>
 
+                 {/* Contact Number */}
                  <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Contact Number</label>
                     <input 
@@ -267,6 +291,7 @@ export default function NewOrderPage() {
                     />
                  </div>
 
+                 {/* Date */}
                  <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Delivery Date</label>
                     <input 
@@ -277,6 +302,7 @@ export default function NewOrderPage() {
                     />
                  </div>
 
+                 {/* Mode */}
                  <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Mode</label>
                     <select 
@@ -290,6 +316,7 @@ export default function NewOrderPage() {
                     </select>
                  </div>
 
+                 {/* Address */}
                  <div className="col-span-1 md:col-span-2">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Address</label>
                     <input 
@@ -302,8 +329,9 @@ export default function NewOrderPage() {
               </div>
             </div>
 
-            {/* Product Search */}
+            {/* 2. Product Search & Selection */}
             <div>
+               {/* Search Input */}
                <div className="relative mb-4">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <span className="text-gray-400 text-lg">🔍</span>
@@ -317,6 +345,7 @@ export default function NewOrderPage() {
                   />
                </div>
 
+               {/* Product Grid */}
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {filteredProducts.slice(0, 10).map(p => {
                       const inputs = productInputs[p.ProductCode] || {};
@@ -327,6 +356,7 @@ export default function NewOrderPage() {
 
                       return (
                         <div key={p.ProductCode} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
+                           {/* Stock Badge */}
                            <div className={`absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${stockClass}`}>
                               {p.StockBalance ? `${Number(p.StockBalance).toFixed(2)} ${p.BaseUOM}` : 'No Stock'}
                            </div>
@@ -334,7 +364,9 @@ export default function NewOrderPage() {
                            <h3 className="font-bold text-gray-800 text-sm mb-0.5 pr-16">{p.ProductName}</h3>
                            <p className="text-[10px] text-gray-400 font-mono mb-3">{p.ProductCode}</p>
 
+                           {/* Controls */}
                            <div className="flex gap-2 mb-2">
+                              {/* UOM Select */}
                               <select 
                                 className="bg-gray-50 border border-gray-200 rounded-lg text-xs p-1.5 flex-1 font-bold focus:outline-none focus:ring-1 focus:ring-green-500 uppercase"
                                 value={inputs.uom || p.BaseUOM}
@@ -343,6 +375,7 @@ export default function NewOrderPage() {
                                 {uomOptions.map(u => <option key={u} value={u}>{u}</option>)}
                               </select>
 
+                              {/* Qty Input */}
                               <div className="relative w-20">
                                  <input 
                                     type="number" 
@@ -354,7 +387,9 @@ export default function NewOrderPage() {
                               </div>
                            </div>
 
+                           {/* Price & Add */}
                            <div className="flex items-center gap-2">
+                              {/* Replacement Checkbox */}
                               <label className="flex items-center gap-1 cursor-pointer select-none">
                                   <input 
                                     type="checkbox" 
@@ -367,6 +402,7 @@ export default function NewOrderPage() {
 
                               <div className="flex-1"></div>
 
+                              {/* Price Input */}
                               <div className="relative w-24">
                                  <span className="absolute left-2 top-1 text-[10px] text-gray-400 font-bold">RM</span>
                                  <input 
@@ -406,6 +442,7 @@ export default function NewOrderPage() {
                    <span className="bg-gray-100 text-gray-600 text-xs font-black px-2.5 py-1 rounded-full">{cart.length}</span>
                 </div>
 
+                {/* Cart Items List */}
                 <div className="flex-1 overflow-y-auto space-y-3 pr-1 custom-scrollbar mb-4">
                     {cart.length === 0 ? (
                         <div className="h-40 flex items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-xl">
@@ -444,6 +481,7 @@ export default function NewOrderPage() {
                                    )}
                                </div>
 
+                               {/* Notes Input per item */}
                                <input 
                                   type="text" 
                                   placeholder="Item note..." 
@@ -456,6 +494,7 @@ export default function NewOrderPage() {
                     )}
                 </div>
 
+                {/* Footer Actions */}
                 <div className="mt-auto pt-4 border-t border-gray-100">
                     <textarea 
                         className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs mb-3 focus:outline-none focus:ring-1 focus:ring-green-500 resize-none"
