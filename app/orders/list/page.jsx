@@ -718,7 +718,7 @@ export default function OrderListPage() {
                               <input 
                                 type="number" 
                                 className="w-full p-1.5 border border-gray-200 rounded text-right text-sm"
-                                value={item.Price}
+                                value={item.Price ?? ''}
                                 onChange={e => handleEditItemChange(idx, 'Price', e.target.value)}
                               />
                             </div>

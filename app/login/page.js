@@ -4,8 +4,8 @@ import { supabase } from '../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+  const [passcode, setPasscode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const router = useRouter();
@@ -15,13 +15,20 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
+    // 1. Construct the internal system email from the username
+    // Remove spaces and lowercase it to ensure consistency
+    // e.g., "Ali " -> "ali@ffd.system"
+    const systemEmail = `${username.trim().toLowerCase().replace(/\s+/g, '')}@ffd.system`;
+
     const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+      email: systemEmail,
+      password: passcode,
     });
 
     if (error) {
-      setError(error.message);
+      console.error("Login Error:", error.message);
+      // Give a generic error so users don't know if username or PIN is wrong
+      setError("Invalid Username or Passcode");
       setLoading(false);
     } else {
       router.push('/');
@@ -38,15 +45,15 @@ export default function LoginPage() {
           <div className="relative z-10 flex flex-col items-center">
             <div className="text-6xl mb-2 filter drop-shadow-md">🍎</div>
             <h1 className="text-3xl font-black text-white tracking-tight">FFD Wholesale</h1>
-            <p className="text-green-100 text-xs font-bold tracking-[0.2em] mt-2 uppercase opacity-80">System V7.99</p>
+            <p className="text-green-100 text-xs font-bold tracking-[0.2em] mt-2 uppercase opacity-80">System V8.0</p>
           </div>
         </div>
 
         {/* Login Form */}
         <div className="p-8 pt-10">
           <div className="mb-8 text-center">
-            <h2 className="text-xl font-bold text-gray-800">Welcome Back</h2>
-            <p className="text-gray-400 text-sm mt-1">Please sign in to continue</p>
+            <h2 className="text-xl font-bold text-gray-800">Staff Access</h2>
+            <p className="text-gray-400 text-sm mt-1">Enter your ID and 6-digit Passcode</p>
           </div>
 
           {error && (
@@ -56,46 +63,55 @@ export default function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-5">
+          <form onSubmit={handleLogin} className="space-y-6">
             <div>
-              <label className="block text-gray-500 text-xs font-bold uppercase mb-2 ml-1 tracking-wider">Email Address</label>
+              <label className="block text-gray-400 text-xs font-bold uppercase mb-2 ml-1 tracking-wider">Username</label>
               <input 
-                type="email" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-700 focus:outline-none focus:bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 placeholder-gray-300"
-                placeholder="name@ffdwholesale.com"
+                type="text" 
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 font-bold focus:outline-none focus:bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 placeholder-gray-300"
+                placeholder="e.g. admin"
+                autoComplete="username"
                 required 
               />
             </div>
             
             <div>
-              <label className="block text-gray-500 text-xs font-bold uppercase mb-2 ml-1 tracking-wider">Password</label>
+              <label className="block text-gray-400 text-xs font-bold uppercase mb-2 ml-1 tracking-wider">Passcode</label>
               <input 
                 type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-700 focus:outline-none focus:bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 placeholder-gray-300"
-                placeholder="••••••••"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength="6"
+                value={passcode}
+                onChange={(e) => {
+                    // Only allow numbers
+                    const val = e.target.value.replace(/[^0-9]/g, '');
+                    if (val.length <= 6) setPasscode(val);
+                }}
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 text-center text-3xl font-mono tracking-[0.5em] focus:outline-none focus:bg-white focus:ring-2 focus:ring-green-500 focus:border-transparent transition-all duration-200 placeholder-gray-300"
+                placeholder="••••••"
+                autoComplete="current-password"
                 required 
               />
             </div>
 
             <button 
               type="submit" 
-              disabled={loading}
-              className={`w-full py-4 mt-4 rounded-xl text-white font-bold text-lg shadow-lg transform transition-all duration-200 
-                ${loading 
-                  ? 'bg-gray-400 cursor-not-allowed' 
+              disabled={loading || passcode.length < 6}
+              className={`w-full py-4 mt-2 rounded-xl text-white font-bold text-lg shadow-lg transform transition-all duration-200 
+                ${loading || passcode.length < 6
+                  ? 'bg-gray-300 cursor-not-allowed' 
                   : 'bg-green-600 hover:bg-green-700 hover:-translate-y-1 hover:shadow-green-500/30 active:scale-95'
                 }`}
             >
               {loading ? (
                 <div className="flex items-center justify-center gap-2">
                   <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>Signing In...</span>
+                  <span>Verifying...</span>
                 </div>
-              ) : 'Sign In'}
+              ) : 'Unlock System'}
             </button>
           </form>
         </div>
