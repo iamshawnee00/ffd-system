@@ -28,15 +28,10 @@ export default function UsageReportContent() {
       
       if (type === 'weekly') {
         const d = new Date(date);
-        const day = d.getDay(); // 0 is Sunday
-        // Adjust to Monday start if needed, assuming Sunday is 0
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1); 
-        
-        const start = new Date(d);
-        start.setDate(diff);
-        
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6);
+        const day = d.getDay(); 
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Monday start
+        const start = new Date(d.setDate(diff));
+        const end = new Date(d.setDate(diff + 6));
         
         startDate = start.toISOString().slice(0, 10);
         endDate = end.toISOString().slice(0, 10);
@@ -45,11 +40,12 @@ export default function UsageReportContent() {
       console.log(`Fetching usage from ${startDate} to ${endDate}`);
 
       // Fetch Orders for range
+      // FIX: Use double quotes for "Delivery Date" to match the working Batch DO logic
       const { data, error } = await supabase
         .from('Orders')
         .select('"Product Code", "Order Items", Quantity, UOM, "Customer Name"')
-        .gte('Delivery Date', startDate) // Ensure exact column name match
-        .lte('Delivery Date', endDate);
+        .gte('"Delivery Date"', startDate) 
+        .lte('"Delivery Date"', endDate);
 
       if (error) {
         console.error("Supabase Error:", error);
@@ -83,7 +79,7 @@ export default function UsageReportContent() {
   const formatDate = (dStr) => {
       if (!dStr) return '';
       const d = new Date(dStr);
-      return !isNaN(d) ? d.toLocaleDateString('en-GB') : dStr; // Changed to en-GB for DD/MM/YYYY
+      return !isNaN(d) ? d.toLocaleDateString('en-GB') : dStr;
   };
 
   // Pagination Logic
@@ -95,7 +91,7 @@ export default function UsageReportContent() {
   return (
     <div className="bg-gray-100 min-h-screen p-4 md:p-8 print:p-0 print:bg-white text-black font-sans text-xs">
       
-       {/* Use safer style injection to prevent hydration errors */}
+       {/* Safer style injection to prevent hydration errors */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { size: A4; margin: 0; }
