@@ -1,73 +1,111 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabaseClient';
+import { supabase } from '../../lib/supabaseClient'; 
 import { useSearchParams } from 'next/navigation';
 
 export default function BatchDoReportContent() {
   const searchParams = useSearchParams();
   const date = searchParams.get('date');
-  const driverFilter = searchParams.get('driver'); // Optional: Filter by driver name
+  const driverFilter = searchParams.get('driver'); 
 
   const [doList, setDoList] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState(null);
 
   // Constants
-  const ITEMS_PER_PAGE = 18; // Match the single print page limit
+  const ITEMS_PER_PAGE = 18; 
 
   useEffect(() => {
     async function fetchAllDOs() {
       if (!date) {
-        setLoading(false); // Stop loading if no date provided
+        setLoading(false);
         return;
       }
       setLoading(true);
+      setErrorMsg(null);
 
-      // 1. Fetch raw rows
-      let query = supabase
-        .from('Orders')
-        .select('*')
-        .eq('"Delivery Date"', date)
-        .order('DONumber');
+      console.log("🚀 Starting Fetch - Date:", date, "Driver:", driverFilter || "ALL");
 
-      // If driver filter is present
-      if (driverFilter) {
-          query = query.eq('DriverName', driverFilter);
-      }
+      try {
+        // 1. Fetch raw rows
+        let query = supabase
+          .from('Orders')
+          .select('*')
+          // Ensure exact column name matching. 
+          // If your DB column is "Delivery Date", this is correct.
+          .eq('Delivery Date', date) 
+          .order('DONumber');
 
-      const { data, error } = await query;
+        // If driver filter is present AND not empty
+        if (driverFilter && driverFilter.trim() !== '') {
+            console.log("Applying Driver Filter:", driverFilter);
+            query = query.eq('DriverName', driverFilter);
+        }
 
-      if (!error && data) {
-        // 2. Group by DO Number
-        const grouped = {};
-        data.forEach(row => {
-          if (!grouped[row.DONumber]) {
-            grouped[row.DONumber] = {
-              info: row, // Keep first row for header info
-              items: []
-            };
+        const { data, error } = await query;
+
+        if (error) {
+          console.error("❌ Supabase Error:", error);
+          setErrorMsg(error.message);
+          setDoList([]);
+        } else if (data) {
+          console.log("✅ Fetched Orders Count:", data.length);
+          
+          if (data.length === 0) {
+             console.warn("⚠️ No data returned for this date.");
           }
-          grouped[row.DONumber].items.push(row);
-        });
-        setDoList(Object.values(grouped));
+
+          // 2. Group by DO Number
+          const grouped = {};
+          data.forEach(row => {
+            if (!grouped[row.DONumber]) {
+              grouped[row.DONumber] = {
+                info: row, // Keep first row for header info
+                items: []
+              };
+            }
+            grouped[row.DONumber].items.push(row);
+          });
+          
+          const groupedArray = Object.values(grouped);
+          // Optional: Sort by DO Number if not already
+          groupedArray.sort((a, b) => (a.info.DONumber || "").localeCompare(b.info.DONumber || ""));
+          
+          setDoList(groupedArray);
+        }
+      } catch (err) {
+          console.error("Unexpected Error:", err);
+          setErrorMsg(err.message);
       }
       setLoading(false);
     }
-    // Ensure we only run this when date or filters change
-    if (date || driverFilter) {
+    
+    // Only run if date is available
+    if (date) {
         fetchAllDOs();
     } else {
         setLoading(false);
     }
   }, [date, driverFilter]);
 
-  // STABLE ROOT ELEMENT: We always return this wrapper div to prevent "NotFoundError" during hydration
+  // Handle Loading & Empty States
+  if (loading) return <div className="p-10 text-center">Generating Batch DOs...</div>;
+  if (!date) return <div className="p-10 text-center text-gray-500">Please provide a date parameter (e.g., ?date=YYYY-MM-DD).</div>;
+  
+  if (errorMsg) return (
+    <div className="p-10 text-center text-red-500">
+      <p>Error fetching data: {errorMsg}</p>
+      <p className="text-sm text-gray-400 mt-2">Check console for details.</p>
+    </div>
+  );
+
+  if (doList.length === 0) return <div className="p-10 text-center text-gray-500">No orders found for {date} {driverFilter ? `assigned to ${driverFilter}` : ''}.</div>;
+
   return (
     <div className="bg-gray-100 min-h-screen p-8 print:p-0 print:bg-white text-black font-sans">
       
-      {/* FIX: Using standard style tag via dangerouslySetInnerHTML prevents 
-        "Runtime NotFoundError" associated with styled-jsx in Client Components 
-      */}
+      {/* Safer style injection */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { size: A4; margin: 0; }
@@ -78,46 +116,26 @@ export default function BatchDoReportContent() {
         }
       `}} />
 
-      {/* Loading State */}
-      {loading && (
-        <div className="p-10 text-center">Generating Batch DOs...</div>
-      )}
+      {/* Print Controls */}
+      <div className="fixed top-4 right-4 print-hidden z-50 flex gap-2">
+        <button 
+            onClick={() => window.print()}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition transform hover:scale-105 flex items-center gap-2"
+        >
+            <span>🖨️</span> Print All ({doList.length})
+        </button>
+      </div>
 
-      {/* No Date State */}
-      {!loading && !date && (
-        <div className="p-10 text-center text-gray-500">Please provide a date parameter (e.g., ?date=YYYY-MM-DD).</div>
-      )}
-
-      {/* No Orders Found State */}
-      {!loading && date && doList.length === 0 && (
-        <div className="p-10 text-center text-gray-500">No orders found for {date} {driverFilter ? `assigned to ${driverFilter}` : ''}.</div>
-      )}
-
-      {/* Data Content State */}
-      {!loading && doList.length > 0 && (
-        <>
-          {/* Print Controls */}
-          <div className="fixed top-4 right-4 print-hidden z-50 flex gap-2">
-            <button 
-                onClick={() => window.print()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full shadow-lg transition transform hover:scale-105"
-            >
-                🖨️ Print All ({doList.length})
-            </button>
-          </div>
-
-          {doList.map((order, idx) => (
-            <div key={order.info.DONumber} className="page-break-after">
-                <SingleDOComponent orderData={order.info} items={order.items} itemsPerPage={ITEMS_PER_PAGE} />
-            </div>
-          ))}
-        </>
-      )}
+      {doList.map((order) => (
+        <div key={order.info.DONumber} className="page-break-after">
+            <SingleDOComponent orderData={order.info} items={order.items} itemsPerPage={ITEMS_PER_PAGE} />
+        </div>
+      ))}
     </div>
   );
 }
 
-// --- REUSABLE COMPONENT (Exact copy of your finalized single print page logic) ---
+// --- REUSABLE COMPONENT (Single DO Page) ---
 function SingleDOComponent({ orderData, items, itemsPerPage }) {
   // Pagination for this specific order
   const pages = [];
@@ -127,10 +145,6 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '';
-    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-        const [y, m, d] = dateStr.split('-');
-        return `${d}/${m}/${y}`;
-    }
     const d = new Date(dateStr);
     return !isNaN(d) ? d.toLocaleDateString('en-GB') : dateStr;
   };
@@ -142,11 +156,10 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
              className="mx-auto bg-white shadow-xl mb-8 print:shadow-none print:mb-0 flex flex-col relative page-break-after overflow-hidden box-border" 
              style={{ width: '210mm', height: '297mm', padding: '10mm' }}>
           
-          {/* --- MODULE 1: COMPANY INFO --- */}
+          {/* --- HEADER --- */}
           <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-2 h-[35mm]">
              <div className="flex gap-3 h-full items-center">
                 <div className="w-16 h-16 relative">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" alt="Logo" className="w-full h-full object-contain" />
                 </div>
                 <div>
@@ -159,13 +172,12 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
                 </div>
              </div>
              
-             {/* DELIVERY ORDER TITLE */}
              <div className="text-right self-center">
                   <h2 className="text-3xl font-black uppercase tracking-widest leading-none">DELIVERY<br/>ORDER</h2>
              </div>
           </div>
 
-          {/* --- MODULE 2: HEADER & CUSTOMER --- */}
+          {/* --- INFO --- */}
           <div className="h-[35mm] flex justify-between items-start text-xs pt-1 mb-0">
               <div className="w-[60%] pr-2">
                   <div className="mb-2">
@@ -195,7 +207,7 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
               </div>
           </div>
 
-          {/* --- MODULE 3: ITEMS TABLE --- */}
+          {/* --- ITEMS --- */}
           <div className="flex-grow border-t-2 border-black relative mt-0">
             <table className="w-full text-xs border-collapse table-fixed">
               <thead className="h-8">
@@ -204,7 +216,6 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
                   <th className="py-1 px-2 text-left border-r border-black w-auto">Description</th>
                   <th className="py-1 px-1 text-center w-10 border-r border-black">Qty</th>
                   <th className="py-1 px-1 text-center w-12 border-r border-black">UOM</th>
-                  {/* Increased WGT width to w-24 (approx 50% wider) */}
                   <th className="py-1 px-1 text-center w-24 border-r border-black">Wgt</th>
                   <th className="py-1 px-1 text-right w-16">Price</th>
                 </tr>
@@ -226,36 +237,29 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
             </table>
           </div>
 
-          {/* --- FIXED BOTTOM SECTION (Modules 4 & 5) --- */}
+          {/* --- FOOTER --- */}
           <div className="h-[55mm] mt-auto">
-              {/* --- MODULE 4: NOTES --- */}
               <div className="mb-2 h-[20mm]">
                   <div className="font-bold text-[10px] uppercase mb-0.5">NOTE</div>
-                  {/* Empty box logic: totally empty content as requested in final revisions */}
-                  <div className="border border-black h-full p-1 text-[10px] leading-tight overflow-hidden">
-                      
-                  </div>
+                  <div className="border border-black h-full p-1 text-[10px] leading-tight overflow-hidden"></div>
               </div>
 
-              {/* --- MODULE 5: SIGNATURES --- */}
               <div className="h-[25mm] relative">
                  <div className="grid grid-cols-3 gap-4 pt-1 absolute bottom-0 w-full">
-                    {/* Driver - with Driver Name populated if available */}
                     <div className="mt-8 pt-1 text-center relative">
+                        {/* DRIVER NAME FROM DB */}
                         {orderData.DriverName && (
-                            <div className="absolute bottom-5 left-0 w-full text-center font-bold text-xs uppercase tracking-wider">
+                            <div className="absolute bottom-6 left-0 w-full text-center font-bold text-xs uppercase tracking-wider">
                                 {orderData.DriverName}
                             </div>
                         )}
                         <div className="border-t border-black w-3/4 mx-auto"></div>
                         <p className="font-bold uppercase text-[10px] mt-1">PEMANDU</p>
                     </div>
-                    {/* QC */}
                     <div className="mt-8 pt-1 text-center">
                         <div className="border-t border-black w-3/4 mx-auto"></div>
                         <p className="font-bold uppercase text-[10px] mt-1">TEAM QC</p>
                     </div>
-                    {/* Receiver */}
                     <div className="mt-8 pt-1 text-center">
                         <div className="border-t border-black w-3/4 mx-auto"></div>
                         <p className="font-bold uppercase text-[10px] mt-1">TEAM PENGUTIP</p>
