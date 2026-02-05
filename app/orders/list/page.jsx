@@ -136,7 +136,8 @@ export default function OrderListPage() {
       return;
     }
 
-    setLoading(true);
+    // Do NOT set full page loading for search to avoid UI flicker
+    // setLoading(true); 
     
     // Search for matches in Customer Name OR Product Name (Order Items)
     // Note: We search all rows, then group them by DO Number
@@ -157,7 +158,7 @@ export default function OrderListPage() {
       });
       setOrders(uniqueOrders);
     }
-    setLoading(false);
+    // setLoading(false);
   };
 
   // --- EDIT MODAL LOGIC ---
