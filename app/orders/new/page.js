@@ -94,7 +94,7 @@ export default function NewOrderPage() {
     const details = customers.find(c => c.CompanyName.toLowerCase() === custName.toLowerCase());
     
     if (details) {
-      setCustDetails({
+      setCustDetailsx({
         ContactPerson: details.ContactPerson || '',
         ContactNumber: details.ContactNumber || '',
         DeliveryAddress: details.DeliveryAddress || ''
@@ -103,7 +103,7 @@ export default function NewOrderPage() {
   };
 
   const handleDetailChange = (field, value) => {
-    setCustDetails(prev => ({ ...prev, [field]: value }));
+    setCustDetailsx(prev => ({ ...prev, [field]: value }));
   };
 
   const handleProductInputChange = (code, field, value) => {
