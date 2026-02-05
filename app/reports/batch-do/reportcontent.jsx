@@ -54,7 +54,31 @@ export default function BatchDoReportContent() {
           });
           
           const groupedArray = Object.values(grouped);
-          groupedArray.sort((a, b) => (a.info.DONumber || "").localeCompare(b.info.DONumber || ""));
+          
+          // SORTING LOGIC: Driver A -> Driver B -> ... -> No Driver
+          groupedArray.sort((a, b) => {
+            const driverA = a.info.DriverName || "";
+            const driverB = b.info.DriverName || "";
+
+            // 1. If both have drivers, sort alphabetically by driver name
+            if (driverA && driverB) {
+              if (driverA.toLowerCase() !== driverB.toLowerCase()) {
+                return driverA.localeCompare(driverB);
+              }
+              // If same driver, sort by DO Number
+              return (a.info.DONumber || "").localeCompare(b.info.DONumber || "");
+            }
+
+            // 2. If A has a driver and B doesn't, A comes first
+            if (driverA && !driverB) return -1;
+            
+            // 3. If B has a driver and A doesn't, B comes first
+            if (!driverA && driverB) return 1;
+
+            // 4. If neither has a driver, sort by DO Number
+            return (a.info.DONumber || "").localeCompare(b.info.DONumber || "");
+          });
+          
           setDoList(groupedArray);
         }
       } catch (err) {
