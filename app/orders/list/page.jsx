@@ -396,7 +396,7 @@ export default function OrderListPage() {
       </datalist>
 
       {/* RESPONSIVE FIX: Adjust margins and padding for mobile vs desktop */}
-      <main className="flex-1 p-4 md:p-8 md:ml-64 w-full">
+      <main className="flex-1 p-4 md:p-8 md:ml-4 w-full">
         
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">

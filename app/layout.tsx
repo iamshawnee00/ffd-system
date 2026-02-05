@@ -1,7 +1,8 @@
+'use client';
 import './globals.css';
 import { Poppins } from 'next/font/google';
-import Sidebar from './components/Sidebar'; // Added missing import
-import type { Metadata } from 'next';
+import Sidebar from './components/Sidebar';
+import { SidebarProvider, useSidebar } from './context/SidebarContext';
 
 const poppins = Poppins({ 
   subsets: ['latin'],
@@ -9,10 +10,32 @@ const poppins = Poppins({
   variable: '--font-poppins',
 });
 
-export const metadata: Metadata = {
-  title: 'Fresher Farm Direct',
-  description: 'Internal Operations System',
-};
+function LayoutContent({ children }: { children: React.ReactNode }) {
+  const { isCollapsed } = useSidebar();
+
+  return (
+    <div className="flex flex-col md:flex-row min-h-screen">
+      {/* Sidebar container - This div acts as a spacer for the fixed sidebar */}
+      <div 
+        className={`print:hidden hidden md:block flex-shrink-0 transition-all duration-300 ${
+          isCollapsed ? 'w-20' : 'w-72'
+        }`}
+      >
+        <Sidebar />
+      </div>
+      
+      {/* Mobile Sidebar wrapper */}
+      <div className="md:hidden print:hidden">
+        <Sidebar />
+      </div>
+      
+      {/* Main content area */}
+      <main className="flex-1 w-full bg-gray-100 min-h-screen overflow-x-hidden">
+        {children}
+      </main>
+    </div>
+  );
+}
 
 export default function RootLayout({
   children,
@@ -22,17 +45,9 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={poppins.className}>
-        <div className="flex flex-col md:flex-row min-h-screen">
-          {/* Sidebar container - hidden on print */}
-          <div className="print:hidden w-full md:w-64 flex-shrink-0 z-50">
-            <Sidebar />
-          </div>
-          
-          {/* Main content - adjusts margin/padding for mobile */}
-          <main className="flex-1 w-full bg-gray-100 min-h-screen overflow-x-hidden">
-            {children}
-          </main>
-        </div>
+        <SidebarProvider>
+          <LayoutContent>{children}</LayoutContent>
+        </SidebarProvider>
       </body>
     </html>
   );
