@@ -23,10 +23,29 @@ export default function NewOrderPage() {
     DeliveryAddress: '' 
   });
   
-  // Initialize date to today's date in YYYY-MM-DD format
+  // Helper to get local date string (YYYY-MM-DD)
+  const getLocalDateString = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // 12:00 PM Threshold Logic for Default Date
   const [deliveryDate, setDeliveryDate] = useState(() => {
-    return new Date().toISOString().split('T')[0]; // Current date
+    const now = new Date();
+    const hours = now.getHours();
+    const minutes = now.getMinutes();
+    
+    // If after 12:00:00 PM
+    if (hours > 12 || (hours === 12 && minutes > 0)) {
+      const tomorrow = new Date();
+      tomorrow.setDate(now.getDate() + 1);
+      return getLocalDateString(tomorrow);
+    }
+    return getLocalDateString(now);
   });
+
   const [deliveryMode, setDeliveryMode] = useState('Driver'); 
   const [salesChannel, setSalesChannel] = useState('Online / FnB'); 
   
@@ -67,7 +86,7 @@ export default function NewOrderPage() {
       setLoading(false);
     }
     loadData();
-  }, []);
+  }, [router]);
 
   // Handle Customer Selection
   const handleCustomerChange = (e) => {
@@ -88,7 +107,6 @@ export default function NewOrderPage() {
     setCustDetails(prev => ({ ...prev, [field]: value }));
   };
 
-  // Handle inputs for individual product cards
   const handleProductInputChange = (code, field, value) => {
     setProductInputs(prev => ({
       ...prev,
@@ -96,15 +114,12 @@ export default function NewOrderPage() {
     }));
   };
 
-  // Add Item to Cart
   const addToCart = (product) => {
     const inputs = productInputs[product.ProductCode] || {};
     const qty = parseFloat(inputs.qty);
     const price = inputs.price === undefined || inputs.price === '' ? 0 : parseFloat(inputs.price); 
     
-    if (!qty || qty <= 0) {
-      return; 
-    }
+    if (!qty || qty <= 0) return;
 
     const exists = cart.find(item => item.ProductCode === product.ProductCode);
     if (exists) {
@@ -122,7 +137,6 @@ export default function NewOrderPage() {
     };
 
     setCart([...cart, newItem]);
-    
     setProductInputs(prev => {
       const newState = { ...prev };
       delete newState[product.ProductCode];
@@ -131,19 +145,16 @@ export default function NewOrderPage() {
     setSearchTerm(''); 
   };
 
-  // Remove Item
   const removeFromCart = (code) => {
     setCart(cart.filter(item => item.ProductCode !== code));
   };
 
-  // Update Cart Item 
   const updateCartItem = (code, field, value) => {
     setCart(cart.map(item => 
       item.ProductCode === code ? { ...item, [field]: value } : item
     ));
   };
 
-  // Submit Order
   const handleSubmit = async () => {
     if (!selectedCustomer || !deliveryDate || cart.length === 0) {
       alert("Please select a customer, date, and at least one item.");
@@ -152,14 +163,9 @@ export default function NewOrderPage() {
 
     setSubmitting(true);
 
-    // 1. Format Date string from YYYY-MM-DD to YYMMDD based on DELIVERY DATE
-    // deliveryDate is "2026-02-04" -> split -> ["2026", "02", "04"] -> "260204"
     const [year, month, day] = deliveryDate.split('-');
     const dateStr = `${year.slice(2)}${month}${day}`;
-
-    // 2. Generate Random 4-digit number
     const random = Math.floor(1000 + Math.random() * 9000); 
-    
     const doNumber = `DO-${dateStr}-${random}`;
 
     const orderRows = cart.map(item => ({
@@ -214,36 +220,34 @@ export default function NewOrderPage() {
   return (
     <div className="flex bg-gray-50 min-h-screen font-sans text-gray-800">
       <Sidebar />
-      <main className="ml-64 flex-1 p-8">
+      <main className="flex-1 p-4 md:p-8 md:ml-64 transition-all duration-300">
         
         {/* Page Header */}
-        <div className="mb-4 flex justify-between items-end"> 
+        <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4"> 
            <div>
-               <h1 className="text-xl font-black text-gray-800 tracking-tight">Create New Order</h1> 
-               <p className="text-xs text-gray-400 font-medium">Fill in the details below to generate a new DO.</p> 
+               <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Create New Order</h1> 
+               <p className="text-xs text-gray-400 font-medium">Generate a new delivery order document.</p> 
            </div>
-           {/* Display Logged In User */}
-           <div className="text-xs font-bold text-gray-500 bg-gray-100 px-3 py-1 rounded-full uppercase">
+           <div className="text-[10px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm">
                Logged as: {currentUser}
            </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* --- LEFT COLUMN (2/3 width) --- */}
-          <div className="lg:col-span-2 space-y-4">
+          {/* --- LEFT COLUMN --- */}
+          <div className="lg:col-span-2 space-y-6">
             
-            {/* 1. Transaction Details Card - Compact Layout */}
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100"> 
-              <h2 className="text-xs font-bold text-gray-800 mb-3 border-b border-gray-100 pb-1">Transaction Details</h2>
+            {/* 1. Transaction Details Card */}
+            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100"> 
+              <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4 border-b border-gray-50 pb-2">1. Transaction Details</h2>
               
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3"> 
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4"> 
                  
-                 {/* Sales Channel */}
                  <div className="col-span-1">
                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Sales Channel</label>
                      <select 
-                        className="w-full bg-green-50 border border-green-200 text-green-800 text-xs font-bold rounded p-2 focus:outline-none focus:ring-1 focus:ring-green-500 transition-shadow"
+                        className="w-full bg-green-50 border border-green-200 text-green-800 text-xs font-bold rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-green-500 transition-all"
                         value={salesChannel}
                         onChange={(e) => setSalesChannel(e.target.value)}
                      >
@@ -253,13 +257,12 @@ export default function NewOrderPage() {
                      </select>
                  </div>
 
-                 {/* Company Name */}
                  <div className="col-span-1 md:col-span-2">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Company Name</label>
                     <input 
                       list="customer-list"
                       type="text"
-                      className="w-full border border-gray-200 rounded p-2 text-xs font-medium focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 transition-all uppercase"
+                      className="w-full border border-gray-200 rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-green-500 transition-all uppercase bg-gray-50/50"
                       value={selectedCustomer}
                       onChange={handleCustomerChange}
                       placeholder="SEARCH CUSTOMER..."
@@ -269,44 +272,40 @@ export default function NewOrderPage() {
                     </datalist>
                  </div>
 
-                 {/* Contact Person */}
                  <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Contact Person</label>
                     <input 
                       type="text" 
-                      className="w-full border border-gray-200 rounded p-2 text-xs focus:outline-none focus:border-green-500 transition-all uppercase"
+                      className="w-full border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-500 transition-all uppercase"
                       value={custDetails.ContactPerson}
                       onChange={(e) => handleDetailChange('ContactPerson', e.target.value)}
                     />
                  </div>
 
-                 {/* Contact Number */}
                  <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Contact Number</label>
                     <input 
                       type="text" 
-                      className="w-full border border-gray-200 rounded p-2 text-xs focus:outline-none focus:border-green-500 transition-all"
+                      className="w-full border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-500 transition-all"
                       value={custDetails.ContactNumber}
                       onChange={(e) => handleDetailChange('ContactNumber', e.target.value)}
                     />
                  </div>
 
-                 {/* Date */}
                  <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Delivery Date</label>
                     <input 
                       type="date" 
-                      className="w-full border border-gray-200 rounded p-2 text-xs focus:outline-none focus:border-green-500 transition-all"
+                      className="w-full border border-gray-200 rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-green-500 transition-all bg-blue-50 text-blue-800"
                       value={deliveryDate}
                       onChange={e => setDeliveryDate(e.target.value)}
                     />
                  </div>
 
-                 {/* Mode */}
                  <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Mode</label>
                     <select 
-                      className="w-full border border-gray-200 rounded p-2 text-xs focus:outline-none focus:border-green-500 transition-all"
+                      className="w-full border border-gray-200 rounded-xl p-2.5 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-green-500 transition-all"
                       value={deliveryMode}
                       onChange={e => setDeliveryMode(e.target.value)}
                     >
@@ -316,12 +315,11 @@ export default function NewOrderPage() {
                     </select>
                  </div>
 
-                 {/* Address */}
                  <div className="col-span-1 md:col-span-2">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Address</label>
                     <input 
                       type="text" 
-                      className="w-full border border-gray-200 rounded p-2 text-xs focus:outline-none focus:border-green-500 transition-all uppercase"
+                      className="w-full border border-gray-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-green-500 transition-all uppercase bg-gray-50/50"
                       value={custDetails.DeliveryAddress}
                       onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)}
                     />
@@ -330,23 +328,23 @@ export default function NewOrderPage() {
             </div>
 
             {/* 2. Product Search & Selection */}
-            <div>
-               {/* Search Input */}
-               <div className="relative mb-4">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+            <div className="space-y-4">
+               <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">2. Add Items</h2>
+               
+               <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                     <span className="text-gray-400 text-lg">🔍</span>
                   </div>
                   <input 
                     type="text"
-                    placeholder="Search product to add..."
-                    className="w-full pl-10 p-3.5 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-sm"
+                    placeholder="Search product by name or code..."
+                    className="w-full pl-11 p-4 border border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-sm font-medium bg-white"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
                   />
                </div>
 
-               {/* Product Grid */}
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {filteredProducts.slice(0, 10).map(p => {
                       const inputs = productInputs[p.ProductCode] || {};
                       const uomOptions = p.AllowedUOMs 
@@ -355,60 +353,53 @@ export default function NewOrderPage() {
                       const stockClass = getStockColor(p.StockBalance);
 
                       return (
-                        <div key={p.ProductCode} className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
-                           {/* Stock Badge */}
-                           <div className={`absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${stockClass}`}>
-                              {p.StockBalance ? `${Number(p.StockBalance).toFixed(2)} ${p.BaseUOM}` : 'No Stock'}
+                        <div key={p.ProductCode} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:shadow-md transition-all relative overflow-hidden group">
+                           <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-xl text-[9px] font-black uppercase tracking-wider ${stockClass}`}>
+                              {p.StockBalance ? `${Number(p.StockBalance).toFixed(1)} ${p.BaseUOM}` : '0.0'}
                            </div>
 
-                           <h3 className="font-bold text-gray-800 text-sm mb-0.5 pr-16">{p.ProductName}</h3>
-                           <p className="text-[10px] text-gray-400 font-mono mb-3">{p.ProductCode}</p>
+                           <h3 className="font-bold text-gray-800 text-sm mb-0.5 pr-14 leading-tight">{p.ProductName}</h3>
+                           <p className="text-[10px] text-gray-400 font-mono mb-4">{p.ProductCode}</p>
 
-                           {/* Controls */}
-                           <div className="flex gap-2 mb-2">
-                              {/* UOM Select */}
+                           <div className="flex gap-2 mb-3">
                               <select 
-                                className="bg-gray-50 border border-gray-200 rounded-lg text-xs p-1.5 flex-1 font-bold focus:outline-none focus:ring-1 focus:ring-green-500 uppercase"
+                                className="bg-gray-50 border border-gray-200 rounded-xl text-[10px] p-2 flex-1 font-black focus:outline-none focus:ring-1 focus:ring-green-500 uppercase"
                                 value={inputs.uom || p.BaseUOM}
                                 onChange={(e) => handleProductInputChange(p.ProductCode, 'uom', e.target.value)}
                               >
                                 {uomOptions.map(u => <option key={u} value={u}>{u}</option>)}
                               </select>
 
-                              {/* Qty Input */}
-                              <div className="relative w-20">
+                              <div className="relative w-24">
                                  <input 
                                     type="number" 
                                     placeholder="Qty" 
-                                    className="w-full bg-white border border-gray-200 rounded-lg text-xs p-1.5 pl-2 font-bold focus:outline-none focus:ring-1 focus:ring-green-500 text-center"
+                                    className="w-full bg-white border border-gray-200 rounded-xl text-xs p-2 font-black focus:outline-none focus:ring-2 focus:ring-green-500 text-center"
                                     value={inputs.qty || ''}
                                     onChange={(e) => handleProductInputChange(p.ProductCode, 'qty', e.target.value)}
                                  />
                               </div>
                            </div>
 
-                           {/* Price & Add */}
-                           <div className="flex items-center gap-2">
-                              {/* Replacement Checkbox */}
-                              <label className="flex items-center gap-1 cursor-pointer select-none">
+                           <div className="flex items-center gap-3">
+                              <label className="flex items-center gap-1.5 cursor-pointer select-none">
                                   <input 
                                     type="checkbox" 
-                                    className="w-3.5 h-3.5 text-red-500 rounded border-gray-300 focus:ring-red-500"
+                                    className="w-4 h-4 text-red-500 rounded border-gray-300 focus:ring-red-500 cursor-pointer"
                                     checked={inputs.replacement || false}
                                     onChange={(e) => handleProductInputChange(p.ProductCode, 'replacement', e.target.checked)}
                                   />
-                                  <span className="text-[9px] font-bold text-red-400 uppercase tracking-wide">REPLACEMENT</span>
+                                  <span className="text-[9px] font-black text-red-400 uppercase tracking-widest">Free</span>
                               </label>
 
                               <div className="flex-1"></div>
 
-                              {/* Price Input */}
-                              <div className="relative w-24">
-                                 <span className="absolute left-2 top-1 text-[10px] text-gray-400 font-bold">RM</span>
+                              <div className="relative w-28">
+                                 <span className="absolute left-2.5 top-2 text-[10px] text-gray-400 font-black">RM</span>
                                  <input 
                                    type="number" 
                                    placeholder="0.00" 
-                                   className="w-full pl-6 pr-1 py-1 text-xs border rounded bg-gray-50 text-right focus:outline-none focus:ring-1 focus:ring-green-500" 
+                                   className="w-full pl-8 pr-2 py-2 text-xs border border-gray-200 rounded-xl bg-gray-50/50 text-right focus:outline-none focus:ring-2 focus:ring-green-500 font-bold" 
                                    disabled={inputs.replacement}
                                    value={inputs.price || ''}
                                    onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)}
@@ -417,7 +408,7 @@ export default function NewOrderPage() {
 
                               <button 
                                 onClick={() => addToCart(p)}
-                                className="bg-green-500 hover:bg-green-600 text-white rounded-lg w-8 h-8 flex items-center justify-center font-bold text-lg shadow-sm transition-colors active:scale-95"
+                                className="bg-green-600 hover:bg-green-700 text-white rounded-xl w-10 h-10 flex items-center justify-center font-bold text-xl shadow-lg transform transition active:scale-90"
                               >
                                 +
                               </button>
@@ -425,67 +416,60 @@ export default function NewOrderPage() {
                         </div>
                       );
                   })}
-                  {filteredProducts.length === 0 && searchTerm && (
-                      <div className="col-span-full p-8 text-center text-gray-400 italic bg-white rounded-xl border border-dashed border-gray-200">
-                          No products found matching "{searchTerm}"
-                      </div>
-                  )}
                </div>
             </div>
           </div>
 
-          {/* --- RIGHT COLUMN (Cart) --- */}
+          {/* --- RIGHT COLUMN (Cart Summary) --- */}
           <div className="lg:col-span-1">
-             <div className="bg-white p-6 rounded-2xl shadow-xl border border-gray-100 sticky top-4 flex flex-col h-[calc(100vh-4rem)]">
-                <div className="flex justify-between items-center mb-4">
-                   <h2 className="text-lg font-bold text-gray-800">My Cart</h2>
-                   <span className="bg-gray-100 text-gray-600 text-xs font-black px-2.5 py-1 rounded-full">{cart.length}</span>
+             <div className="bg-white p-6 rounded-3xl shadow-xl border border-gray-100 sticky top-4 flex flex-col md:h-[calc(100vh-4rem)] min-h-[500px]">
+                <div className="flex justify-between items-center mb-6">
+                   <h2 className="text-lg font-black text-gray-800 tracking-tight">Order Summary</h2>
+                   <span className="bg-green-100 text-green-700 text-xs font-black px-3 py-1 rounded-full">{cart.length} items</span>
                 </div>
 
-                {/* Cart Items List */}
-                <div className="flex-1 overflow-y-auto space-y-3 pr-1 custom-scrollbar mb-4">
+                <div className="flex-1 overflow-y-auto space-y-3 pr-1 custom-scrollbar mb-6">
                     {cart.length === 0 ? (
-                        <div className="h-40 flex items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-xl">
-                           Empty
+                        <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-3xl">
+                           <span className="text-4xl mb-2 grayscale opacity-30">🛒</span>
+                           Cart is empty
                         </div>
                     ) : (
                         cart.map((item, idx) => (
-                           <div key={`${item.ProductCode}-${idx}`} className="p-3 rounded-xl bg-gray-50 border border-gray-100 relative group transition-all hover:bg-white hover:shadow-sm">
-                               <div className="flex justify-between items-start mb-1">
+                           <div key={`${item.ProductCode}-${idx}`} className="p-4 rounded-2xl bg-gray-50/80 border border-gray-100 relative group transition-all hover:bg-white hover:shadow-md">
+                               <div className="flex justify-between items-start mb-2">
                                    <div className="pr-6">
-                                       <div className="text-xs font-bold text-gray-800 line-clamp-2 leading-tight">{item.ProductName}</div>
+                                       <div className="text-xs font-black text-gray-800 line-clamp-2 leading-tight uppercase">{item.ProductName}</div>
                                        <div className="text-[10px] text-gray-400 font-mono mt-0.5">{item.ProductCode}</div>
                                    </div>
                                    <button 
                                      onClick={() => removeFromCart(item.ProductCode)}
-                                     className="text-gray-300 hover:text-red-500 font-bold px-1 transition-colors absolute top-2 right-2"
+                                     className="text-gray-300 hover:text-red-500 font-bold p-1 transition-colors absolute top-3 right-3"
                                    >
                                      ✕
                                    </button>
                                </div>
                                
-                               <div className="flex items-center justify-between mt-2">
-                                   <div className="text-xs font-black text-gray-600 bg-white border border-gray-200 px-2 py-1 rounded">
+                               <div className="flex items-center justify-between mt-3">
+                                   <div className="text-xs font-black text-green-700 bg-green-50 border border-green-100 px-2.5 py-1 rounded-lg">
                                        {item.qty} {item.uom}
                                    </div>
                                    
-                                   {item.isReplacement && (
-                                       <span className="text-[9px] font-black text-white bg-red-400 px-1.5 py-0.5 rounded uppercase tracking-wider">
+                                   {item.isReplacement ? (
+                                       <span className="text-[9px] font-black text-white bg-red-400 px-2 py-1 rounded-lg uppercase tracking-wider shadow-sm">
                                            REPLACEMENT
                                        </span>
-                                   )}
-                                    {!item.isReplacement && (
-                                       <span className="text-[10px] font-bold text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded">
+                                   ) : (
+                                       <span className="text-[11px] font-black text-gray-700 bg-white border border-gray-200 px-2 py-1 rounded-lg">
                                            RM {(item.price || 0).toFixed(2)}
                                        </span>
                                    )}
                                </div>
 
-                               {/* Notes Input per item */}
                                <input 
                                   type="text" 
-                                  placeholder="Item note..." 
-                                  className="w-full mt-2 bg-transparent border-b border-gray-200 text-[10px] text-gray-600 focus:outline-none focus:border-green-400 pb-0.5 placeholder-gray-300"
+                                  placeholder="Add specific item note..." 
+                                  className="w-full mt-3 bg-transparent border-b border-gray-200 text-[10px] text-gray-600 focus:outline-none focus:border-green-400 pb-1 placeholder-gray-300 italic"
                                   value={item.notes || ''}
                                   onChange={(e) => updateCartItem(item.ProductCode, 'notes', e.target.value)}
                                />
@@ -494,24 +478,22 @@ export default function NewOrderPage() {
                     )}
                 </div>
 
-                {/* Footer Actions */}
-                <div className="mt-auto pt-4 border-t border-gray-100">
-                    <textarea 
-                        className="w-full bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs mb-3 focus:outline-none focus:ring-1 focus:ring-green-500 resize-none"
-                        rows="2"
-                        placeholder="Global Order Notes..."
-                    ></textarea>
+                <div className="mt-auto pt-6 border-t border-gray-100 space-y-4">
+                    <div className="flex justify-between items-center text-sm font-black text-gray-800 px-1">
+                        <span>Total Items:</span>
+                        <span>{cart.length}</span>
+                    </div>
 
                     <button 
                         onClick={handleSubmit}
                         disabled={submitting || cart.length === 0}
-                        className={`w-full py-3.5 rounded-xl text-white font-bold text-sm shadow-lg transform transition-all active:scale-95 ${
+                        className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transform transition-all active:scale-95 ${
                             submitting || cart.length === 0
                             ? 'bg-gray-300 cursor-not-allowed shadow-none' 
-                            : 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/30'
+                            : 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/40'
                         }`}
                     >
-                        {submitting ? 'Submitting...' : 'Submit Order'}
+                        {submitting ? 'Creating Order...' : '🚀 Finalize Order'}
                     </button>
                 </div>
              </div>
