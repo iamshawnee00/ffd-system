@@ -1,5 +1,6 @@
 'use client';
 import './globals.css';
+import { Analytics } from "@vercel/analytics/next"
 import { Poppins } from 'next/font/google';
 import Sidebar from './components/Sidebar';
 import { SidebarProvider, useSidebar } from './context/SidebarContext';
@@ -47,6 +48,7 @@ export default function RootLayout({
       <body className={poppins.className}>
         <SidebarProvider>
           <LayoutContent>{children}</LayoutContent>
+          <Analytics />
         </SidebarProvider>
       </body>
     </html>
