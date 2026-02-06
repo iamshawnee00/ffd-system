@@ -78,7 +78,7 @@ export default function OrderListPage() {
     const { data, error } = await supabase
       .from('Orders')
       .select('*')
-      // Sort by Timestamp descending (latest first) as requested
+      // Sort by Timestamp descending (latest first)
       .order('Timestamp', { ascending: false });
 
     if (error) {
@@ -101,10 +101,27 @@ export default function OrderListPage() {
   // --- ACTIONS ---
 
   const updateOrderStatus = async (doNumber, newStatus) => {
+    // Optimistic Update
     setOrders(prev => prev.map(o => 
       o.DONumber === doNumber ? { ...o, Status: newStatus } : o
     ));
     await supabase.from('Orders').update({ Status: newStatus }).eq('DONumber', doNumber);
+  };
+
+  // Bulk Status Update
+  const bulkUpdateStatus = async (newStatus) => {
+      if (selectedOrders.size === 0) return;
+      if (!confirm(`Move ${selectedOrders.size} orders to ${newStatus}?`)) return;
+
+      const doNumbers = Array.from(selectedOrders);
+      
+      // Optimistic UI Update
+      setOrders(prev => prev.map(o => 
+        doNumbers.includes(o.DONumber) ? { ...o, Status: newStatus } : o
+      ));
+
+      await supabase.from('Orders').update({ Status: newStatus }).in('DONumber', doNumbers);
+      setSelectedOrders(new Set());
   };
 
   const deleteOrder = async (doNumber) => {
@@ -121,10 +138,29 @@ export default function OrderListPage() {
     if (error) {
       alert("Error deleting order: " + error.message);
       fetchOrders(); // Revert on error
-    } else {
-      // success - nothing else needed as UI is already updated
     }
   };
+
+  // Bulk Delete
+  const bulkDelete = async () => {
+      if (selectedOrders.size === 0) return;
+      if (!confirm(`PERMANENTLY DELETE ${selectedOrders.size} orders? This cannot be undone.`)) return;
+
+      const doNumbers = Array.from(selectedOrders);
+
+      // Optimistic UI Update
+      setOrders(prev => prev.filter(o => !doNumbers.includes(o.DONumber)));
+
+      const { error } = await supabase.from('Orders').delete().in('DONumber', doNumbers);
+
+      if (error) {
+          alert("Error deleting orders: " + error.message);
+          fetchOrders();
+      } else {
+          setSelectedOrders(new Set());
+      }
+  };
+
 
   // --- SEARCH LOGIC ---
   const handleSearch = async (term) => {
@@ -136,9 +172,6 @@ export default function OrderListPage() {
       return;
     }
 
-    // Do NOT set full page loading for search to avoid UI flicker
-    // setLoading(true); 
-    
     // Search for matches in Customer Name OR Product Name (Order Items)
     // Note: We search all rows, then group them by DO Number
     const { data, error } = await supabase
@@ -158,7 +191,6 @@ export default function OrderListPage() {
       });
       setOrders(uniqueOrders);
     }
-    // setLoading(false);
   };
 
   // --- EDIT MODAL LOGIC ---
@@ -231,7 +263,6 @@ export default function OrderListPage() {
       Quantity: 1,
       UOM: product.BaseUOM,
       Price: 0,
-      // FIX: Ensure Replacement is NOT null
       Replacement: "" 
     };
     setEditingItems([...editingItems, newItem]);
@@ -258,7 +289,6 @@ export default function OrderListPage() {
         "Contact Number": editingOrder["Contact Number"],
         "Delivery Date": editingOrder["Delivery Date"],
         "Delivery Mode": editingOrder["Delivery Mode"],
-        // FIX: Ensure Replacement is never null to satisfy DB constraint
         "Replacement": cleanItem.Replacement || ""
       };
     });
@@ -308,7 +338,6 @@ export default function OrderListPage() {
       try {
         const { data: items } = await supabase.from('Orders').select('*').eq('DONumber', doNum);
         if (items?.length) {
-          // Format date if needed
           let dateStr = items[0]["Delivery Date"];
           const d = new Date(dateStr);
           if(!isNaN(d.getTime())) dateStr = d.toISOString().split('T')[0];
@@ -402,7 +431,7 @@ export default function OrderListPage() {
         <input 
           type="text" 
           placeholder="Search Customer or Product..." 
-          className="w-full p-3 pl-10 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+          className="w-full p-3 pl-10 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium"
           value={orderSearchTerm}
           onChange={(e) => handleSearch(e.target.value)}
         />
@@ -417,22 +446,51 @@ export default function OrderListPage() {
         ))}
       </div>
 
+      {/* BULK ACTION TOOLBAR - UPDATED */}
       {selectedOrders.size > 0 && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex justify-between items-center animate-in fade-in">
-          <span className="text-xs font-black text-blue-700">{selectedOrders.size} Selected</span>
-          <button onClick={sendSelectedToShipday} disabled={isBulkSending} className="bg-indigo-600 text-white text-[10px] font-black py-1.5 px-4 rounded-lg shadow-md">
-            {isBulkSending ? 'Sending...' : '🚀 Send to Shipday'}
-          </button>
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex flex-col md:flex-row items-center gap-4 animate-in fade-in justify-between shadow-sm">
+          <div className="font-black text-blue-700 text-sm">{selectedOrders.size} Selected</div>
+          <div className="flex flex-wrap gap-2 w-full md:w-auto">
+            {activeTab === 'Packing' && (
+                <button 
+                    onClick={() => bulkUpdateStatus('Completed')}
+                    className="bg-green-600 text-white font-bold py-2 px-4 rounded-lg text-xs shadow hover:bg-green-700 flex-1 md:flex-none"
+                >
+                    ✓ Move to Done
+                </button>
+            )}
+            {activeTab === 'Completed' && (
+                <button 
+                    onClick={() => bulkUpdateStatus('Packing')}
+                    className="bg-gray-500 text-white font-bold py-2 px-4 rounded-lg text-xs shadow hover:bg-gray-600 flex-1 md:flex-none"
+                >
+                    ↩ Move to Packing
+                </button>
+            )}
+            <button 
+                onClick={sendSelectedToShipday} 
+                disabled={isBulkSending} 
+                className={`bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg text-xs shadow hover:bg-indigo-700 flex-1 md:flex-none ${isBulkSending ? 'opacity-50' : ''}`}
+            >
+                {isBulkSending ? 'Sending...' : '🚀 Send to Shipday'}
+            </button>
+            <button 
+                onClick={bulkDelete} 
+                className="bg-red-500 text-white font-bold py-2 px-4 rounded-lg text-xs shadow hover:bg-red-600 flex-1 md:flex-none"
+            >
+                🗑️ Delete
+            </button>
+          </div>
         </div>
       )}
 
       <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left min-w-[700px]">
-            <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
+            <thead className="bg-gray-50 text-[11px] md:text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
               <tr>
                 <th className="p-4 w-10">
-                  <input type="checkbox" onChange={() => setSelectedOrders(selectedOrders.size === filteredOrders.length ? new Set() : new Set(filteredOrders.map(o => o.DONumber)))} checked={selectedOrders.size > 0 && selectedOrders.size === filteredOrders.length} className="cursor-pointer" />
+                  <input type="checkbox" onChange={() => setSelectedOrders(selectedOrders.size === filteredOrders.length ? new Set() : new Set(filteredOrders.map(o => o.DONumber)))} checked={selectedOrders.size > 0 && selectedOrders.size === filteredOrders.length} className="cursor-pointer w-4 h-4 rounded text-blue-600" />
                 </th>
                 <th className="p-4">DO Details</th>
                 <th className="p-4">Customer</th>
@@ -440,23 +498,23 @@ export default function OrderListPage() {
                 <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-50 text-xs">
+            <tbody className="divide-y divide-gray-50 text-xs md:text-sm">
               {filteredOrders.map((order) => (
                 <tr key={order.DONumber} className="hover:bg-gray-50/50 transition-colors cursor-pointer" onClick={() => openEditModal(order)}>
                   <td className="p-4" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={selectedOrders.has(order.DONumber)} onChange={() => toggleSelectOrder(order.DONumber)} className="cursor-pointer" />
+                    <input type="checkbox" checked={selectedOrders.has(order.DONumber)} onChange={() => toggleSelectOrder(order.DONumber)} className="cursor-pointer w-4 h-4 rounded text-blue-600" />
                   </td>
                   <td className="p-4">
-                    <div className="font-mono text-blue-600 font-bold mb-1">{order.DONumber}</div>
-                    <div className="text-gray-400 font-bold">{order["Delivery Date"]}</div>
-                    <div className="text-[9px] text-gray-300 mt-1">{new Date(order.Timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                    <div className="font-mono text-blue-600 font-bold mb-1 text-sm">{order.DONumber}</div>
+                    <div className="text-gray-500 font-bold">{order["Delivery Date"]}</div>
+                    <div className="text-[10px] text-gray-400 mt-1">{new Date(order.Timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                   </td>
                   <td className="p-4">
-                    <div className="font-black text-gray-800 uppercase">{order["Customer Name"]}</div>
-                    <div className="text-[10px] text-gray-400 mt-1 truncate max-w-[200px]">{order["Delivery Address"]}</div>
+                    <div className="font-black text-gray-800 uppercase text-sm md:text-base">{order["Customer Name"]}</div>
+                    <div className="text-[11px] text-gray-400 mt-1 truncate max-w-[200px] font-medium">{order["Delivery Address"]}</div>
                   </td>
                   <td className="p-4">
-                    <span className={`px-2 py-1 rounded-lg font-black text-[10px] border uppercase ${getDeliveryModeStyle(order.DriverName || order["Delivery Mode"])}`}>
+                    <span className={`px-2.5 py-1 rounded-lg font-black text-[10px] md:text-xs border uppercase ${getDeliveryModeStyle(order.DriverName || order["Delivery Mode"])}`}>
                         {order.DriverName || order["Delivery Mode"] || 'Driver'}
                     </span>
                   </td>
@@ -465,11 +523,11 @@ export default function OrderListPage() {
                        <Link href={`/orders/${order.id}/print`} target="_blank" className="p-2 bg-gray-50 rounded-lg hover:bg-gray-100 text-lg">🖨️</Link>
                        
                        {activeTab === 'Packing' && (
-                         <button onClick={() => updateOrderStatus(order.DONumber, 'Completed')} className="bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black py-1.5 px-4 rounded-lg shadow-sm transition">Done</button>
+                         <button onClick={() => updateOrderStatus(order.DONumber, 'Completed')} className="bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black py-1.5 px-3 rounded-lg shadow-sm transition">Done</button>
                        )}
                        
                        {activeTab === 'Completed' && (
-                         <button onClick={() => updateOrderStatus(order.DONumber, 'Packing')} className="text-gray-400 hover:text-red-500 font-bold px-2 transition">Revert</button>
+                         <button onClick={() => updateOrderStatus(order.DONumber, 'Packing')} className="text-gray-400 hover:text-red-500 font-bold px-2 transition text-xs">Revert</button>
                        )}
 
                        <button onClick={() => deleteOrder(order.DONumber)} className="p-2 text-red-200 hover:text-red-600 transition text-lg" title="Delete Order">🗑️</button>

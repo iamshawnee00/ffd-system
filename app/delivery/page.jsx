@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import Sidebar from '../components/Sidebar';
+// Removed Sidebar import as it is handled in layout
 
 export default function DeliveryPage() {
   const [loading, setLoading] = useState(true);
@@ -26,6 +26,7 @@ export default function DeliveryPage() {
   const [calendarDays, setCalendarDays] = useState([]);
 
   const [groupedOrders, setGroupedOrders] = useState([]); 
+  const [filteredGroupedOrders, setFilteredGroupedOrders] = useState([]); // State for search results
   const [usageSummary, setUsageSummary] = useState([]);
   
   const [products, setProducts] = useState([]);
@@ -35,6 +36,9 @@ export default function DeliveryPage() {
   const [isUsageExpanded, setIsUsageExpanded] = useState(false);
   const [isBulkSending, setIsBulkSending] = useState(false); 
   const [isSyncing, setIsSyncing] = useState(false); 
+
+  // Search State
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Modal State
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -58,6 +62,24 @@ export default function DeliveryPage() {
     fetchDayOrders(selectedDate);
     setSelectedDOs(new Set()); 
   }, [selectedDate]);
+
+  // Effect to filter orders when search term changes
+  useEffect(() => {
+    if (!searchTerm) {
+        setFilteredGroupedOrders(groupedOrders);
+        return;
+    }
+    const lowerTerm = searchTerm.toLowerCase();
+    const filtered = groupedOrders.filter(group => {
+        // Search in Customer Name
+        if (group.info["Customer Name"].toLowerCase().includes(lowerTerm)) return true;
+        // Search in DO Number
+        if (group.info.DONumber.toLowerCase().includes(lowerTerm)) return true;
+        // Search in Items
+        return group.items.some(item => item["Order Items"].toLowerCase().includes(lowerTerm));
+    });
+    setFilteredGroupedOrders(filtered);
+  }, [searchTerm, groupedOrders]);
 
   const fetchProducts = async () => {
     const { data } = await supabase
@@ -134,7 +156,7 @@ export default function DeliveryPage() {
       .from('Orders')
       .select('*')
       .eq('"Delivery Date"', dateStr) 
-      .order('DONumber');
+      .order('Timestamp', {ascending: true});
 
     if (!error && data) {
       processOrders(data);
@@ -170,7 +192,9 @@ export default function DeliveryPage() {
       }
       usage[prodKey].qty += Number(row.Quantity || 0);
     });
-    setGroupedOrders(Object.values(groups));
+    const groupsArray = Object.values(groups);
+    setGroupedOrders(groupsArray);
+    setFilteredGroupedOrders(groupsArray); // Initialize filtered list
     setUsageSummary(Object.values(usage).sort((a,b) => a.name.localeCompare(b.name)));
   };
 
@@ -183,10 +207,10 @@ export default function DeliveryPage() {
   };
 
   const handleSelectAll = () => {
-    if (selectedDOs.size === groupedOrders.length) {
+    if (selectedDOs.size === filteredGroupedOrders.length) {
       setSelectedDOs(new Set());
     } else {
-      setSelectedDOs(new Set(groupedOrders.map(o => o.info.DONumber)));
+      setSelectedDOs(new Set(filteredGroupedOrders.map(o => o.info.DONumber)));
     }
   };
 
@@ -245,7 +269,7 @@ export default function DeliveryPage() {
                 }
 
                 // 2. Optimistic UI Update
-                setGroupedOrders(prevOrders => prevOrders.map(group => {
+                const updateOrdersState = (prev) => prev.map(group => {
                    const match = driversToUpdate.find(d => d.doNumber === group.info.DONumber);
                    if (match) {
                        return {
@@ -254,7 +278,11 @@ export default function DeliveryPage() {
                        };
                    }
                    return group;
-                }));
+                });
+                
+                setGroupedOrders(prev => updateOrdersState(prev));
+                // Also update filtered list
+                setFilteredGroupedOrders(prev => updateOrdersState(prev));
 
                 alert(`Sync Complete! Updated ${updateCount} drivers.`);
             } else {
@@ -525,395 +553,271 @@ export default function DeliveryPage() {
   };
 
   return (
-    <div className="flex bg-gray-50 min-h-screen font-sans">
-      <Sidebar />
-      <main className="ml-64 flex-1 p-8">
-        
-        {/* HEADER & ACTIONS */}
-        <div className="flex justify-between items-center mb-8 bg-white p-5 rounded-3xl shadow-sm border border-gray-100">
-            <div>
-               <h1 className="text-3xl font-black text-gray-800 tracking-tight">Delivery Dashboard</h1>
-               <p className="text-sm text-gray-400 font-medium mt-1">Manage delivery schedule and drivers</p>
-            </div>
-            
-            <div className="flex gap-3">
-                 <button onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')} className="bg-purple-600 text-white font-bold py-3 px-6 rounded-2xl text-sm shadow-lg hover:bg-purple-700 transition transform active:scale-95 flex items-center gap-2">
-                    <span>📦</span> All DOs
-                 </button>
-                 <button 
-                    onClick={() => window.open(`/reports/usage?date=${selectedDate}`, '_blank')} 
-                    className="bg-blue-600 text-white font-bold py-3 px-6 rounded-2xl text-sm shadow-lg hover:bg-blue-700 transition transform active:scale-95 flex items-center gap-2"
-                 >
-                    <span>📊</span> Daily Usage
-                 </button>
-            </div>
-        </div>
+    // RESPONSIVE LAYOUT FIX: No manual margin-left, handled by layout wrapper
+    <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6">
+      
+      {/* HEADER & ACTIONS */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
+          <div>
+             <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Delivery Dashboard</h1>
+             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Manage delivery schedule and drivers</p>
+          </div>
+          
+          <div className="flex gap-2 w-full sm:w-auto">
+             <button onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')} className="flex-1 sm:flex-none bg-purple-600 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-lg hover:bg-purple-700 transition transform active:scale-95 flex items-center justify-center gap-2">
+                <span>📦</span> All DOs
+             </button>
+             <button 
+                onClick={() => window.open(`/reports/usage?date=${selectedDate}`, '_blank')} 
+                className="flex-1 sm:flex-none bg-blue-600 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-lg hover:bg-blue-700 transition transform active:scale-95 flex items-center justify-center gap-2"
+             >
+                <span>📊</span> Daily Usage
+             </button>
+          </div>
+      </div>
 
-        {/* CALENDAR GRID */}
-        <div className="mb-10 bg-white p-6 rounded-3xl shadow-lg border border-gray-100">
-            <div className="flex items-center justify-between mb-6">
-                <button onClick={() => changeMonth(-1)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition">◀</button>
-                <h2 className="text-2xl font-black text-gray-800 uppercase tracking-widest">
-                    {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
-                </h2>
-                <button onClick={() => changeMonth(1)} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200 transition">▶</button>
-            </div>
+      {/* CALENDAR GRID (Month View) */}
+      <div className="mb-8 bg-white p-4 rounded-3xl shadow-sm border border-gray-100 overflow-x-auto">
+          <div className="flex items-center justify-between mb-4 min-w-[300px]">
+              <button onClick={() => changeMonth(-1)} className="p-2 bg-gray-50 rounded-full hover:bg-gray-100 transition">◀</button>
+              <h2 className="font-black text-gray-800 uppercase tracking-widest text-sm md:text-base">
+                  {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
+              </h2>
+              <button onClick={() => changeMonth(1)} className="p-2 bg-gray-50 rounded-full hover:bg-gray-100 transition">▶</button>
+          </div>
 
-            <div className="grid grid-cols-7 gap-4 mb-3 text-center text-xs font-black text-gray-400 uppercase tracking-widest">
-               <div>SUN</div><div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div>
-            </div>
-            <div className="grid grid-cols-7 gap-3">
-               {calendarDays.map((day, idx) => {
-                  if (!day) return <div key={`empty-${idx}`} className="h-28 bg-transparent"></div>;
-                  const count = orderCounts[day.dateStr] || 0;
-                  const isSelected = day.dateStr === selectedDate;
-                  return (
-                    <div 
-                        key={day.dateStr} 
-                        onClick={() => setSelectedDate(day.dateStr)}
-                        className={getCellClasses(count, isSelected)}
-                    >
-                        <div className="flex justify-between items-start">
-                            <span className="text-xs font-bold uppercase opacity-60 tracking-wider">{day.dayName}</span>
-                            <span className={`text-2xl font-black ${isSelected ? 'text-blue-600' : ''}`}>{day.dayNum}</span>
-                        </div>
-                        {count > 0 ? (
-                            <div className={`w-full text-center py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wide ${getPillClasses(count)}`}>
-                                {count} Orders
-                            </div>
-                        ) : (
-                            <div className="w-full text-center py-1.5 rounded-xl text-[10px] font-bold text-gray-300 bg-gray-50">
-                                No Orders
-                            </div>
-                        )}
-                    </div>
-                  );
-               })}
-            </div>
-        </div>
-
-        {/* ORDERS LIST SECTION */}
-        <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-                <h3 className="text-xl font-bold text-gray-800 flex items-center gap-3">
-                    Orders for <span className="text-blue-600">{formatDateLabel(selectedDate)}</span>
-                    <span className="bg-gray-200 text-gray-600 text-sm px-3 py-1 rounded-full font-black">{groupedOrders.length}</span>
-                </h3>
+          <div className="grid grid-cols-7 gap-2 md:gap-4 mb-2 text-center text-[10px] font-black text-gray-400 uppercase tracking-widest min-w-[600px]">
+             <div>SUN</div><div>MON</div><div>TUE</div><div>WED</div><div>THU</div><div>FRI</div><div>SAT</div>
+          </div>
+          <div className="grid grid-cols-7 gap-2 md:gap-3 min-w-[600px]">
+             {calendarDays.map((day, idx) => {
+                if (!day) return <div key={`empty-${idx}`} className="h-20 md:h-24 bg-transparent"></div>;
                 
-                <div className="flex gap-2">
-                    <input 
-                        list="drivers" 
-                        placeholder="Assign Driver..." 
-                        className="border border-gray-300 rounded-xl px-4 py-2 text-sm w-48 focus:ring-2 focus:ring-blue-500 outline-none"
-                        value={targetDriver}
-                        onChange={e => setTargetDriver(e.target.value)}
-                    />
-                    <datalist id="drivers">
-                        <option value="Ali" /><option value="Muthu" /><option value="Ah Meng" /><option value="Lalamove" />
-                    </datalist>
-                    <button 
-                        onClick={handleAssignDriver}
-                        className="bg-gray-800 text-white font-bold px-5 py-2 rounded-xl text-sm hover:bg-black shadow-md transition"
-                    >
-                        Assign
-                    </button>
-                    <button 
-                        onClick={syncWithShipday}
-                        disabled={isSyncing}
-                        className={`bg-blue-500 text-white font-bold px-5 py-2 rounded-xl text-sm hover:bg-blue-600 shadow-md transition ${isSyncing ? 'opacity-50 cursor-wait' : ''}`}
-                    >
-                        {isSyncing ? 'Syncing...' : '🔄 Sync Drivers'}
-                    </button>
-                    <button 
-                        onClick={sendSelectedToShipday}
-                        disabled={isBulkSending || selectedDOs.size === 0}
-                        className={`bg-indigo-600 text-white font-bold px-5 py-2 rounded-xl text-sm hover:bg-indigo-700 shadow-md transition flex items-center gap-2 ${isBulkSending ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                        {isBulkSending ? 'Sending...' : '🚀 Send to Shipday'}
-                    </button>
-                </div>
-            </div>
-
-            <div className="border-b border-gray-100">
-                <button 
-                    onClick={() => setIsUsageExpanded(!isUsageExpanded)}
-                    className="w-full flex justify-between items-center px-6 py-4 text-purple-700 font-bold bg-purple-50 hover:bg-purple-100 transition text-sm"
-                >
-                    <span className="flex items-center gap-2">📋 View Daily Production Usage Summary</span>
-                    <span>{isUsageExpanded ? '▲' : '▼'}</span>
-                </button>
-                {isUsageExpanded && (
-                    <div className="max-h-60 overflow-y-auto p-6 bg-purple-50/30 border-t border-purple-100">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-2 text-sm">
-                            {usageSummary.map((u, i) => (
-                                <div key={i} className="flex justify-between border-b border-purple-100 pb-1">
-                                    <span className="text-gray-700 font-medium">{u.name}</span>
-                                    <span className="font-bold text-purple-800">{u.qty} <span className="text-[10px] text-gray-400 uppercase">{u.uom}</span></span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50 text-gray-400 text-[10px] font-black uppercase tracking-wider border-b border-gray-100">
-                    <tr>
-                        <th className="p-5 w-10 text-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedDOs.size > 0 && selectedDOs.size === groupedOrders.length} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300" /></th>
-                        <th className="p-5">DO Number</th>
-                        <th className="p-5">Customer Info</th>
-                        <th className="p-5">Logistics</th>
-                        <th className="p-5 text-center">Items</th>
-                        <th className="p-5">Driver</th>
-                        <th className="p-5 text-right">Action</th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50 text-sm">
-                    {groupedOrders.length === 0 ? (
-                        <tr><td colSpan="7" className="p-12 text-center text-gray-400 italic bg-gray-50/30">No orders scheduled for this date.</td></tr>
-                    ) : (
-                        groupedOrders.map(group => (
-                            <tr 
-                                key={group.info.DONumber} 
-                                className="hover:bg-blue-50/40 transition-colors group cursor-pointer"
-                                onClick={() => openEditModal(group)} 
-                            >
-                                <td className="p-5 text-center" onClick={(e) => e.stopPropagation()}>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={selectedDOs.has(group.info.DONumber)} 
-                                        onChange={() => handleCheckbox(group.info.DONumber)} 
-                                        className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300"
-                                    />
-                                </td>
-                                <td className="p-5">
-                                    <span className="font-mono text-xs font-bold text-green-700 bg-green-100 px-2 py-1 rounded border border-green-200">
-                                        {group.info.DONumber}
-                                    </span>
-                                </td>
-                                <td className="p-5">
-                                    <div className="font-bold text-gray-800">{group.info["Customer Name"]}</div>
-                                    <div className="text-xs text-gray-400 mt-0.5">{group.info["Contact Person"]}</div>
-                                </td>
-                                <td className="p-5">
-                                    <div className={`text-[10px] px-2 py-0.5 rounded w-fit font-bold mb-1 uppercase tracking-wide border ${getDeliveryModeStyle(group.info["Delivery Mode"])}`}>
-                                        {group.info["Delivery Mode"] || 'Standard'}
-                                    </div>
-                                    <div className="text-xs text-gray-500 truncate max-w-[200px]" title={group.info["Delivery Address"]}>
-                                        {group.info["Delivery Address"]}
-                                    </div>
-                                </td>
-                                <td className="p-5 text-center">
-                                    <span className="bg-gray-100 text-gray-600 text-xs font-black px-3 py-1 rounded-full">{group.itemCount}</span>
-                                </td>
-                                <td className="p-5">
-                                    {group.info.DriverName ? (
-                                        <span className="bg-indigo-50 text-indigo-700 text-xs font-bold px-3 py-1 rounded-lg border border-indigo-100">
-                                            {group.info.DriverName}
-                                        </span>
-                                    ) : (
-                                        <span className="text-gray-300 text-xs italic">--</span>
-                                    )}
-                                </td>
-                                <td className="p-5 text-right" onClick={(e) => e.stopPropagation()}>
-                                    <button 
-                                        onClick={() => openEditModal(group)} 
-                                        className="text-gray-400 hover:text-blue-600 p-2 rounded-lg hover:bg-blue-50 transition"
-                                    >
-                                        👁️
-                                    </button>
-                                </td>
-                            </tr>
-                        ))
-                    )}
-                </tbody>
-            </table>
-        </div>
-
-        {/* --- EDIT ORDER MODAL --- */}
-        {isEditModalOpen && editingOrder && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-fade-in-up">
-              
-              <div className="p-6 border-b border-gray-100 flex justify-between items-start bg-gray-50">
-                <div>
-                  <h3 className="text-xl font-bold text-gray-800">Edit Order: {editingOrder.DONumber}</h3>
-                  <p className="text-xs text-gray-500 mt-1">Modify items, prices, or delivery details.</p>
-                </div>
-                <div className="flex gap-2">
-                    <button 
-                      onClick={sendSingleToShipday} 
-                      disabled={isSendingToShipday}
-                      className={`px-4 py-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg text-xs font-bold transition flex items-center gap-2 ${isSendingToShipday ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                        {isSendingToShipday ? 'Sending...' : '🚀 Send to Shipday'}
-                    </button>
-                    <button onClick={printOrder} className="px-4 py-2 bg-gray-100 text-gray-600 hover:bg-gray-200 rounded-lg text-xs font-bold transition flex items-center gap-2">
-                        🖨️ Print DO
-                    </button>
-                    <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold px-2 ml-2">×</button>
-                </div>
-              </div>
-
-              <div className="p-6 overflow-y-auto flex-1 space-y-6 bg-gray-50/30">
-                <div className="bg-blue-50 p-6 rounded-xl border border-blue-100">
-                   <div className="grid grid-cols-2 gap-6">
-                       <div className="col-span-2 md:col-span-1">
-                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Customer Name</label>
-                          <input 
-                            list="edit-customer-list"
-                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                            value={editingOrder["Customer Name"]}
-                            onChange={e => handleEditHeaderChange("Customer Name", e.target.value)}
-                            placeholder="Type to search..."
-                          />
-                          <datalist id="edit-customer-list">
-                            {customers.map(c => <option key={c.CompanyName} value={c.CompanyName} />)}
-                          </datalist>
-                       </div>
-                       <div className="col-span-2 md:col-span-1">
-                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Delivery Date</label>
-                          <input 
-                            type="date"
-                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500" 
-                            value={editingOrder["Delivery Date"]}
-                            onChange={e => handleEditHeaderChange("Delivery Date", e.target.value)}
-                          />
-                       </div>
-                       <div className="col-span-2">
-                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Delivery Address</label>
-                          <input 
-                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white" 
-                            value={editingOrder["Delivery Address"]}
-                            onChange={e => handleEditHeaderChange("Delivery Address", e.target.value)}
-                          />
-                       </div>
-                       <div>
-                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Contact Person</label>
-                          <input 
-                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white" 
-                            value={editingOrder["Contact Person"]}
-                            onChange={e => handleEditHeaderChange("Contact Person", e.target.value)}
-                          />
-                       </div>
-                       <div>
-                          <label className="text-[10px] font-bold text-blue-700 uppercase block mb-1">Contact Number</label>
-                          <input 
-                            className="w-full p-2.5 border border-blue-200 rounded-lg text-sm bg-white" 
-                            value={editingOrder["Contact Number"]}
-                            onChange={e => handleEditHeaderChange("Contact Number", e.target.value)}
-                          />
-                       </div>
-                   </div>
-                </div>
-
-                <div className="relative">
-                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <span className="text-gray-400">🔍</span>
-                   </div>
-                   <input 
-                      type="text"
-                      placeholder="Search product to add..."
-                      className="w-full p-3 pl-10 border border-gray-300 rounded-xl shadow-sm focus:ring-2 focus:ring-green-500 outline-none bg-white"
-                      value={productSearchTerm}
-                      onChange={e => setProductSearchTerm(e.target.value)}
-                   />
-                   {productSearchTerm && (
-                      <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-xl mt-1 max-h-48 overflow-y-auto">
-                         {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).map(p => (
-                            <div 
-                              key={p.ProductCode} 
-                              className="p-3 hover:bg-green-50 cursor-pointer flex justify-between items-center border-b border-gray-50 last:border-0"
-                              onClick={() => handleAddItem(p)}
-                            >
-                               <span className="font-bold text-gray-700">{p.ProductName}</span>
-                               <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500">{p.ProductCode}</span>
-                            </div>
-                         ))}
+                const count = orderCounts[day.dateStr] || 0;
+                const isSelected = day.dateStr === selectedDate;
+                return (
+                  <div 
+                      key={day.dateStr} 
+                      onClick={() => setSelectedDate(day.dateStr)}
+                      className={getCellClasses(count, isSelected)}
+                  >
+                      <div className="flex justify-between items-start">
+                          <span className="text-[10px] font-bold uppercase opacity-60 tracking-wider">{day.dayName}</span>
+                          <span className={`text-lg md:text-xl font-black ${isSelected ? 'text-blue-600' : ''}`}>{day.dayNum}</span>
                       </div>
-                   )}
-                </div>
-
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                    <div className="grid grid-cols-12 gap-4 p-3 bg-gray-50 border-b border-gray-200 text-[10px] font-bold text-gray-500 uppercase">
-                        <div className="col-span-5">Item</div>
-                        <div className="col-span-2 text-center">Qty</div>
-                        <div className="col-span-2 text-center">UOM</div>
-                        <div className="col-span-2 text-right">Price</div>
-                        <div className="col-span-1"></div>
-                    </div>
-                    <div className="divide-y divide-gray-100">
-                        {editingItems.map((item, idx) => (
-                          <div key={item.id || idx} className="grid grid-cols-12 gap-4 p-3 items-center hover:bg-gray-50">
-                            <div className="col-span-5">
-                              <input 
-                                className="w-full p-1.5 border border-gray-200 rounded text-sm font-bold text-gray-800 focus:ring-2 focus:ring-blue-100 outline-none"
-                                value={item["Order Items"]}
-                                onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}
-                              />
-                              <div className="text-[10px] text-gray-400 mt-1 pl-1">{item["Product Code"]}</div>
-                            </div>
-                            <div className="col-span-2">
-                              <input 
-                                type="number" 
-                                className="w-full p-1.5 border border-gray-200 rounded text-center text-sm"
-                                value={item.Quantity}
-                                onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)}
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <select 
-                                className="w-full p-1.5 border border-gray-200 rounded text-xs bg-white text-center uppercase"
-                                value={item.UOM}
-                                onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}
-                              >
-                                 {getUOMOptions(item["Product Code"]).length > 0 ? (
-                                   getUOMOptions(item["Product Code"]).map(u => <option key={u} value={u}>{u}</option>)
-                                 ) : (
-                                   <option value={item.UOM}>{item.UOM}</option>
-                                 )}
-                              </select>
-                            </div>
-                            <div className="col-span-2">
-                              <input 
-                                type="number" 
-                                className="w-full p-1.5 border border-gray-200 rounded text-right text-sm"
-                                value={item.Price}
-                                onChange={e => handleEditItemChange(idx, 'Price', e.target.value)}
-                              />
-                            </div>
-                            <div className="col-span-1 text-center">
-                              <button 
-                                onClick={() => handleDeleteItem(idx)}
-                                className="text-red-300 hover:text-red-600 font-bold text-lg transition"
-                              >
-                                ✕
-                              </button>
-                            </div>
+                      {count > 0 ? (
+                          <div className={`w-full text-center py-1 rounded-lg text-[9px] font-black uppercase tracking-wide ${getPillClasses(count)}`}>
+                              {count} Orders
                           </div>
-                        ))}
+                      ) : (
+                          <div className="w-full text-center py-1 rounded-lg text-[9px] font-bold text-gray-300 bg-gray-50">
+                              No Orders
+                          </div>
+                      )}
+                  </div>
+                );
+             })}
+          </div>
+      </div>
+
+      {/* ORDERS LIST SECTION */}
+      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden animate-fade-in-up">
+          <div className="p-4 md:p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-50/30 gap-4">
+              <h3 className="text-lg md:text-xl font-black text-gray-800 flex items-center gap-3">
+                  Orders for <span className="text-blue-600">{formatDateLabel(selectedDate)}</span>
+                  <span className="bg-gray-200 text-gray-600 text-xs px-2.5 py-1 rounded-full font-black">{filteredGroupedOrders.length}</span>
+              </h3>
+              
+              <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                  <input 
+                      list="drivers" 
+                      placeholder="Assign Driver..." 
+                      className="border border-gray-300 rounded-xl px-3 py-2 text-base md:text-xs font-bold w-full md:w-40 focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={targetDriver}
+                      onChange={e => setTargetDriver(e.target.value)}
+                  />
+                  <datalist id="drivers">
+                      <option value="Ali" /><option value="Muthu" /><option value="Ah Meng" /><option value="Lalamove" />
+                  </datalist>
+                  <button 
+                      onClick={handleAssignDriver}
+                      className="bg-gray-800 text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-black shadow-md transition flex-1 md:flex-none"
+                  >
+                      Assign
+                  </button>
+                  <button 
+                      onClick={syncWithShipday}
+                      disabled={isSyncing}
+                      className={`bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-blue-600 shadow-md transition flex-1 md:flex-none ${isSyncing ? 'opacity-50 cursor-wait' : ''}`}
+                  >
+                      {isSyncing ? '...' : 'Sync'}
+                  </button>
+                  <button 
+                      onClick={sendSelectedToShipday}
+                      disabled={isBulkSending || selectedDOs.size === 0}
+                      className={`bg-indigo-600 text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-indigo-700 shadow-md transition flex items-center justify-center gap-2 flex-1 md:flex-none ${isBulkSending ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                      {isBulkSending ? 'Sending...' : '🚀 Send'}
+                  </button>
+              </div>
+          </div>
+
+          {/* 2. SEARCH BAR ADDED HERE */}
+          <div className="p-4 border-b border-gray-100 bg-white">
+              <div className="relative">
+                  <input 
+                      type="text" 
+                      placeholder="Search Customer Name, DO Number or Item..." 
+                      className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-2xl text-base md:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                  <span className="absolute left-3 top-3.5 text-gray-400">🔍</span>
+              </div>
+          </div>
+
+          <div className="border-b border-gray-100">
+              <button 
+                  onClick={() => setIsUsageExpanded(!isUsageExpanded)}
+                  className="w-full flex justify-between items-center px-4 md:px-6 py-3 text-purple-700 font-bold bg-purple-50 hover:bg-purple-100 transition text-xs md:text-sm"
+              >
+                  <span className="flex items-center gap-2">📋 View Daily Production Usage Summary</span>
+                  <span>{isUsageExpanded ? '▲' : '▼'}</span>
+              </button>
+              {isUsageExpanded && (
+                  <div className="max-h-60 overflow-y-auto p-4 md:p-6 bg-purple-50/30 border-t border-purple-100">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-2 text-xs md:text-sm">
+                          {usageSummary.map((u, i) => (
+                              <div key={i} className="flex justify-between border-b border-purple-100 pb-1">
+                                  <span className="text-gray-700 font-medium">{u.name}</span>
+                                  <span className="font-bold text-purple-800">{u.qty} <span className="text-[10px] text-gray-400 uppercase">{u.uom}</span></span>
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+              )}
+          </div>
+
+          <div className="overflow-x-auto">
+              <table className="w-full text-left min-w-[700px]">
+                  <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-wider border-b border-gray-100">
+                      <tr>
+                          <th className="p-4 w-10 text-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedDOs.size > 0 && selectedDOs.size === filteredGroupedOrders.length} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer" /></th>
+                          <th className="p-4">DO Number</th>
+                          <th className="p-4">Customer Info</th>
+                          <th className="p-4">Logistics</th>
+                          <th className="p-4 text-center">Items</th>
+                          <th className="p-4">Driver</th>
+                          <th className="p-4 text-right">Action</th>
+                      </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                      {filteredGroupedOrders.length === 0 ? (
+                          <tr><td colSpan="7" className="p-12 text-center text-gray-400 italic bg-gray-50/30">No orders found.</td></tr>
+                      ) : (
+                          filteredGroupedOrders.map(group => (
+                              <tr 
+                                  key={group.info.DONumber} 
+                                  className="hover:bg-blue-50/40 transition-colors group cursor-pointer"
+                                  onClick={() => openEditModal(group)} 
+                              >
+                                  <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                                      <input 
+                                          type="checkbox" 
+                                          checked={selectedDOs.has(group.info.DONumber)} 
+                                          onChange={() => handleCheckbox(group.info.DONumber)} 
+                                          className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer"
+                                      />
+                                  </td>
+                                  <td className="p-4">
+                                      <span className="font-mono text-xs md:text-sm font-black text-green-700 bg-green-100 px-2 py-1 rounded border border-green-200">
+                                          {group.info.DONumber}
+                                      </span>
+                                  </td>
+                                  {/* 3. ENLARGED WORDINGS */}
+                                  <td className="p-4">
+                                      <div className="font-black text-gray-800 text-sm md:text-base uppercase">{group.info["Customer Name"]}</div>
+                                      <div className="text-xs text-gray-500 mt-1 font-medium">{group.info["Contact Person"]}</div>
+                                  </td>
+                                  <td className="p-4">
+                                      <div className={`text-[10px] px-2 py-0.5 rounded w-fit font-black mb-1 uppercase tracking-wide border ${getDeliveryModeStyle(group.info["Delivery Mode"])}`}>
+                                          {group.info["Delivery Mode"] || 'Standard'}
+                                      </div>
+                                      <div className="text-xs text-gray-500 truncate max-w-[200px] font-medium" title={group.info["Delivery Address"]}>
+                                          {group.info["Delivery Address"]}
+                                      </div>
+                                  </td>
+                                  <td className="p-4 text-center">
+                                      <span className="bg-gray-100 text-gray-600 text-xs font-black px-3 py-1 rounded-full">{group.itemCount}</span>
+                                  </td>
+                                  <td className="p-4">
+                                      {group.info.DriverName ? (
+                                          <span className="bg-indigo-50 text-indigo-700 text-xs font-bold px-3 py-1 rounded-lg border border-indigo-100 uppercase">
+                                              {group.info.DriverName}
+                                          </span>
+                                      ) : (
+                                          <span className="text-gray-300 text-xs italic">--</span>
+                                      )}
+                                  </td>
+                                  <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
+                                      <button 
+                                          onClick={() => openEditModal(group)} 
+                                          className="text-gray-400 hover:text-blue-600 p-2 rounded-lg hover:bg-blue-50 transition text-lg"
+                                      >
+                                          👁️
+                                      </button>
+                                  </td>
+                              </tr>
+                          ))
+                      )}
+                  </tbody>
+              </table>
+          </div>
+      </div>
+
+      {/* --- EDIT MODAL (Identical logic to Order List) --- */}
+      {isEditModalOpen && editingOrder && (
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+                <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
+                    <h3 className="font-black text-gray-800">Edit DO: {editingOrder.DONumber}</h3>
+                    <div className="flex gap-2">
+                        <button onClick={setIsEditModalOpen.bind(null, false)} className="text-gray-400 font-bold text-xl px-2">×</button>
                     </div>
                 </div>
-              </div>
-
-              <div className="p-4 border-t border-gray-100 bg-white flex justify-end gap-3">
-                <button 
-                  onClick={() => setIsEditModalOpen(false)}
-                  className="px-6 py-2.5 rounded-xl border border-gray-300 text-gray-600 font-bold hover:bg-gray-50 transition text-sm"
-                >
-                  Cancel
-                </button>
-                <button 
-                  onClick={saveEditedOrder}
-                  className="px-8 py-2.5 rounded-xl bg-green-600 text-white font-bold hover:bg-green-700 shadow-lg transform active:scale-95 transition text-sm"
-                >
-                  Save Changes
-                </button>
-              </div>
+                {/* Simplified Edit View for Calendar Context - Just List Items */}
+                <div className="p-6 overflow-y-auto flex-1">
+                    <h4 className="text-xs font-black text-gray-400 uppercase mb-4">Order Items</h4>
+                    <table className="w-full text-xs text-left">
+                        <thead className="bg-gray-50 font-black text-[10px] uppercase">
+                            <tr><th className="p-3">Item</th><th className="p-3 text-center">Qty</th><th className="p-3">UOM</th></tr>
+                        </thead>
+                        <tbody className="divide-y">
+                            {editingItems.map((item, idx) => (
+                                <tr key={idx}>
+                                    <td className="p-3 font-bold uppercase">{item["Order Items"]}</td>
+                                    <td className="p-3 text-center font-bold">{item.Quantity}</td>
+                                    <td className="p-3 uppercase font-medium">{item.UOM}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    <div className="mt-6 text-center text-gray-400 text-xs italic">
+                        To modify this order fully, please use the <strong>Order List</strong> page.
+                    </div>
+                </div>
             </div>
           </div>
-        )}
-      </main>
+      )}
     </div>
   );
 }
+
+// Helper for delivery badges
+const getDeliveryModeStyle = (mode) => {
+    if (!mode) return 'bg-purple-100 text-purple-700 border-purple-200'; 
+    const m = mode.toLowerCase();
+    if (m.includes('lalamove')) return 'bg-orange-100 text-orange-800 border-orange-200';
+    if (m.includes('pick') || m.includes('self')) return 'bg-blue-100 text-blue-800 border-blue-200';
+    return 'bg-purple-100 text-purple-700 border-purple-200'; 
+};
