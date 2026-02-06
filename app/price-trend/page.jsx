@@ -21,28 +21,26 @@ export default function PriceTrendPage() {
   const [chartData, setChartData] = useState([]);
   const [salesHistory, setSalesHistory] = useState([]);
   const [purchaseHistory, setPurchaseHistory] = useState([]);
-  const [stats, setStats] = useState({ maxSell: 0, minSell: 0, avgSell: 0 });
+  const [stats, setStats] = useState({ maxSell: 0, latestCost: 0, avgSell: 0 }); // Changed minSell to latestCost
+  const [recommendedPrice, setRecommendedPrice] = useState(0); // State for recommended price
   
   // Date Range State - Default to ALL TIME
   const [dateRange, setDateRange] = useState('all');
 
-  // 1. Fetch Product List (Show ALL products, sorted by activity)
+  // 1. Fetch Product List
   useEffect(() => {
     async function fetchProducts() {
       setLoading(true);
 
-      // A. Get ALL Products from Master
       const { data: prodData } = await supabase
         .from('ProductMaster')
         .select('ProductCode, ProductName, Category, SalesUOM, BaseUOM');
 
-      // B. Get Latest Purchase Date for EACH product to sort
       const { data: latestPurchases } = await supabase
         .from('Purchase')
         .select('ProductCode, Timestamp')
         .order('Timestamp', { ascending: false });
 
-      // Create a map of Code -> Latest Timestamp
       const latestMap = {};
       if (latestPurchases) {
         latestPurchases.forEach(p => {
@@ -52,7 +50,6 @@ export default function PriceTrendPage() {
         });
       }
 
-      // Merge and Sort
       const sortedProducts = (prodData || []).map(p => ({
         ...p,
         latestPurchase: latestMap[p.ProductCode] || 0 
@@ -100,7 +97,6 @@ export default function PriceTrendPage() {
 
     const targetUOM = product.SalesUOM || product.BaseUOM;
 
-    // A. Fetch Sales History (Orders)
     let salesQuery = supabase
       .from('Orders')
       .select('"Delivery Date", Price, "Customer Name", UOM')
@@ -116,7 +112,6 @@ export default function PriceTrendPage() {
     const { data: salesData, error: salesError } = await salesQuery;
     if (salesError) console.error("Sales Error:", salesError);
 
-    // B. Fetch Purchase History
     let purchaseQuery = supabase
       .from('Purchase') 
       .select('Timestamp, CostPrice, Supplier') 
@@ -130,14 +125,10 @@ export default function PriceTrendPage() {
     const { data: costData, error: costError } = await purchaseQuery;
     if (costError) console.error("Purchase Error:", costError);
 
-    // Update Tables (Show latest first)
     setSalesHistory(salesData ? [...salesData].reverse() : []);
     setPurchaseHistory(costData ? [...costData].reverse() : []);
 
-    // C. Process Chart Data
     const combinedMap = {};
-
-    // 1. Map Sales
     if (salesData) {
         salesData.forEach(row => {
             const price = Number(row.Price);
@@ -149,8 +140,9 @@ export default function PriceTrendPage() {
         });
     }
 
-    // 2. Map Purchases
     const validCosts = [];
+    let latestCost = 0; // Track latest cost
+
     if (costData) {
         costData.forEach(row => {
             const d = row.Timestamp.substring(0, 10);
@@ -160,6 +152,7 @@ export default function PriceTrendPage() {
             if (cost > 0) {
                 combinedMap[d].costPrice = cost;
                 validCosts.push(cost);
+                latestCost = cost; // Since sorted by timestamp ASC, last one is latest
             }
         });
     }
@@ -169,15 +162,17 @@ export default function PriceTrendPage() {
     );
     setChartData(finalData);
 
-    // Calculate Stats based on COST PRICE (Purchases)
     if (validCosts.length > 0) {
         setStats({
             maxSell: Math.max(...validCosts),
-            minSell: Math.min(...validCosts),
+            latestCost: latestCost,
             avgSell: (validCosts.reduce((a, b) => a + b, 0) / validCosts.length).toFixed(2)
         });
+        // Calculate Recommended Price: Latest Cost + 15%
+        setRecommendedPrice((latestCost * 1.15).toFixed(2));
     } else {
-        setStats({ maxSell: 0, minSell: 0, avgSell: 0 });
+        setStats({ maxSell: 0, latestCost: 0, avgSell: 0 });
+        setRecommendedPrice(0);
     }
   };
 
@@ -264,7 +259,6 @@ export default function PriceTrendPage() {
                                 <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-wide">Code: {selectedProduct.ProductCode}</p>
                             </div>
                             
-                            {/* Date Range Selector */}
                             <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 p-1 rounded-xl shadow-sm w-full md:w-auto">
                                 <select 
                                     value={dateRange} 
@@ -282,19 +276,24 @@ export default function PriceTrendPage() {
                             </div>
                         </div>
 
-                        {/* Stats Cards (Cost Based) */}
-                        <div className="grid grid-cols-3 gap-3 md:gap-4">
+                        {/* Stats Cards (Cost Based) - Updated to 4 columns */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
                             <div className="bg-green-50 p-3 md:p-5 rounded-3xl border border-green-100 text-center shadow-sm">
                                 <p className="text-[8px] md:text-[10px] font-black text-green-400 uppercase tracking-widest mb-1">Max Cost</p>
-                                <p className="text-lg md:text-2xl font-black text-green-700">RM {Number(stats.maxSell).toFixed(2)}</p>
+                                <p className="text-lg md:text-xl font-black text-green-700">RM {Number(stats.maxSell).toFixed(2)}</p>
                             </div>
                             <div className="bg-blue-50 p-3 md:p-5 rounded-3xl border border-blue-100 text-center shadow-sm">
                                 <p className="text-[8px] md:text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Avg Cost</p>
-                                <p className="text-lg md:text-2xl font-black text-blue-700">RM {Number(stats.avgSell).toFixed(2)}</p>
+                                <p className="text-lg md:text-xl font-black text-blue-700">RM {Number(stats.avgSell).toFixed(2)}</p>
                             </div>
                             <div className="bg-orange-50 p-3 md:p-5 rounded-3xl border border-orange-100 text-center shadow-sm">
-                                <p className="text-[8px] md:text-[10px] font-black text-orange-400 uppercase tracking-widest mb-1">Min Cost</p>
-                                <p className="text-lg md:text-2xl font-black text-orange-700">RM {Number(stats.minSell).toFixed(2)}</p>
+                                <p className="text-[8px] md:text-[10px] font-black text-orange-400 uppercase tracking-widest mb-1">Latest Cost</p>
+                                <p className="text-lg md:text-xl font-black text-orange-700">RM {Number(stats.latestCost).toFixed(2)}</p>
+                            </div>
+                            {/* NEW: Recommended Price Card */}
+                            <div className="bg-purple-50 p-3 md:p-5 rounded-3xl border border-purple-100 text-center shadow-sm">
+                                <p className="text-[8px] md:text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1">Sugg. Price (+15%)</p>
+                                <p className="text-lg md:text-xl font-black text-purple-700">RM {recommendedPrice}</p>
                             </div>
                         </div>
 
