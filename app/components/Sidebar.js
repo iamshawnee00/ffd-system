@@ -1,18 +1,30 @@
 'use client';
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabaseClient';
 import { useSidebar } from '../context/SidebarContext';
 import { 
-  HomeIcon, PlusCircleIcon, ClipboardDocumentListIcon, 
-  TruckIcon, ChartBarIcon, CubeIcon, AdjustmentsHorizontalIcon, 
-  UserGroupIcon, ArrowLeftOnRectangleIcon, Bars3Icon, 
-  ShoppingBagIcon, XMarkIcon 
+  HomeIcon, 
+  PlusCircleIcon, 
+  ClipboardDocumentListIcon, 
+  TruckIcon, 
+  ChartBarIcon, 
+  CubeIcon, 
+  AdjustmentsHorizontalIcon, 
+  UserGroupIcon, 
+  ArrowLeftOnRectangleIcon, 
+  Bars3Icon, 
+  ShoppingBagIcon, 
+  XMarkIcon, 
+  PresentationChartLineIcon 
 } from '@heroicons/react/24/outline';
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+  
+  // Use context for sidebar state
   const { isCollapsed, setIsCollapsed, isMobileOpen, setIsMobileOpen } = useSidebar();
 
   const handleLogout = async () => {
@@ -30,6 +42,7 @@ export default function Sidebar() {
     { name: 'Products', path: '/products', icon: CubeIcon },
     { name: 'Stock Adjust', path: '/stock', icon: AdjustmentsHorizontalIcon },
     { name: 'Customers', path: '/customers', icon: UserGroupIcon },
+    { name: 'Business Insights', path: '/insights', icon: PresentationChartLineIcon },
   ];
 
   return (
@@ -53,24 +66,27 @@ export default function Sidebar() {
         </div>
 
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto custom-scrollbar">
-          {menuItems.map((item) => (
-            <Link 
-              key={item.path} 
-              href={item.path}
-              className={`flex items-center px-3 py-3 rounded-xl transition-all duration-200 group relative ${
-                pathname === item.path ? 'bg-green-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-              }`}
-            >
-              <item.icon className="w-6 h-6 flex-shrink-0" />
-              {!isCollapsed && <span className="ml-3 font-medium text-sm whitespace-nowrap">{item.name}</span>}
-              
-              {isCollapsed && (
-                <div className="absolute left-full ml-4 px-2 py-1 bg-slate-800 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 border border-slate-700">
-                  {item.name}
-                </div>
-              )}
-            </Link>
-          ))}
+          {menuItems.map((item) => {
+            const isActive = pathname === item.path;
+            return (
+              <Link 
+                key={item.path} 
+                href={item.path}
+                className={`flex items-center px-3 py-3 rounded-xl transition-all duration-200 group relative ${
+                  isActive ? 'bg-green-600 text-white shadow-lg' : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                }`}
+              >
+                <item.icon className={`w-6 h-6 flex-shrink-0 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-green-400'}`} />
+                {!isCollapsed && <span className="ml-3 font-medium text-sm whitespace-nowrap">{item.name}</span>}
+                
+                {isCollapsed && (
+                  <div className="absolute left-full ml-4 px-2 py-1 bg-slate-800 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-nowrap z-50 border border-slate-700">
+                    {item.name}
+                  </div>
+                )}
+              </Link>
+            );
+          })}
         </nav>
 
         <div className="p-4 border-t border-slate-800">
@@ -93,19 +109,22 @@ export default function Sidebar() {
       {isMobileOpen && (
         <div className="md:hidden fixed inset-0 z-40 bg-slate-900/95 pt-20 px-4 backdrop-blur-sm">
           <nav className="space-y-1">
-            {menuItems.map((item) => (
-              <Link 
-                key={item.path} 
-                href={item.path} 
-                onClick={() => setIsMobileOpen(false)}
-                className={`flex items-center p-4 rounded-2xl transition-all ${
-                  pathname === item.path ? 'bg-green-600 text-white' : 'text-slate-400'
-                }`}
-              >
-                <item.icon className="w-7 h-7" />
-                <span className="ml-4 font-bold text-lg">{item.name}</span>
-              </Link>
-            ))}
+            {menuItems.map((item) => {
+              const isActive = pathname === item.path;
+              return (
+                <Link 
+                  key={item.path} 
+                  href={item.path} 
+                  onClick={() => setIsMobileOpen(false)}
+                  className={`flex items-center p-4 rounded-2xl transition-all ${
+                    isActive ? 'bg-green-600 text-white' : 'text-slate-400'
+                  }`}
+                >
+                  <item.icon className="w-7 h-7" />
+                  <span className="ml-4 font-bold text-lg">{item.name}</span>
+                </Link>
+              );
+            })}
             
             <div className="border-t border-slate-800 my-4 pt-4">
               <button 
