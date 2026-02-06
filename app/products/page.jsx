@@ -44,6 +44,27 @@ export default function ProductManagementPage() {
     fetchProducts();
   }, []);
 
+  // Update Base/Sales/Purchase UOMs when AllowedUOMs changes to ensure validity
+  useEffect(() => {
+    if (!isModalOpen) return;
+
+    const options = formData.AllowedUOMs 
+      ? formData.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u !== '')
+      : [];
+
+    if (options.length === 1) {
+      const singleUOM = options[0];
+      if (formData.BaseUOM !== singleUOM || formData.SalesUOM !== singleUOM || formData.PurchaseUOM !== singleUOM) {
+        setFormData(prev => ({
+          ...prev,
+          BaseUOM: singleUOM,
+          SalesUOM: singleUOM,
+          PurchaseUOM: singleUOM
+        }));
+      }
+    }
+  }, [formData.AllowedUOMs, isModalOpen]);
+
   // 2. Handle Form Submit
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -59,7 +80,6 @@ export default function ProductManagementPage() {
 
     // SAVE PRODUCT MASTER
     if (editingProduct) {
-      // FIX: Update using ProductCode instead of 'id'
       const { error } = await supabase
         .from('ProductMaster')
         .update(cleanedData)
@@ -69,7 +89,7 @@ export default function ProductManagementPage() {
     } else {
       const { data: existing } = await supabase
         .from('ProductMaster')
-        .select('ProductCode') // Select ProductCode to check existence
+        .select('ProductCode') 
         .eq('ProductCode', formData.ProductCode)
         .single();
 
@@ -101,11 +121,9 @@ export default function ProductManagementPage() {
   };
 
   // 3. Handle Delete
-  // FIX: Removed 'id' parameter since we use 'code'
   const handleDelete = async (name, code) => {
     if (confirm(`Are you sure you want to delete "${name}"?`)) {
       await supabase.from('UOM_Conversions').delete().eq('ProductCode', code);
-      // FIX: Delete using ProductCode
       const { error } = await supabase.from('ProductMaster').delete().eq('ProductCode', code);
 
       if (error) alert('Error deleting: ' + error.message);
@@ -175,9 +193,7 @@ export default function ProductManagementPage() {
   if (loading) return <div className="flex h-screen items-center justify-center bg-gray-50 text-gray-500 font-bold">Loading Products...</div>;
 
   return (
-    <div className="flex bg-gray-50 min-h-screen font-sans text-gray-800">
-      <Sidebar />
-      <main className="ml-64 flex-1 p-8">
+    <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6">
         
         {/* HEADER */}
         <div className="flex justify-between items-center mb-8">
@@ -382,8 +398,8 @@ export default function ProductManagementPage() {
                             </div>
                         </div>
 
-                        {/* Conversion Rates */}
-                        {getSecondaryUOMs().length > 0 && (
+                        {/* Conversion Rates - ONLY IF >1 UOM */}
+                        {getSecondaryUOMs().length > 0 ? (
                             <div className="mt-4 pt-4 border-t border-blue-200">
                                 <h4 className="text-[10px] font-bold text-blue-500 mb-2 uppercase">Conversion Rates (to Base)</h4>
                                 <div className="space-y-2">
@@ -407,6 +423,10 @@ export default function ProductManagementPage() {
                                         </div>
                                     ))}
                                 </div>
+                            </div>
+                        ) : (
+                            <div className="mt-4 pt-4 border-t border-blue-200 text-[10px] text-blue-400 italic text-center">
+                                Single unit type detected. No conversion needed.
                             </div>
                         )}
                     </div>
@@ -433,7 +453,6 @@ export default function ProductManagementPage() {
           </div>
         )}
 
-      </main>
     </div>
   );
 }
