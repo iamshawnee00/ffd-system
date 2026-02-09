@@ -15,7 +15,7 @@ export default function NewOrderPage() {
   const [currentUser, setCurrentUser] = useState('');
 
   // Form States
-  const [selectedCustomer, setSelectedCustomer] = useState('');
+  const [selectedCustomerValue, setSelectedCustomerValue] = useState('');
   const [custDetails, setCustDetails] = useState({ 
     ContactPerson: '', 
     ContactNumber: '', 
@@ -72,7 +72,7 @@ export default function NewOrderPage() {
 
       const { data: custData } = await supabase
         .from('Customers')
-        .select('*')
+        .select('*') // Select all fields including Branch
         .order('CompanyName');
 
       const { data: prodData } = await supabase
@@ -87,18 +87,16 @@ export default function NewOrderPage() {
     loadData();
   }, [router]);
 
-  // Handle Customer Selection
+  // Handle Customer Selection - UPDATED for Branch Logic
   const handleCustomerChange = (e) => {
     const inputValue = e.target.value;
-    setSelectedCustomer(inputValue);
+    setSelectedCustomerValue(inputValue);
     
-    // Logic to find customer:
-    // 1. Match exactly "Company Name" (Legacy/No branch)
-    // 2. Match "Company Name - Branch" (New format)
+    // Logic to find customer: Match "Company Name - Branch" OR just "Company Name" if no branch
     const details = customers.find(c => {
         // Construct the expected display string for this customer
         const displayString = c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName;
-        
+        // Trim and lowercase for comparison
         return displayString.trim().toLowerCase() === inputValue.trim().toLowerCase();
     });
     
@@ -116,27 +114,41 @@ export default function NewOrderPage() {
   };
 
   const handleProductInputChange = (code, field, value) => {
-    setProductInputs(prev => ({
-      ...prev,
-      [code]: { ...prev[code], [field]: value }
-    }));
+    setProductInputs(prev => {
+      const current = prev[code] || {};
+      const newData = { ...current, [field]: value };
+      
+      // If setting replacement to true, auto-set price to 0
+      if (field === 'replacement' && value === true) {
+        newData.price = 0;
+      }
+      // If setting replacement to false, clear the 0 (optional, but requested "default empty")
+      // If the user wants it to go back to empty string when unchecking, we can do this:
+      if (field === 'replacement' && value === false && newData.price === 0) {
+        newData.price = '';
+      }
+
+      return {
+        ...prev,
+        [code]: newData
+      };
+    });
   };
 
   const addToCart = (product) => {
     const inputs = productInputs[product.ProductCode] || {};
     const qty = parseFloat(inputs.qty);
-    const price = inputs.price === undefined || inputs.price === '' ? 0 : parseFloat(inputs.price); 
+    
+    // If input is empty string, keep it 0.
+    const price = inputs.price === '' || inputs.price === undefined ? 0 : parseFloat(inputs.price); 
     
     if (!qty || qty <= 0) return;
 
-    const exists = cart.find(item => item.ProductCode === product.ProductCode);
-    if (exists) {
-      alert("Item already in cart!");
-      return;
-    }
-
+    // Remove the check that prevents duplicate products
+    // Instead, assign a unique cartId to handle multiple entries of the same product
     const newItem = {
       ...product,
+      cartId: `${product.ProductCode}-${Date.now()}`, // Unique ID for React key & removal
       qty: qty,
       uom: inputs.uom || product.BaseUOM,
       price: price, 
@@ -145,6 +157,8 @@ export default function NewOrderPage() {
     };
 
     setCart([...cart, newItem]);
+    
+    // Clear inputs for this product but keep searching
     setProductInputs(prev => {
       const newState = { ...prev };
       delete newState[product.ProductCode];
@@ -153,18 +167,18 @@ export default function NewOrderPage() {
     setSearchTerm(''); 
   };
 
-  const removeFromCart = (code) => {
-    setCart(cart.filter(item => item.ProductCode !== code));
+  const removeFromCart = (cartId) => {
+    setCart(cart.filter(item => item.cartId !== cartId));
   };
 
-  const updateCartItem = (code, field, value) => {
+  const updateCartItem = (cartId, field, value) => {
     setCart(cart.map(item => 
-      item.ProductCode === code ? { ...item, [field]: value } : item
+      item.cartId === cartId ? { ...item, [field]: value } : item
     ));
   };
 
   const handleSubmit = async () => {
-    if (!selectedCustomer || !deliveryDate || cart.length === 0) {
+    if (!selectedCustomerValue || !deliveryDate || cart.length === 0) {
       alert("Please select a customer, date, and at least one item.");
       return;
     }
@@ -182,13 +196,10 @@ export default function NewOrderPage() {
       "DONumber": doNumber,
       "Delivery Date": deliveryDate,
       "Delivery Mode": deliveryMode,
-      "Customer Name": selectedCustomer, // Saves the full "Name - Branch" string
-      "Delivery Address": custDetails.DeliveryAddress,
-      "Contact Person": custDetails.ContactPerson,
-      "Contact Number": custDetails.ContactNumber,
-      "Customer Name": selectedCustomerValue.toUpperCase(),
+      "Customer Name": selectedCustomerValue.toUpperCase(), 
       "Delivery Address": custDetails.DeliveryAddress.toUpperCase(),
       "Contact Person": custDetails.ContactPerson.toUpperCase(),
+      "Contact Number": custDetails.ContactNumber,
       "Product Code": item.ProductCode,
       "Order Items": item.ProductName,
       "Quantity": item.qty,
@@ -272,13 +283,12 @@ export default function NewOrderPage() {
                     list="customer-list"
                     type="text"
                     className="w-full border border-gray-200 rounded-xl p-2 text-base md:text-xs font-bold focus:outline-none focus:ring-2 focus:ring-green-500 transition-all uppercase bg-gray-50/50"
-                    value={selectedCustomer}
+                    value={selectedCustomerValue}
                     onChange={handleCustomerChange}
                     placeholder="SEARCH CUSTOMER..."
                   />
                   <datalist id="customer-list">
                     {customers.map(c => {
-                        // Construct the full display string
                         const displayValue = c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName;
                         return (
                            <option key={c.id} value={displayValue} />
@@ -404,7 +414,7 @@ export default function NewOrderPage() {
                                   checked={inputs.replacement || false}
                                   onChange={(e) => handleProductInputChange(p.ProductCode, 'replacement', e.target.checked)}
                                 />
-                                <span className="text-[8px] md:text-[9px] font-black text-red-400 uppercase tracking-widest">Free</span>
+                                <span className="text-[8px] md:text-[9px] font-black text-red-400 uppercase tracking-widest">REPLACEMENT</span>
                             </label>
 
                             <div className="flex-1"></div>
@@ -451,14 +461,14 @@ export default function NewOrderPage() {
                       </div>
                   ) : (
                       cart.map((item, idx) => (
-                         <div key={`${item.ProductCode}-${idx}`} className="p-3 md:p-4 rounded-2xl bg-gray-50/80 border border-gray-100 relative group transition-all hover:bg-white hover:shadow-md">
+                         <div key={item.cartId} className="p-3 md:p-4 rounded-2xl bg-gray-50/80 border border-gray-100 relative group transition-all hover:bg-white hover:shadow-md">
                              <div className="flex justify-between items-start mb-1 md:mb-2">
                                  <div className="pr-6">
                                      <div className="text-[11px] md:text-xs font-black text-gray-800 line-clamp-2 leading-tight uppercase">{item.ProductName}</div>
                                      <div className="text-[9px] md:text-[10px] text-gray-400 font-mono mt-0.5">{item.ProductCode}</div>
                                  </div>
                                  <button 
-                                   onClick={() => removeFromCart(item.ProductCode)}
+                                   onClick={() => removeFromCart(item.cartId)}
                                    className="text-gray-300 hover:text-red-500 font-bold p-1 transition-colors absolute top-2 right-2 md:top-3 md:right-3"
                                  >
                                    ✕
@@ -472,7 +482,7 @@ export default function NewOrderPage() {
                                  
                                  {item.isReplacement ? (
                                      <span className="text-[8px] md:text-[9px] font-black text-white bg-red-400 px-2 py-0.5 md:py-1 rounded-lg uppercase tracking-wider shadow-sm">
-                                         FREE
+                                         REPLACEMENT
                                      </span>
                                  ) : (
                                      <span className="text-[10px] md:text-[11px] font-black text-gray-700 bg-white border border-gray-200 px-2 py-0.5 md:py-1 rounded-lg">
@@ -486,7 +496,7 @@ export default function NewOrderPage() {
                                 placeholder="Add specific item note..." 
                                 className="w-full mt-2 md:mt-3 bg-transparent border-b border-gray-200 text-base md:text-[10px] text-gray-600 focus:outline-none focus:border-green-400 pb-1 placeholder-gray-300 italic"
                                 value={item.notes || ''}
-                                onChange={(e) => updateCartItem(item.ProductCode, 'notes', e.target.value)}
+                                onChange={(e) => updateCartItem(item.cartId, 'notes', e.target.value)}
                              />
                          </div>
                       ))
