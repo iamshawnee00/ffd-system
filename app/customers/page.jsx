@@ -5,7 +5,10 @@ import {
   UserGroupIcon, 
   ChartBarIcon, 
   CalendarIcon, 
-  ShoppingBagIcon 
+  ShoppingBagIcon,
+  PlusIcon,
+  PencilSquareIcon,
+  TrashIcon 
 } from '@heroicons/react/24/outline';
 
 export default function CustomerPage() {
@@ -22,6 +25,18 @@ export default function CustomerPage() {
     totalOrders: 0,
     lastOrderDate: null
   });
+
+  // Add/Edit Customer Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [formData, setFormData] = useState({
+    CompanyName: '',
+    Branch: '',
+    ContactPerson: '',
+    ContactNumber: '',
+    DeliveryAddress: ''
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // 1. Initial Load
   useEffect(() => {
@@ -67,19 +82,17 @@ export default function CustomerPage() {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     orders.forEach(order => {
-       // Item Frequency
        const itemName = order["Order Items"];
        const qty = Number(order.Quantity || 0);
        const uom = order.UOM;
-       const key = `${itemName} (${uom})`; // Group by Item + UOM to differentiate
+       const key = `${itemName} (${uom})`; 
 
        if (!itemFrequency[key]) {
          itemFrequency[key] = { name: itemName, uom: uom, count: 0, totalQty: 0 };
        }
-       itemFrequency[key].count += 1; // Frequency (how many times ordered)
-       itemFrequency[key].totalQty += qty; // Volume (total amount ordered)
+       itemFrequency[key].count += 1; 
+       itemFrequency[key].totalQty += qty; 
 
-       // Delivery Day Pattern
        const d = new Date(order["Delivery Date"]);
        if (!isNaN(d)) {
           const dayName = days[d.getDay()];
@@ -87,12 +100,10 @@ export default function CustomerPage() {
        }
     });
 
-    // Sort items by Frequency (Count)
     const sortedItems = Object.values(itemFrequency)
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10); // Top 10 items
+      .slice(0, 10); 
 
-    // Find typical delivery days (days with > 15% of orders)
     const total = orders.length;
     const typicalDays = Object.entries(dayFrequency)
       .filter(([_, count]) => (count / total) > 0.15)
@@ -106,11 +117,139 @@ export default function CustomerPage() {
     });
   };
 
-  // Filter List
-  const filteredCustomers = customers.filter(c => 
-    c.CompanyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (c.ContactPerson && c.ContactPerson.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  // 5. Handle Form Submit (Add or Edit)
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    if (!formData.CompanyName) {
+        alert("Company Name is required");
+        setIsSubmitting(false);
+        return;
+    }
+    if (!formData.DeliveryAddress) {
+        alert("Delivery Address is required (Unique Identifier)");
+        setIsSubmitting(false);
+        return;
+    }
+
+    // CHECK FOR UNIQUE ADDRESS
+    // Logic: Look for ANY customer with this address.
+    const { data: existingAddress } = await supabase
+        .from('Customers')
+        .select('id')
+        .eq('DeliveryAddress', formData.DeliveryAddress) 
+        .maybeSingle();
+
+    if (existingAddress) {
+        // If ADDING: existingAddress implies duplicate -> Block
+        // If EDITING: Block ONLY if the found ID is NOT the one we are editing (i.e., address belongs to someone else)
+        if (!editingId || (editingId && existingAddress.id !== editingId)) {
+            alert("Error: A customer with this EXACT address already exists. Address must be unique per branch.");
+            setIsSubmitting(false);
+            return;
+        }
+    }
+
+    const payload = {
+        CompanyName: formData.CompanyName,
+        Branch: formData.Branch, 
+        ContactPerson: formData.ContactPerson,
+        ContactNumber: formData.ContactNumber,
+        DeliveryAddress: formData.DeliveryAddress
+    };
+
+    let error;
+    if (editingId) {
+        const { error: updateError } = await supabase
+            .from('Customers')
+            .update(payload)
+            .eq('id', editingId);
+        error = updateError;
+    } else {
+        const { error: insertError } = await supabase
+            .from('Customers')
+            .insert([payload]);
+        error = insertError;
+    }
+
+    if (error) {
+        alert("Error saving customer: " + error.message);
+    } else {
+        alert(editingId ? "Customer updated!" : "Customer added!");
+        setIsModalOpen(false);
+        setFormData({ CompanyName: '', Branch: '', ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
+        setEditingId(null);
+        fetchCustomers();
+        // Update selection if we just edited the currently selected customer
+        if (selectedCustomer && editingId === selectedCustomer.id) {
+             setSelectedCustomer({ ...selectedCustomer, ...payload });
+        }
+    }
+    setIsSubmitting(false);
+  };
+
+  // 6. Handle Delete Customer
+  const handleDeleteCustomer = async (id, e) => {
+      e.stopPropagation();
+      if (!confirm("Are you sure you want to delete this customer? This cannot be undone.")) return;
+
+      const { error } = await supabase
+          .from('Customers')
+          .delete()
+          .eq('id', id);
+
+      if (error) {
+          alert("Error deleting customer: " + error.message);
+      } else {
+          alert("Customer deleted.");
+          if (selectedCustomer?.id === id) {
+              setSelectedCustomer(null);
+          }
+          fetchCustomers();
+      }
+  };
+
+  const openAddModal = () => {
+      setEditingId(null);
+      setFormData({ CompanyName: '', Branch: '', ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
+      setIsModalOpen(true);
+  };
+
+  const openEditModal = (customer, e) => {
+      e.stopPropagation(); 
+      setEditingId(customer.id);
+      setFormData({
+          CompanyName: customer.CompanyName,
+          Branch: customer.Branch || '', 
+          ContactPerson: customer.ContactPerson,
+          ContactNumber: customer.ContactNumber,
+          DeliveryAddress: customer.DeliveryAddress
+      });
+      setIsModalOpen(true);
+  };
+  
+  const openAddBranchModal = (customer, e) => {
+      e.stopPropagation();
+      setEditingId(null); 
+      setFormData({
+          CompanyName: customer.CompanyName, 
+          Branch: '', 
+          ContactPerson: customer.ContactPerson || '', 
+          ContactNumber: customer.ContactNumber || '',
+          DeliveryAddress: ''
+      });
+      setIsModalOpen(true);
+  };
+
+  const filteredCustomers = customers.filter(c => {
+    const term = searchTerm.toLowerCase();
+    return (
+        c.CompanyName.toLowerCase().includes(term) ||
+        (c.Branch && c.Branch.toLowerCase().includes(term)) || 
+        (c.ContactPerson && c.ContactPerson.toLowerCase().includes(term))
+    );
+  });
 
   if (loading) return <div className="p-10 text-center font-bold text-gray-400">Loading Customers...</div>;
 
@@ -118,9 +257,17 @@ export default function CustomerPage() {
     <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6">
       
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Customer Analysis</h1>
-        <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Usual usage & delivery patterns</p>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-3">
+        <div>
+            <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Customer Analysis</h1>
+            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Usual usage & delivery patterns</p>
+        </div>
+        <button 
+            onClick={openAddModal}
+            className="bg-green-600 hover:bg-green-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-lg flex items-center gap-2 transition transform active:scale-95"
+        >
+            <PlusIcon className="w-4 h-4" /> Add Customer
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-140px)]">
@@ -130,7 +277,7 @@ export default function CustomerPage() {
            <div className="mb-4 relative">
               <input 
                 type="text" 
-                placeholder="Search Customer..." 
+                placeholder="Search Customer or Branch..." 
                 className="w-full p-3 pl-10 border border-gray-200 rounded-xl bg-gray-50 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -143,16 +290,43 @@ export default function CustomerPage() {
                 <div 
                   key={c.id} 
                   onClick={() => handleSelectCustomer(c)}
-                  className={`p-4 rounded-xl cursor-pointer border transition-all duration-200 group ${
+                  className={`p-4 rounded-xl cursor-pointer border transition-all duration-200 group relative ${
                     selectedCustomer?.id === c.id 
                     ? 'bg-blue-50 border-blue-500 ring-1 ring-blue-500 shadow-sm' 
                     : 'bg-white border-gray-100 hover:border-blue-200 hover:shadow-md'
                   }`}
                 >
-                   <div className="font-black text-gray-800 text-xs uppercase mb-1">{c.CompanyName}</div>
+                   <div className="font-black text-gray-800 text-xs uppercase mb-1 pr-20 flex items-center flex-wrap">
+                       {c.CompanyName}
+                       {c.Branch && <span className="ml-2 text-blue-600 font-bold bg-blue-100 px-1.5 py-0.5 rounded text-[9px]">{c.Branch}</span>}
+                   </div>
                    <div className="flex justify-between items-center text-[10px] text-gray-400 font-medium">
                       <span>{c.ContactPerson || 'No Contact'}</span>
-                      {selectedCustomer?.id === c.id && <span className="text-blue-600 font-bold">Selected</span>}
+                   </div>
+                   
+                   {/* Action Buttons */}
+                   <div className="absolute top-3 right-3 flex gap-1">
+                       <button 
+                         onClick={(e) => openEditModal(c, e)}
+                         className="p-1.5 text-gray-400 hover:text-blue-600 bg-gray-50 hover:bg-blue-100 rounded-lg transition"
+                         title="Edit Customer"
+                       >
+                          <PencilSquareIcon className="w-4 h-4" />
+                       </button>
+                       <button 
+                         onClick={(e) => openAddBranchModal(c, e)}
+                         className="p-1.5 text-gray-400 hover:text-green-600 bg-gray-50 hover:bg-green-100 rounded-lg transition"
+                         title="Add Branch"
+                       >
+                          <PlusIcon className="w-4 h-4" />
+                       </button>
+                       <button 
+                         onClick={(e) => handleDeleteCustomer(c.id, e)}
+                         className="p-1.5 text-gray-400 hover:text-red-600 bg-gray-50 hover:bg-red-100 rounded-lg transition"
+                         title="Delete Customer"
+                       >
+                          <TrashIcon className="w-4 h-4" />
+                       </button>
                    </div>
                 </div>
               ))}
@@ -167,11 +341,16 @@ export default function CustomerPage() {
                 {/* 1. Customer Profile Card */}
                 <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between gap-4">
                    <div>
-                      <h2 className="text-2xl font-black text-gray-800 uppercase leading-none">{selectedCustomer.CompanyName}</h2>
+                      <h2 className="text-2xl font-black text-gray-800 uppercase leading-none flex items-center flex-wrap">
+                          {selectedCustomer.CompanyName}
+                      </h2>
+                      {selectedCustomer.Branch && <span className="text-sm text-blue-500 font-bold mt-1 block">Branch: {selectedCustomer.Branch}</span>}
+                      
                       <div className="flex gap-4 mt-3 text-xs font-bold text-gray-500">
                          <span className="flex items-center gap-1"><UserGroupIcon className="w-4 h-4"/> {selectedCustomer.ContactPerson}</span>
                          <span className="flex items-center gap-1"><ShoppingBagIcon className="w-4 h-4"/> {usualUsage.totalOrders} Orders Lifetime</span>
                       </div>
+                      <div className="mt-2 text-xs text-gray-400 max-w-md whitespace-pre-line">{selectedCustomer.DeliveryAddress}</div>
                    </div>
                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-200 min-w-[200px]">
                       <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Last Order</div>
@@ -183,7 +362,6 @@ export default function CustomerPage() {
 
                 {/* 2. Usage Stats Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                   {/* Delivery Pattern */}
                    <div className="bg-purple-50 p-5 rounded-3xl border border-purple-100">
                       <div className="flex items-center gap-2 mb-3">
                          <CalendarIcon className="w-5 h-5 text-purple-600" />
@@ -202,7 +380,6 @@ export default function CustomerPage() {
                       </div>
                    </div>
 
-                   {/* Preferred Variety (Placeholder for future logic) */}
                    <div className="bg-orange-50 p-5 rounded-3xl border border-orange-100">
                       <div className="flex items-center gap-2 mb-3">
                          <ChartBarIcon className="w-5 h-5 text-orange-600" />
@@ -214,7 +391,7 @@ export default function CustomerPage() {
                    </div>
                 </div>
 
-                {/* 3. Top Items / Usual Usage List */}
+                {/* 3. Top Items List */}
                 <div className="bg-white rounded-3xl shadow-lg border border-gray-100 overflow-hidden">
                    <div className="p-5 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
                       <h3 className="text-sm font-black text-gray-800 uppercase tracking-wide">🏆 Top Products (Usual Usage)</h3>
@@ -270,6 +447,76 @@ export default function CustomerPage() {
         </div>
 
       </div>
+
+      {/* ADD / EDIT CUSTOMER MODAL */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-3xl w-full max-w-md p-6 shadow-2xl animate-in fade-in zoom-in duration-200">
+                <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-xl font-black text-gray-800">{editingId ? 'Edit Customer' : 'Add New Customer'}</h3>
+                    <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-red-500 font-bold text-xl">×</button>
+                </div>
+                
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Company Name</label>
+                        <input 
+                            className="w-full p-3 border border-gray-200 rounded-xl text-sm font-bold uppercase focus:ring-2 focus:ring-green-500 outline-none"
+                            value={formData.CompanyName}
+                            onChange={(e) => setFormData({...formData, CompanyName: e.target.value})}
+                            required
+                            placeholder="e.g. RESTORAN MAJU"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Branch (Optional)</label>
+                        <input 
+                            className="w-full p-3 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-green-500 outline-none uppercase"
+                            value={formData.Branch}
+                            onChange={(e) => setFormData({...formData, Branch: e.target.value})}
+                            placeholder="e.g. HQ or OUTLET 1"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Contact Person</label>
+                        <input 
+                            className="w-full p-3 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-green-500 outline-none"
+                            value={formData.ContactPerson}
+                            onChange={(e) => setFormData({...formData, ContactPerson: e.target.value})}
+                            placeholder="e.g. Mr. Tan"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Contact Number</label>
+                        <input 
+                            className="w-full p-3 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-green-500 outline-none"
+                            value={formData.ContactNumber}
+                            onChange={(e) => setFormData({...formData, ContactNumber: e.target.value})}
+                            placeholder="e.g. 012-3456789"
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Delivery Address</label>
+                        <textarea 
+                            className="w-full p-3 border border-gray-200 rounded-xl text-sm font-medium focus:ring-2 focus:ring-green-500 outline-none uppercase resize-none h-24"
+                            value={formData.DeliveryAddress}
+                            onChange={(e) => setFormData({...formData, DeliveryAddress: e.target.value})}
+                            placeholder="Full address..."
+                        />
+                    </div>
+
+                    <button 
+                        type="submit"
+                        disabled={isSubmitting}
+                        className="w-full py-3 bg-green-600 text-white font-bold rounded-xl shadow-lg hover:bg-green-700 transition active:scale-95 disabled:bg-gray-300 mt-4"
+                    >
+                        {isSubmitting ? 'Saving...' : (editingId ? 'Update Customer' : 'Save Customer')}
+                    </button>
+                </form>
+            </div>
+        </div>
+      )}
+
     </div>
   );
 }

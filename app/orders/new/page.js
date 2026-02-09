@@ -16,7 +16,7 @@ export default function NewOrderPage() {
 
   // Form States
   const [selectedCustomer, setSelectedCustomer] = useState('');
-  const [custDetails, setCustDetailsx] = useState({ 
+  const [custDetails, setCustDetails] = useState({ 
     ContactPerson: '', 
     ContactNumber: '', 
     DeliveryAddress: '' 
@@ -72,7 +72,7 @@ export default function NewOrderPage() {
 
       const { data: custData } = await supabase
         .from('Customers')
-        .select('CompanyName, ContactPerson, DeliveryAddress, ContactNumber')
+        .select('*')
         .order('CompanyName');
 
       const { data: prodData } = await supabase
@@ -89,12 +89,21 @@ export default function NewOrderPage() {
 
   // Handle Customer Selection
   const handleCustomerChange = (e) => {
-    const custName = e.target.value;
-    setSelectedCustomer(custName);
-    const details = customers.find(c => c.CompanyName.toLowerCase() === custName.toLowerCase());
+    const inputValue = e.target.value;
+    setSelectedCustomer(inputValue);
+    
+    // Logic to find customer:
+    // 1. Match exactly "Company Name" (Legacy/No branch)
+    // 2. Match "Company Name - Branch" (New format)
+    const details = customers.find(c => {
+        // Construct the expected display string for this customer
+        const displayString = c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName;
+        
+        return displayString.trim().toLowerCase() === inputValue.trim().toLowerCase();
+    });
     
     if (details) {
-      setCustDetailsx({
+      setCustDetails({
         ContactPerson: details.ContactPerson || '',
         ContactNumber: details.ContactNumber || '',
         DeliveryAddress: details.DeliveryAddress || ''
@@ -103,7 +112,7 @@ export default function NewOrderPage() {
   };
 
   const handleDetailChange = (field, value) => {
-    setCustDetailsx(prev => ({ ...prev, [field]: value }));
+    setCustDetails(prev => ({ ...prev, [field]: value }));
   };
 
   const handleProductInputChange = (code, field, value) => {
@@ -173,10 +182,13 @@ export default function NewOrderPage() {
       "DONumber": doNumber,
       "Delivery Date": deliveryDate,
       "Delivery Mode": deliveryMode,
-      "Customer Name": selectedCustomer,
+      "Customer Name": selectedCustomer, // Saves the full "Name - Branch" string
       "Delivery Address": custDetails.DeliveryAddress,
       "Contact Person": custDetails.ContactPerson,
       "Contact Number": custDetails.ContactNumber,
+      "Customer Name": selectedCustomerValue.toUpperCase(),
+      "Delivery Address": custDetails.DeliveryAddress.toUpperCase(),
+      "Contact Person": custDetails.ContactPerson.toUpperCase(),
       "Product Code": item.ProductCode,
       "Order Items": item.ProductName,
       "Quantity": item.qty,
@@ -265,7 +277,13 @@ export default function NewOrderPage() {
                     placeholder="SEARCH CUSTOMER..."
                   />
                   <datalist id="customer-list">
-                    {customers.map(c => <option key={c.CompanyName} value={c.CompanyName} />)}
+                    {customers.map(c => {
+                        // Construct the full display string
+                        const displayValue = c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName;
+                        return (
+                           <option key={c.id} value={displayValue} />
+                        );
+                    })}
                   </datalist>
                </div>
 
