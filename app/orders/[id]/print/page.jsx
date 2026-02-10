@@ -147,16 +147,41 @@ export default function PrintOrderPage() {
                 </tr>
               </thead>
               <tbody>
-                {pageItems.map((item, index) => (
-                  <tr key={index} className="border-b border-gray-200 h-5">
-                    <td className="py-1 px-1 text-center border-r border-gray-300 text-[10px]">{index + 1 + (pageIndex * ITEMS_PER_PAGE)}</td>
-                    <td className="py-1 px-2 border-r border-gray-300 font-bold truncate text-[11px]">
-                        {item["Order Items"]}
-                    </td>
-                    <td className="py-1 px-1 text-center border-r border-gray-300 font-bold text-[11px]">{item["Quantity"]}</td>
-                    <td className="py-1 px-1 text-center border-r border-gray-300 uppercase text-[10px]">{item["UOM"]}</td>
-                    <td className="py-1 px-1 text-center border-r border-gray-300"></td>
-                    <td className="py-1 px-1 text-right text-[11px]">{item.Price > 0 ? Number(item.Price).toFixed(2) : '-'}</td>
+                {pageItems.map((item, index) => {
+                  // SAFE CHECK: Determine replacement status robustly
+                  const isReplacement = 
+                      item.Replacement === 'YES' || 
+                      item.Replacement === true || 
+                      item.isReplacement === true;
+
+                  return (
+                    <tr key={index} className="border-b border-gray-200 h-5">
+                      <td className="py-1 px-1 text-center border-r border-gray-300 text-[10px]">{index + 1 + (pageIndex * ITEMS_PER_PAGE)}</td>
+                      <td className="py-1 px-2 border-r border-gray-300 font-bold truncate text-[11px] relative">
+                          <div className="flex justify-between items-center w-full">
+                             <span className="truncate pr-1">{item["Order Items"]}</span>
+                             {/* Conditionally render (R) */}
+                             {isReplacement && (
+                                <span className="font-black text-black ml-1 shrink-0">(R)</span>
+                             )}
+                          </div>
+                      </td>
+                      <td className="py-1 px-1 text-center border-r border-gray-300 font-bold text-[11px]">{item["Quantity"]}</td>
+                      <td className="py-1 px-1 text-center border-r border-gray-300 uppercase text-[10px]">{item["UOM"]}</td>
+                      <td className="py-1 px-1 text-center border-r border-gray-300"></td>
+                      <td className="py-1 px-1 text-right text-[11px]">{item.Price > 0 ? Number(item.Price).toFixed(2) : '-'}</td>
+                    </tr>
+                  );
+                })}
+                {/* Filler lines */}
+                {Array.from({ length: Math.max(0, ITEMS_PER_PAGE - pageItems.length) }).map((_, i) => (
+                  <tr key={`fill-${i}`} className="border-b border-gray-100 h-5">
+                    <td className="border-r border-gray-100"></td>
+                    <td className="border-r border-gray-100"></td>
+                    <td className="border-r border-gray-100"></td>
+                    <td className="border-r border-gray-100"></td>
+                    <td className="border-r border-gray-100"></td>
+                    <td></td>
                   </tr>
                 ))}
               </tbody>
@@ -185,7 +210,12 @@ export default function PrintOrderPage() {
               <div className="h-[25mm] relative">
                  <div className="grid grid-cols-3 gap-4 pt-1 absolute bottom-0 w-full">
                     {/* Driver */}
-                    <div className="mt-8 pt-1 text-center">
+                    <div className="mt-8 pt-1 text-center relative">
+                        {orderData.DriverName && (
+                            <div className="absolute bottom-6 left-0 w-full text-center font-bold text-xs uppercase tracking-wider">
+                                {orderData.DriverName}
+                            </div>
+                        )}
                         <div className="border-t border-black w-3/4 mx-auto"></div>
                         <p className="font-bold uppercase text-[10px] mt-1">PEMANDU</p>
                     </div>
