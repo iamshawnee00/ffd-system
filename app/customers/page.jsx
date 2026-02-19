@@ -9,8 +9,7 @@ import {
   PlusIcon,
   PencilSquareIcon,
   TrashIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon
+  MagnifyingGlassIcon 
 } from '@heroicons/react/24/outline';
 
 export default function CustomerPage() {
@@ -18,10 +17,6 @@ export default function CustomerPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // Pagination State
-  const [currentPage, setCurrentPage] = useState(1);
-  const CUSTOMERS_PER_PAGE = 20;
-
   // Selected Customer State for Analysis
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [customerOrders, setCustomerOrders] = useState([]);
@@ -32,7 +27,7 @@ export default function CustomerPage() {
     lastOrderDate: null
   });
 
-  // Modal State
+  // Add/Edit Customer Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState({
@@ -60,27 +55,33 @@ export default function CustomerPage() {
     setLoading(false);
   };
 
-  // 3. Analyze Customer when selected (FIXED LOGIC)
+  // 3. Analyze Customer when selected
   const handleSelectCustomer = async (customer) => {
     setSelectedCustomer(customer);
     
-    // Use the base Company Name for lookup to catch ALL variations (legacy & branch-specific)
-    // "65 ONDO SDN BHD%" will match "65 ONDO SDN BHD" AND "65 ONDO SDN BHD - KLANG"
-    const searchString = `${customer.CompanyName}%`;
+    // Construct search string to find orders for this specific branch
+    // If branch exists, we look for "Company - Branch"
+    // If no branch, we look for "Company"
+    // We use 'ilike' to be case-insensitive
+    const targetName = customer.Branch 
+        ? `${customer.CompanyName} - ${customer.Branch}` 
+        : customer.CompanyName;
 
-    const { data: orders } = await supabase
+    // Fetch orders. We search for exact match of the constructed name OR 
+    // simply by company name if we want to show all history (optional).
+    // Here we try to be specific to the branch first.
+    let query = supabase
       .from('Orders')
       .select('*')
-      .ilike('Customer Name', searchString) 
+      .ilike('Customer Name', targetName) 
       .order('Delivery Date', { ascending: false });
 
+    // Fallback/Alternative: If you want to see ALL orders for the company regardless of branch
+    // query = supabase.from('Orders').select('*').ilike('Customer Name', `${customer.CompanyName}%`).order...
+
+    const { data: orders } = await query;
+
     if (orders) {
-      // Optional: If you strictly want ONLY this branch's data, you can filter in JS
-      // But usually seeing the full history is safer to avoid "missing data"
-      // const filteredOrders = customer.Branch 
-      //    ? orders.filter(o => o["Customer Name"].includes(customer.Branch))
-      //    : orders;
-      
       setCustomerOrders(orders);
       analyzeUsage(orders);
     }
@@ -121,12 +122,9 @@ export default function CustomerPage() {
       .slice(0, 10); 
 
     const total = orders.length;
-    
-    // Find highest frequency day to normalize pattern visual
-    const maxFreq = Math.max(...Object.values(dayFrequency));
-    // Consider a day "usual" if it has at least 30% of the max frequency volume
+    // Find typical delivery days (days with > 15% of orders)
     const typicalDays = Object.entries(dayFrequency)
-      .filter(([_, count]) => count > (maxFreq * 0.3) && count > 1) 
+      .filter(([_, count]) => (count / total) > 0.15)
       .map(([day]) => day);
 
     setUsualUsage({
@@ -137,7 +135,7 @@ export default function CustomerPage() {
     });
   };
 
-  // 5. Handle Form Submit
+  // 5. Handle Form Submit (Add or Edit)
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSubmitting(true);
@@ -147,9 +145,6 @@ export default function CustomerPage() {
         setIsSubmitting(false);
         return;
     }
-    
-    // Logic for duplicate address check skipped for brevity but should remain if needed
-    // Assuming simple save for now based on prompt
 
     const payload = {
         CompanyName: formData.CompanyName,
@@ -174,14 +169,19 @@ export default function CustomerPage() {
     }
 
     if (error) {
-        alert("Error saving: " + error.message);
+        // If unique constraint error (on address or name if not removed)
+        if (error.code === '23505') {
+             alert("Error: Duplicate entry. Please check if this Address is already registered.");
+        } else {
+             alert("Error saving: " + error.message);
+        }
     } else {
         alert(editingId ? "Customer updated!" : "Customer added!");
         setIsModalOpen(false);
         setFormData({ CompanyName: '', Branch: '', ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
         setEditingId(null);
         fetchCustomers();
-        // Refresh selected customer if we edited it
+        // Refresh selected customer logic
         if (selectedCustomer && editingId === selectedCustomer.id) {
              const updated = { ...selectedCustomer, ...payload };
              handleSelectCustomer(updated);
@@ -204,7 +204,6 @@ export default function CustomerPage() {
       }
   };
 
-  // Modal Openers
   const openAddModal = () => {
       setEditingId(null);
       setFormData({ CompanyName: '', Branch: '', ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
@@ -237,29 +236,11 @@ export default function CustomerPage() {
       setIsModalOpen(true);
   };
 
-  // Filter & Pagination Logic
   const filteredCustomers = customers.filter(c => {
     const term = searchTerm.toLowerCase();
     const combined = `${c.CompanyName} ${c.Branch || ''} ${c.ContactPerson || ''}`.toLowerCase();
     return combined.includes(term);
   });
-
-  const totalPages = Math.ceil(filteredCustomers.length / CUSTOMERS_PER_PAGE);
-  const paginatedCustomers = filteredCustomers.slice(
-      (currentPage - 1) * CUSTOMERS_PER_PAGE, 
-      currentPage * CUSTOMERS_PER_PAGE
-  );
-
-  const handlePageChange = (newPage) => {
-      if (newPage >= 1 && newPage <= totalPages) {
-          setCurrentPage(newPage);
-      }
-  };
-
-  // Reset page when search changes
-  useEffect(() => {
-      setCurrentPage(1);
-  }, [searchTerm]);
 
   if (loading) return <div className="p-10 text-center font-bold text-gray-400">Loading Customers...</div>;
 
@@ -282,7 +263,7 @@ export default function CustomerPage() {
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 min-h-0">
         
-        {/* LEFT COLUMN: Customer List (Paginated) */}
+        {/* LEFT COLUMN: Customer List - Scrollable */}
         <div className="bg-white p-4 rounded-3xl shadow-xl border border-gray-100 lg:col-span-1 flex flex-col h-full min-h-0">
            <div className="mb-4 relative flex-none">
               <input 
@@ -292,11 +273,11 @@ export default function CustomerPage() {
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
-              <span className="absolute left-3 top-3 text-gray-400">🔍</span>
+              <span className="absolute left-3 top-3 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4"/></span>
            </div>
 
            <div className="flex-1 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
-              {paginatedCustomers.map(c => (
+              {filteredCustomers.map(c => (
                 <div 
                   key={c.id} 
                   onClick={() => handleSelectCustomer(c)}
@@ -322,34 +303,10 @@ export default function CustomerPage() {
                    </div>
                 </div>
               ))}
-              {paginatedCustomers.length === 0 && (
-                  <div className="text-center text-gray-400 text-xs py-10">No customers found.</div>
-              )}
-           </div>
-           
-           {/* Pagination Controls */}
-           <div className="flex justify-between items-center pt-4 border-t border-gray-100 flex-none">
-                <button 
-                    onClick={() => handlePageChange(currentPage - 1)}
-                    disabled={currentPage === 1}
-                    className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                >
-                    <ChevronLeftIcon className="w-5 h-5" />
-                </button>
-                <span className="text-xs font-bold text-gray-500">
-                    Page {currentPage} of {totalPages || 1}
-                </span>
-                <button 
-                    onClick={() => handlePageChange(currentPage + 1)}
-                    disabled={currentPage === totalPages || totalPages === 0}
-                    className="p-2 rounded-lg hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                >
-                    <ChevronRightIcon className="w-5 h-5" />
-                </button>
            </div>
         </div>
 
-        {/* RIGHT COLUMN: Analysis Dashboard */}
+        {/* RIGHT COLUMN: Analysis Dashboard - Scrollable */}
         <div className="lg:col-span-2 h-full overflow-y-auto custom-scrollbar pr-1 min-h-0">
            {selectedCustomer ? (
              <div className="space-y-6 pb-6">
