@@ -4,8 +4,8 @@ import { supabase } from '../../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 
 export default function ClientLoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
+  const [passcode, setPasscode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const router = useRouter();
@@ -15,20 +15,37 @@ export default function ClientLoginPage() {
     setLoading(true);
     setError(null);
 
-    // Clients log in with their actual email and password
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      // Query the Customers table for a match
+      // We look for ANY record with this username/passcode.
+      // If multiple branches share credentials, we just need to validate one to let them in.
+      const { data, error } = await supabase
+        .from('Customers')
+        .select('Username, CompanyName') // Minimal fields for validation
+        .eq('Username', username)
+        .eq('Passcode', passcode)
+        .limit(1);
 
-    if (error) {
-      setError(error.message);
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        // Successful Login
+        // Store session in localStorage for this MVP client portal
+        const sessionData = {
+            username: data[0].Username,
+            companyBaseName: data[0].CompanyName, // This might be "Starbucks" or "Starbucks - KL". We'll handle branch logic in dashboard.
+            timestamp: new Date().getTime()
+        };
+        localStorage.setItem('ffd_client_session', JSON.stringify(sessionData));
+        router.push('/client-portal/dashboard');
+      } else {
+        setError('Invalid Username or Passcode');
+      }
+    } catch (err) {
+      console.error("Login error:", err);
+      setError('An error occurred. Please try again.');
+    } finally {
       setLoading(false);
-    } else {
-      // Check if this user is linked to a customer profile
-      // Assuming you have a 'client_users' table or similar linking auth.uid to Customer ID
-      // For MVP, we'll just redirect to the client dashboard
-      router.push('/client-portal/dashboard');
     }
   };
 
@@ -36,44 +53,46 @@ export default function ClientLoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4 font-sans">
       <div className="bg-white rounded-3xl shadow-xl w-full max-w-md overflow-hidden border border-gray-200">
         
-        <div className="bg-blue-600 p-8 text-center">
-          <h1 className="text-2xl font-black text-white tracking-tight">Client Portal</h1>
-          <p className="text-blue-100 text-xs font-bold uppercase mt-2 opacity-80">Fresher Farm Direct</p>
+        <div className="bg-green-600 p-8 text-center relative overflow-hidden">
+          <div className="relative z-10">
+            <h1 className="text-3xl font-black text-white tracking-tight">Client Portal</h1>
+            <p className="text-green-100 text-xs font-bold uppercase mt-2 opacity-80">Fresher Farm Direct</p>
+          </div>
         </div>
 
-        <div className="p-8">
-          <div className="mb-6 text-center">
-            <h2 className="text-lg font-bold text-gray-800">Welcome Back</h2>
-            <p className="text-gray-400 text-xs">Please sign in to place your orders.</p>
+        <div className="p-8 pt-10">
+          <div className="mb-8 text-center">
+            <h2 className="text-xl font-bold text-gray-800">Welcome Partner</h2>
+            <p className="text-gray-400 text-xs mt-1">Sign in to manage your orders</p>
           </div>
 
           {error && (
-            <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl mb-6 text-xs font-bold text-center">
+            <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl mb-6 text-xs font-bold text-center border border-red-100">
               {error}
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} className="space-y-5">
             <div>
-              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Email Address</label>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5 ml-1">Username</label>
               <input 
-                type="email" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="name@company.com"
+                type="text" 
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500 transition-all placeholder-gray-300"
+                placeholder="e.g. AURO_CAPITAL"
                 required 
               />
             </div>
             
             <div>
-              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Password</label>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5 ml-1">Passcode</label>
               <input 
                 type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="••••••••"
+                value={passcode}
+                onChange={(e) => setPasscode(e.target.value)}
+                className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500 transition-all placeholder-gray-300"
+                placeholder="••••••"
                 required 
               />
             </div>
@@ -81,12 +100,15 @@ export default function ClientLoginPage() {
             <button 
               type="submit" 
               disabled={loading}
-              className={`w-full py-3.5 mt-2 rounded-xl text-white font-bold text-sm shadow-lg transform transition-all 
-                ${loading ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 active:scale-95'}`}
+              className={`w-full py-4 mt-4 rounded-xl text-white font-bold text-base shadow-lg transform transition-all 
+                ${loading ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 active:scale-95 hover:shadow-green-500/30'}`}
             >
-              {loading ? 'Signing In...' : 'Sign In'}
+              {loading ? 'Verifying...' : 'Access Portal'}
             </button>
           </form>
+        </div>
+        <div className="bg-gray-50 p-4 text-center border-t border-gray-100">
+             <p className="text-[10px] text-gray-400 font-bold">© 2026 Fresher Farm Direct</p>
         </div>
       </div>
     </div>

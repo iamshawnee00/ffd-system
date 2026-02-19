@@ -2,220 +2,182 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
-import { ShoppingBagIcon, ArrowRightOnRectangleIcon, PlusIcon, MinusIcon } from '@heroicons/react/24/outline';
+import { 
+  ShoppingBagIcon, 
+  ClipboardDocumentListIcon, 
+  TruckIcon, 
+  ChartBarIcon, 
+  ArrowRightOnRectangleIcon,
+  BuildingStorefrontIcon
+} from '@heroicons/react/24/outline';
 
 export default function ClientDashboard() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [products, setProducts] = useState([]);
-  const [cart, setCart] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [clientInfo, setClientInfo] = useState(null);
-  const [deliveryDate, setDeliveryDate] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [clientSession, setClientSession] = useState(null);
+  const [branches, setBranches] = useState([]);
+  const [selectedBranch, setSelectedBranch] = useState(null);
 
-  // 1. Initialize & Fetch Data
   useEffect(() => {
-    async function init() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.push('/client-portal/login');
-        return;
-      }
-
-      // In a real app, you'd fetch the linked Customer Profile here using session.user.id
-      // For this MVP, we will simulate or look up by email match if you have that set up
-      // Or just let them "select" their profile once (insecure for prod but okay for MVP demo)
-      // Ideally: select * from ClientUsers where auth_id = session.user.id
-      
-      // Fetch Products
-      const { data: prodData } = await supabase
-        .from('ProductMaster')
-        .select('*')
-        .order('ProductName');
-        
-      setProducts(prodData || []);
-
-      // Default Delivery Date: Tomorrow
-      const tomorrow = new Date();
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      setDeliveryDate(tomorrow.toISOString().split('T')[0]);
-
-      setLoading(false);
+    // 1. Check Session
+    const sessionStr = localStorage.getItem('ffd_client_session');
+    if (!sessionStr) {
+      router.push('/client-portal/login');
+      return;
     }
-    init();
+    const session = JSON.parse(sessionStr);
+    setClientSession(session);
+
+    // 2. Fetch Branches associated with this Username
+    async function fetchBranches() {
+        const { data, error } = await supabase
+            .from('Customers')
+            .select('*')
+            .eq('Username', session.username);
+        
+        if (data) {
+            setBranches(data);
+            // Auto-select if only one branch
+            if (data.length === 1) {
+                setSelectedBranch(data[0]);
+                localStorage.setItem('ffd_selected_branch_id', data[0].id);
+            } else {
+                // Try to restore previous selection
+                const savedBranchId = localStorage.getItem('ffd_selected_branch_id');
+                if (savedBranchId) {
+                    const found = data.find(b => b.id === parseInt(savedBranchId));
+                    if (found) setSelectedBranch(found);
+                }
+            }
+        }
+        setLoading(false);
+    }
+    fetchBranches();
   }, [router]);
 
-  // 2. Cart Logic
-  const updateCart = (product, delta) => {
-      setCart(prev => {
-          const existing = prev.find(item => item.ProductCode === product.ProductCode);
-          if (existing) {
-              const newQty = existing.qty + delta;
-              if (newQty <= 0) return prev.filter(item => item.ProductCode !== product.ProductCode);
-              return prev.map(item => item.ProductCode === product.ProductCode ? { ...item, qty: newQty } : item);
-          } else {
-              if (delta > 0) {
-                  return [...prev, { ...product, qty: 1, uom: product.BaseUOM }];
-              }
-              return prev;
-          }
-      });
+  const handleBranchSelect = (branch) => {
+      setSelectedBranch(branch);
+      localStorage.setItem('ffd_selected_branch_id', branch.id);
   };
 
-  const getItemQty = (code) => {
-      return cart.find(i => i.ProductCode === code)?.qty || 0;
+  const handleLogout = () => {
+      localStorage.removeItem('ffd_client_session');
+      localStorage.removeItem('ffd_selected_branch_id');
+      router.push('/client-portal/login');
   };
 
-  // 3. Submit Order
-  const handleSubmitOrder = async () => {
-      if (cart.length === 0) return alert("Your cart is empty.");
-      if (!deliveryDate) return alert("Please select a delivery date.");
-      
-      // HARDCODED CLIENT FOR DEMO - You need to link this to Auth
-      const clientName = "MY CLIENT ACCOUNT"; 
-      
-      setIsSubmitting(true);
-      const dateStr = deliveryDate.replaceAll('-', '').slice(2);
-      const doNumber = `ORD-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
-
-      const orderRows = cart.map(item => ({
-        "Timestamp": new Date(),
-        "Status": "Pending",
-        "DONumber": doNumber,
-        "Delivery Date": deliveryDate,
-        "Customer Name": clientName, // This should come from their profile
-        "Delivery Address": "Default Client Address", // Should come from profile
-        "Product Code": item.ProductCode,
-        "Order Items": item.ProductName,
-        "Quantity": item.qty,
-        "UOM": item.uom,
-        "Price": 0, // Price TBD by Admin or fetched if public
-        "LoggedBy": "CLIENT_PORTAL"
-      }));
-
-      const { error } = await supabase.from('Orders').insert(orderRows);
-
-      if (error) {
-          alert("Failed to place order: " + error.message);
-      } else {
-          alert("Order placed successfully! We will process it shortly.");
-          setCart([]);
-      }
-      setIsSubmitting(false);
+  const navigateTo = (path) => {
+      if (!selectedBranch) return alert("Please select a branch first.");
+      router.push(`/client-portal/${path}`);
   };
 
-  const filteredProducts = products.filter(p => 
-      p.ProductName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  if (loading) return <div className="p-10 text-center font-bold text-gray-500">Loading Portal...</div>;
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-gray-400 font-bold bg-gray-50">Loading Portal...</div>;
 
   return (
-    <div className="bg-gray-50 min-h-screen pb-20 md:pb-0">
-        
-        {/* Header */}
-        <header className="bg-white border-b border-gray-200 sticky top-0 z-10 px-4 py-4 flex justify-between items-center shadow-sm">
-            <div>
-                <h1 className="text-lg font-black text-gray-800 tracking-tight">Order Portal</h1>
-                <p className="text-[10px] text-gray-400 font-bold uppercase">Place your orders below</p>
-            </div>
-            <button 
-                onClick={async () => { await supabase.auth.signOut(); router.push('/client-portal/login'); }}
-                className="text-gray-400 hover:text-red-500 p-2"
-            >
-                <ArrowRightOnRectangleIcon className="w-6 h-6" />
-            </button>
-        </header>
+    <div className="min-h-screen bg-gray-50 pb-20 font-sans">
+       {/* Header */}
+       <header className="bg-white shadow-sm sticky top-0 z-20">
+           <div className="max-w-md mx-auto px-6 py-4 flex justify-between items-center">
+               <div>
+                   <h1 className="text-xl font-black text-gray-800 tracking-tight">Client Portal</h1>
+                   <p className="text-[10px] font-bold text-gray-400 uppercase">Logged in as {clientSession?.username}</p>
+               </div>
+               <button onClick={handleLogout} className="text-gray-400 hover:text-red-500 p-2 transition-colors">
+                   <ArrowRightOnRectangleIcon className="w-6 h-6" />
+               </button>
+           </div>
+       </header>
 
-        <div className="max-w-3xl mx-auto p-4 md:p-8">
-            
-            {/* Delivery Info */}
-            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 mb-6">
-                <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2">Requested Delivery Date</label>
-                <input 
-                    type="date" 
-                    className="w-full p-3 border border-gray-200 rounded-xl font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={deliveryDate}
-                    onChange={(e) => setDeliveryDate(e.target.value)}
-                />
-            </div>
+       <div className="max-w-md mx-auto p-6 space-y-6">
+           
+           {/* Branch Selector */}
+           <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 transition-all">
+               <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                   <BuildingStorefrontIcon className="w-4 h-4" /> Select Active Branch
+               </h2>
+               
+               {branches.length > 0 ? (
+                   <div className="space-y-3">
+                       {branches.map(branch => (
+                           <div 
+                               key={branch.id} 
+                               onClick={() => handleBranchSelect(branch)}
+                               className={`p-4 rounded-2xl border-2 cursor-pointer transition-all duration-200 ${
+                                   selectedBranch?.id === branch.id 
+                                   ? 'border-green-500 bg-green-50 shadow-md ring-1 ring-green-200' 
+                                   : 'border-gray-100 hover:border-green-200 hover:bg-gray-50'
+                               }`}
+                           >
+                               <div className="font-black text-gray-800 text-sm uppercase">
+                                   {branch.Branch || 'Main Branch'}
+                               </div>
+                               <div className="text-[10px] font-medium text-gray-500 mt-1 truncate">
+                                   {branch.DeliveryAddress}
+                               </div>
+                           </div>
+                       ))}
+                   </div>
+               ) : (
+                   <div className="text-center text-gray-400 text-sm italic py-4 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                       No branches found for this account.
+                   </div>
+               )}
+           </div>
 
-            {/* Search */}
-            <div className="mb-6 relative">
-                 <input 
-                    type="text" 
-                    placeholder="Search for fruits or vegetables..." 
-                    className="w-full pl-10 p-4 border border-gray-200 rounded-2xl shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all font-medium"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                 />
-                 <span className="absolute left-4 top-4 text-gray-400">🔍</span>
-            </div>
+           {/* Main Menu Grid */}
+           <div className={`grid grid-cols-2 gap-4 transition-all duration-300 ${selectedBranch ? 'opacity-100 translate-y-0' : 'opacity-50 pointer-events-none translate-y-4'}`}>
+               
+               <MenuCard 
+                  title="New Order" 
+                  icon={ShoppingBagIcon} 
+                  color="green" 
+                  onClick={() => navigateTo('purchase')}
+               />
+               
+               <MenuCard 
+                  title="My Orders" 
+                  icon={ClipboardDocumentListIcon} 
+                  color="blue" 
+                  onClick={() => navigateTo('orders')}
+               />
 
-            {/* Product List */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pb-24">
-                {filteredProducts.map(p => {
-                    const qty = getItemQty(p.ProductCode);
-                    return (
-                        <div key={p.ProductCode} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex justify-between items-center group">
-                            <div className="flex-1 pr-4">
-                                <h3 className="font-bold text-gray-800 text-sm leading-tight">{p.ProductName}</h3>
-                                <p className="text-[10px] text-gray-400 mt-1 uppercase font-bold">{p.BaseUOM}</p>
-                            </div>
-                            
-                            <div className="flex items-center bg-gray-50 rounded-xl p-1">
-                                {qty > 0 && (
-                                    <>
-                                        <button 
-                                            onClick={() => updateCart(p, -1)}
-                                            className="w-8 h-8 flex items-center justify-center bg-white rounded-lg text-gray-600 shadow-sm active:scale-90 transition"
-                                        >
-                                            <MinusIcon className="w-4 h-4" />
-                                        </button>
-                                        <span className="w-8 text-center font-black text-sm text-gray-800">{qty}</span>
-                                    </>
-                                )}
-                                <button 
-                                    onClick={() => updateCart(p, 1)}
-                                    className={`w-8 h-8 flex items-center justify-center rounded-lg shadow-sm active:scale-90 transition ${qty > 0 ? 'bg-white text-blue-600' : 'bg-blue-600 text-white'}`}
-                                >
-                                    <PlusIcon className="w-4 h-4" />
-                                </button>
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
+               <MenuCard 
+                  title="Delivery" 
+                  icon={TruckIcon} 
+                  color="orange" 
+                  onClick={() => navigateTo('delivery')}
+               />
 
-            {/* Bottom Cart Bar */}
-            {cart.length > 0 && (
-                <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-20">
-                    <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
-                        <div className="flex items-center gap-3">
-                            <div className="bg-blue-100 p-3 rounded-full text-blue-600 relative">
-                                <ShoppingBagIcon className="w-6 h-6" />
-                                <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border-2 border-white">
-                                    {cart.length}
-                                </span>
-                            </div>
-                            <div className="hidden sm:block">
-                                <p className="text-xs font-bold text-gray-400 uppercase">Total Items</p>
-                                <p className="font-black text-gray-800 text-lg">{cart.reduce((a,b)=>a+b.qty,0)} units</p>
-                            </div>
-                        </div>
-                        <button 
-                            onClick={handleSubmitOrder}
-                            disabled={isSubmitting}
-                            className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-6 rounded-xl shadow-lg transition active:scale-95 disabled:bg-gray-300"
-                        >
-                            {isSubmitting ? 'Sending Order...' : 'Confirm Order'}
-                        </button>
-                    </div>
-                </div>
-            )}
+               <MenuCard 
+                  title="Analysis" 
+                  icon={ChartBarIcon} 
+                  color="purple" 
+                  onClick={() => navigateTo('analysis')}
+               />
 
-        </div>
+           </div>
+       </div>
     </div>
   );
+}
+
+function MenuCard({ title, icon: Icon, color, onClick }) {
+    const colors = {
+        green: 'bg-green-50 text-green-600',
+        blue: 'bg-blue-50 text-blue-600',
+        orange: 'bg-orange-50 text-orange-600',
+        purple: 'bg-purple-50 text-purple-600'
+    };
+
+    return (
+        <div 
+            onClick={onClick}
+            className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center gap-3 cursor-pointer hover:shadow-lg hover:-translate-y-1 transition-all duration-200 h-40 group active:scale-95"
+        >
+            <div className={`p-4 rounded-2xl ${colors[color]} group-hover:scale-110 transition-transform duration-200`}>
+                <Icon className="w-8 h-8" />
+            </div>
+            <span className="font-black text-gray-700 text-xs uppercase tracking-wide group-hover:text-gray-900">{title}</span>
+        </div>
+    );
 }
