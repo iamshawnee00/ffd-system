@@ -20,10 +20,15 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
 
-    const selectedCustomer = customers.find(c => c.id.toString() === selectedCustomerId);
-    const displayName = selectedCustomer 
-        ? (selectedCustomer.Branch ? `${selectedCustomer.CompanyName} - ${selectedCustomer.Branch}` : selectedCustomer.CompanyName)
-        : '-- SELECT CUSTOMER --';
+    let displayName = '-- SELECT CUSTOMER --';
+    if (selectedCustomerId === 'NEW') {
+        displayName = '➕ NEW CUSTOMER (GUEST)';
+    } else if (selectedCustomerId) {
+        const selectedCustomer = customers.find(c => c.id.toString() === selectedCustomerId);
+        if (selectedCustomer) {
+            displayName = selectedCustomer.Branch ? `${selectedCustomer.CompanyName} - ${selectedCustomer.Branch}` : selectedCustomer.CompanyName;
+        }
+    }
 
     const filteredCustomers = customers.filter(c => {
         if (!search) return true;
@@ -36,7 +41,7 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
         <div className="relative w-full">
             <div 
                 onClick={() => setIsOpen(!isOpen)}
-                className={`w-full border p-3 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer flex justify-between items-center ${!selectedCustomerId ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-200 bg-gray-50 text-gray-800'}`}
+                className={`w-full border p-3 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer flex justify-between items-center ${!selectedCustomerId ? 'border-red-300 bg-red-50 text-red-700' : (selectedCustomerId === 'NEW' ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-gray-200 bg-gray-50 text-gray-800')}`}
             >
                 <span className="truncate pr-5">{displayName}</span>
                 <span className="text-gray-400 text-xs shrink-0 ml-1">▼</span>
@@ -58,6 +63,16 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
                             />
                         </div>
                         <div className="overflow-y-auto flex-1 custom-scrollbar">
+                            <div 
+                                className="p-3 hover:bg-blue-50 cursor-pointer text-sm font-bold text-blue-600 border-b border-gray-50"
+                                onClick={() => {
+                                    onSelect('NEW');
+                                    setIsOpen(false);
+                                    setSearch('');
+                                }}
+                            >
+                                ➕ ADD NEW CUSTOMER (GUEST)
+                            </div>
                             <div 
                                 className="p-3 hover:bg-red-50 cursor-pointer text-sm font-bold text-red-500 border-b border-gray-50"
                                 onClick={() => {
@@ -102,8 +117,10 @@ function SearchableProductSelect({ item, products, onUpdate }) {
 
     const filteredProducts = products.filter(p => {
         if (!search) return true;
-        const term = search.toLowerCase();
-        return p.ProductName.toLowerCase().includes(term) || p.ProductCode.toLowerCase().includes(term);
+        // Split search into words and ensure ALL words are present in the product name/code
+        const terms = search.toLowerCase().split(' ').filter(t => t);
+        const searchStr = `${p.ProductName} ${p.ProductCode}`.toLowerCase();
+        return terms.every(term => searchStr.includes(term));
     });
 
     return (
@@ -189,6 +206,11 @@ export default function QuickPastePage() {
   const [deliveryMode, setDeliveryMode] = useState('Driver');
   const [parsedOrderItems, setParsedOrderItems] = useState([]);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  
+  // New Customer State
+  const [newCustName, setNewCustName] = useState('');
+  const [newCustPhone, setNewCustPhone] = useState('');
+  const [newCustAddress, setNewCustAddress] = useState('');
 
   // Price Paste State
   const [priceRawText, setPriceRawText] = useState('');
@@ -293,7 +315,7 @@ export default function QuickPastePage() {
       return highestScore >= 30 ? bestMatch : null;
   };
 
-  // Token-based Product Matching
+  // Token-based Product Matching (STRICTER)
   const findBestProductMatch = (rawName, historyCodesSet = new Set()) => {
       const nameForMatching = rawName.replace(/\(.*?\)/g, '').trim().toLowerCase();
       if (!nameForMatching) return null;
@@ -301,7 +323,7 @@ export default function QuickPastePage() {
       let bestMatch = null;
       let highestScore = 0;
 
-      const rawWords = nameForMatching.split(/[\s-]+/).filter(w => w.length > 0);
+      const rawWords = nameForMatching.split(/[\s\-]+/).filter(w => w.length > 0);
       const totalRawLength = rawWords.join('').length;
 
       products.forEach(p => {
@@ -312,24 +334,30 @@ export default function QuickPastePage() {
               score = 100;
           } else {
               let matchedWordsLength = 0;
-              const prodWords = lowerProd.split(/[\s-]+/);
+              const prodWords = lowerProd.split(/[\s\-]+/);
+              let exactWordMatches = 0;
 
               rawWords.forEach(rw => {
                   if (prodWords.includes(rw)) {
                       matchedWordsLength += rw.length;
+                      exactWordMatches++;
                   } 
                   else if (rw.length > 2 && prodWords.some(pw => pw.includes(rw) || rw.includes(pw))) {
-                      matchedWordsLength += rw.length * 0.8;
+                      matchedWordsLength += rw.length * 0.7; // penalize partial match slightly
                   }
               });
 
               if (totalRawLength > 0) {
                   score = (matchedWordsLength / totalRawLength) * 60;
+                  // Bonus if a large percentage of raw words found exact matches
+                  if (exactWordMatches > 0) {
+                      score += (exactWordMatches / rawWords.length) * 20;
+                  }
               }
           }
 
           // Order History Boost
-          if (score >= 20 && historyCodesSet.has(p.ProductCode)) {
+          if (score >= 35 && historyCodesSet.has(p.ProductCode)) {
               score += 40; 
           }
 
@@ -339,7 +367,8 @@ export default function QuickPastePage() {
           }
       });
 
-      return highestScore >= 25 ? bestMatch : null;
+      // Increased threshold to 45 to reduce false positives
+      return highestScore >= 45 ? bestMatch : null;
   };
 
   // ==========================================
@@ -354,6 +383,8 @@ export default function QuickPastePage() {
       let startIndex = 0;
       let matchedCust = null;
       let customerHistoryCodes = new Set();
+      let isNewCust = false;
+      let tempNewName = '';
 
       const firstLine = lines[0];
       matchedCust = findBestCustomerMatch(firstLine, customers);
@@ -374,22 +405,38 @@ export default function QuickPastePage() {
               hist.forEach(h => customerHistoryCodes.add(h["Product Code"]));
           }
       } else {
-          setSelectedCustomer(''); 
-          if (/^[-*•\s]*\d+/.test(firstLine)) {
-              startIndex = 0; 
-          } else {
+          // Unmatched, assume new customer
+          if (!/^[-*•\s]*\d+/.test(firstLine)) {
+              setSelectedCustomer('NEW');
+              setNewCustName(firstLine);
+              tempNewName = firstLine;
+              isNewCust = true;
               startIndex = 1; 
+          } else {
+              setSelectedCustomer(''); 
+              startIndex = 0; 
           }
       }
 
       const uomPattern = KNOWN_UOMS.join('|');
-      const qtyUomRegex = new RegExp(`(?:^|\\s|-|x|X)\\s*([\\d.]+)\\s*(${uomPattern})\\b(.*)$`, 'i');
+      
+      // PATTERN 1: Looks for "... [Qty] [UOM] [Optional Price]" at the very end of the string
+      // e.g., "australia white peach 8's - 1 box 68" -> Qty: 1, UOM: BOX, Price: 68
+      const endQtyUomPriceRegex = new RegExp(`(?:-|\\s|x|X)+([\\d.]+)\\s*(${uomPattern})(?:\\s*(?:-)?\\s*(?:RM|rm)?\\s*([\\d.]+))?\\s*$`, 'i');
+      
+      // PATTERN 2: Looks for "[Qty] [UOM] ..." at the start of the string
+      // e.g., "2CTN MANGO"
+      const startQtyUomRegex = new RegExp(`^([\\d.]+)\\s*(${uomPattern})\\b(.*)$`, 'i');
+
+      let extractedPhone = '';
+      let extractedAddress = '';
+      let checkingHeaders = true;
 
       const newItems = [];
       for (let i = startIndex; i < lines.length; i++) {
           const line = lines[i];
           
-          // Date Extraction
+          // --- DATE EXTRACTION ---
           const dateMatch = line.match(/^\s*(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?\s*$/);
           if (dateMatch) {
               let [_, day, month, year] = dateMatch;
@@ -402,7 +449,35 @@ export default function QuickPastePage() {
                   continue; 
               }
           }
+
+          // --- HEADER METADATA EXTRACTION (Phone & Address) ---
+          if (checkingHeaders) {
+              // 1. Phone extraction
+              const phoneMatch = line.match(/^(?:\+?6?0)[1-9][0-9\-\s]{6,12}$/);
+              if (phoneMatch && !extractedPhone) {
+                  extractedPhone = line.trim();
+                  continue;
+              }
+
+              // 2. Address extraction
+              if (!extractedAddress) {
+                  const addressKeywords = ['jalan', 'jln', 'taman', 'tmn', 'lorong', 'bukit', 'kampung', 'kpg', 'kuala lumpur', 'selangor', 'kondominium', 'condo', 'apartment', 'apt', 'no.', 'no ', 'batu'];
+                  const hasAddressKeyword = addressKeywords.some(kw => line.toLowerCase().includes(kw));
+                  const hasQtyUom = line.match(qtyUomRegex);
+                  const startsWithNumber = line.match(/^[-*•\s]*\d+\.?\s+/);
+
+                  // If it contains an address keyword OR (it's a new customer and doesn't look like a product)
+                  if (hasAddressKeyword || (isNewCust && !hasQtyUom && !startsWithNumber && line.length > 5)) {
+                      extractedAddress = line.trim();
+                      continue;
+                  }
+              }
+
+              // If line didn't match Date, Phone, or Address, it's likely the first item. Stop checking headers.
+              checkingHeaders = false;
+          }
           
+          // --- PRODUCT ITEM EXTRACTION ---
           let cleanLine = line.replace(/^[-*•\s]+|^\d+\.\s+/, '').trim();
           let bracketNote = '';
           const bracketMatch = cleanLine.match(/\((.*?)\)$/);
@@ -416,43 +491,48 @@ export default function QuickPastePage() {
           let price = 0;
           let rawName = cleanLine;
 
-          const match = rawName.match(qtyUomRegex);
-          if (match) {
-              qty = parseFloat(match[1]);
-              uom = match[2].toUpperCase();
-              
-              const beforeText = rawName.substring(0, match.index).trim();
-              const afterText = match[3].trim();
-              
-              if (beforeText === '') {
-                  rawName = afterText;
-              } else {
-                  if (afterText) {
-                      const priceMatch = afterText.match(/^(?:(?:RM|rm)\s*([\d.]+)|(\d+\.\d{1,2}))$/i);
-                      if (priceMatch) {
-                          price = parseFloat(priceMatch[1] || priceMatch[2]);
-                      } else {
-                          rawName = beforeText + ' ' + afterText;
-                      }
-                  } else {
-                      rawName = beforeText;
-                  }
+          // Attempt Match 1: Extract Qty, UOM, and Price from the END of the string
+          const endMatch = rawName.match(endQtyUomPriceRegex);
+          
+          if (endMatch) {
+              qty = parseFloat(endMatch[1]);
+              uom = endMatch[2].toUpperCase();
+              if (endMatch[3]) {
+                  price = parseFloat(endMatch[3]);
               }
+              // Keep whatever was before the Qty/UOM as the product name
+              rawName = rawName.substring(0, endMatch.index).trim();
           } else {
-              const qtyOnlyRegex = /(?:\s|-|x|X)\s*([\d.]+)\s*$/i;
-              const qtyMatch = rawName.match(qtyOnlyRegex);
-              if (qtyMatch) {
-                  qty = parseFloat(qtyMatch[1]);
-                  rawName = rawName.substring(0, qtyMatch.index).trim();
-              }
-          }
+              // Attempt Match 2: Extract Qty and UOM from the START of the string
+              const startMatch = rawName.match(startQtyUomRegex);
+              if (startMatch) {
+                  qty = parseFloat(startMatch[1]);
+                  uom = startMatch[2].toUpperCase();
+                  rawName = startMatch[3].trim();
+                  
+                  // Check for explicit trailing price since Qty/UOM were at the front
+                  const explicitPriceRegex = /\s+(?:(?:RM|rm)\s*([\d.]+)|(\d+\.\d{1,2}))\s*$/i;
+                  const pMatch = rawName.match(explicitPriceRegex);
+                  if (pMatch) {
+                      price = parseFloat(pMatch[1] || pMatch[2]);
+                      rawName = rawName.substring(0, pMatch.index).trim();
+                  }
+              } else {
+                  // Fallback: Just a multiplier at the end without UOM (e.g., "x5")
+                  const qtyOnlyRegex = /(?:\s|-|x|X)\s*([\d.]+)\s*$/i;
+                  const qtyMatch = rawName.match(qtyOnlyRegex);
+                  if (qtyMatch) {
+                      qty = parseFloat(qtyMatch[1]);
+                      rawName = rawName.substring(0, qtyMatch.index).trim();
+                  }
 
-          if (price === 0) {
-              const priceRegex = /\s+(?:(?:RM|rm)\s*([\d.]+)|(\d+\.\d{1,2}))\s*$/i;
-              const pMatch = rawName.match(priceRegex);
-              if (pMatch) {
-                  price = parseFloat(pMatch[1] || pMatch[2]);
-                  rawName = rawName.substring(0, pMatch.index).trim();
+                  // Check for explicit price fallback
+                  const explicitPriceRegex = /\s+(?:(?:RM|rm)\s*([\d.]+)|(\d+\.\d{1,2}))\s*$/i;
+                  const pMatch = rawName.match(explicitPriceRegex);
+                  if (pMatch) {
+                      price = parseFloat(pMatch[1] || pMatch[2]);
+                      rawName = rawName.substring(0, pMatch.index).trim();
+                  }
               }
           }
 
@@ -473,6 +553,8 @@ export default function QuickPastePage() {
           });
       }
 
+      setNewCustPhone(extractedPhone);
+      setNewCustAddress(extractedAddress);
       setParsedOrderItems(newItems);
   };
 
@@ -562,8 +644,26 @@ export default function QuickPastePage() {
       setIsSubmittingOrder(true);
       const validItems = parsedOrderItems.filter(i => i.productCode);
 
-      const cust = customers.find(c => c.id.toString() === selectedCustomer);
-      const customerNameString = cust.Branch ? `${cust.CompanyName} - ${cust.Branch}`.toUpperCase() : cust.CompanyName.toUpperCase();
+      let finalCustomerName = '';
+      let finalContactPerson = '';
+      let finalContactNumber = '';
+      let finalDeliveryAddress = '';
+
+      if (selectedCustomer === 'NEW') {
+          if (!newCustName.trim()) {
+              setIsSubmittingOrder(false);
+              return alert("Please enter the new customer's name.");
+          }
+          finalCustomerName = newCustName.toUpperCase();
+          finalContactNumber = newCustPhone;
+          finalDeliveryAddress = newCustAddress;
+      } else {
+          const cust = customers.find(c => c.id.toString() === selectedCustomer);
+          finalCustomerName = cust.Branch ? `${cust.CompanyName} - ${cust.Branch}`.toUpperCase() : cust.CompanyName.toUpperCase();
+          finalContactPerson = cust.ContactPerson || '';
+          finalContactNumber = cust.ContactNumber || '';
+          finalDeliveryAddress = cust.DeliveryAddress || '';
+      }
 
       const dateStr = deliveryDate.replaceAll('-', '').slice(2);
       const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -576,10 +676,10 @@ export default function QuickPastePage() {
               "DONumber": doNumber,
               "Delivery Date": deliveryDate,
               "Delivery Mode": deliveryMode, 
-              "Customer Name": customerNameString,
-              "Delivery Address": cust.DeliveryAddress,
-              "Contact Person": cust.ContactPerson || '',
-              "Contact Number": cust.ContactNumber || '',
+              "Customer Name": finalCustomerName,
+              "Delivery Address": finalDeliveryAddress,
+              "Contact Person": finalContactPerson,
+              "Contact Number": finalContactNumber,
               "Product Code": item.productCode,
               "Order Items": prod.ProductName,
               "Quantity": item.qty,
@@ -687,13 +787,13 @@ export default function QuickPastePage() {
       {activeTab === 'orders' && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start animate-in fade-in">
           {/* LEFT: Paste Area */}
-          <div className="lg:col-span-4 bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col h-[calc(100vh-180px)]">
+          <div className="lg:col-span-4 bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col min-h-[300px] lg:h-[calc(100vh-180px)]">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 block flex-none">
                   Paste Order Text Here
               </label>
               <textarea 
                   className="w-full flex-1 border border-gray-200 bg-gray-50 rounded-2xl p-4 text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none transition-all placeholder-gray-300"
-                  placeholder={`Example:\nHEYTEA GENTING\n2CTN MANGO GOLD SUSU\n5PCS avocado`}
+                  placeholder={`Example:\nNEW CAFE BISTRO\n012-3456789\n123 Jalan Bukit Bintang, KL\n24/02\n2CTN MANGO GOLD SUSU\n5PCS avocado`}
                   value={orderRawText}
                   onChange={e => setOrderRawText(e.target.value)}
               />
@@ -706,8 +806,8 @@ export default function QuickPastePage() {
           </div>
 
           {/* RIGHT: Validation & Review */}
-          <div className="lg:col-span-8 bg-white p-5 md:p-6 rounded-3xl shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-180px)] relative">
-              <div className="flex flex-col md:flex-row gap-4 mb-6 flex-none">
+          <div className="lg:col-span-8 bg-white p-4 md:p-6 rounded-3xl shadow-xl border border-gray-100 flex flex-col min-h-[500px] lg:h-[calc(100vh-180px)] relative">
+              <div className="flex flex-col lg:flex-row gap-4 mb-4 flex-none">
                   <div className="flex-1">
                       <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Detected Customer</label>
                       <SearchableCustomerSelect 
@@ -716,7 +816,7 @@ export default function QuickPastePage() {
                           onSelect={(id) => setSelectedCustomer(id)}
                       />
                   </div>
-                  <div className="w-full md:w-32">
+                  <div className="w-full lg:w-32">
                       <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Mode</label>
                       <select 
                           className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -728,7 +828,7 @@ export default function QuickPastePage() {
                           <option value="Self Pick-up">Self Pick-up</option>
                       </select>
                   </div>
-                  <div className="w-full md:w-40">
+                  <div className="w-full lg:w-40">
                       <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Delivery Date</label>
                       <input 
                           type="date"
@@ -739,57 +839,84 @@ export default function QuickPastePage() {
                   </div>
               </div>
 
+              {/* NEW CUSTOMER INPUT FIELDS */}
+              {selectedCustomer === 'NEW' && (
+                   <div className="flex flex-col lg:flex-row gap-4 mb-6 flex-none bg-blue-50/50 p-4 rounded-xl border border-blue-100 shadow-sm animate-in fade-in">
+                        <div className="flex-1">
+                            <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1.5">Customer Name *</label>
+                            <input type="text" className="w-full p-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-800" value={newCustName} onChange={e=>setNewCustName(e.target.value)} placeholder="e.g. BISTRO 123" />
+                        </div>
+                        <div className="flex-1">
+                            <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1.5">Phone Number</label>
+                            <input type="text" className="w-full p-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={newCustPhone} onChange={e=>setNewCustPhone(e.target.value)} placeholder="e.g. 012-3456789" />
+                        </div>
+                        <div className="flex-1 lg:flex-[1.5]">
+                            <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1.5">Delivery Address</label>
+                            <input type="text" className="w-full p-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={newCustAddress} onChange={e=>setNewCustAddress(e.target.value)} placeholder="Full address" />
+                        </div>
+                   </div>
+              )}
+
               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3">
                   {parsedOrderItems.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center text-gray-300 border-2 border-dashed border-gray-100 rounded-2xl">
+                      <div className="h-full flex flex-col items-center justify-center text-gray-300 border-2 border-dashed border-gray-100 rounded-2xl min-h-[200px]">
                           <ClipboardDocumentCheckIcon className="w-16 h-16 mb-4 opacity-20" />
                           <p className="font-bold text-sm">Paste text and click Parse</p>
                       </div>
                   ) : (
                       <>
-                        <div className="hidden md:grid grid-cols-12 gap-2 px-2 pb-2 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-wider">
-                            <div className="col-span-3">Original Text</div>
-                            <div className="col-span-3">Matched Product</div>
-                            <div className="col-span-2 text-center">Qty</div>
-                            <div className="col-span-2 text-center">UOM</div>
-                            <div className="col-span-1 text-center">Price</div>
-                            <div className="col-span-1 text-right"></div>
-                        </div>
+                          {/* DESKTOP HEADER */}
+                          <div className="hidden lg:flex gap-2 px-3 pb-2 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-wider">
+                              <div className="w-1/5">Original Text</div>
+                              <div className="flex-1">Matched Product</div>
+                              <div className="w-16 text-center">Qty</div>
+                              <div className="w-20 text-center">UOM</div>
+                              <div className="w-20 text-center">Price</div>
+                              <div className="w-8 text-right"></div>
+                          </div>
 
-                        {parsedOrderItems.map((item) => (
-                            <div key={item.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center bg-white p-3 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 transition">
-                                <div className="md:col-span-3 text-[10px] text-gray-500 italic truncate" title={item.rawLine}>
-                                    "{item.rawLine}"
-                                </div>
-                                <div className="md:col-span-3">
-                                    <SearchableProductSelect 
-                                        item={item} 
-                                        products={products} 
-                                        onUpdate={(code) => updateOrderItem(item.id, 'productCode', code)} 
-                                    />
-                                </div>
-                                <div className="md:col-span-2 flex items-center gap-1">
-                                    <span className="md:hidden text-[9px] font-bold text-gray-400">QTY:</span>
-                                    <input type="number" step="0.1" className="w-full p-2.5 border rounded-lg text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.qty} onChange={e => updateOrderItem(item.id, 'qty', e.target.value)} />
-                                </div>
-                                <div className="md:col-span-2 flex items-center gap-1">
-                                    <span className="md:hidden text-[9px] font-bold text-gray-400">UOM:</span>
-                                    <select className="w-full p-2.5 border rounded-lg text-xs font-bold uppercase focus:ring-2 focus:ring-blue-500" value={item.uom} onChange={e => updateOrderItem(item.id, 'uom', e.target.value)}>
-                                        {KNOWN_UOMS.map(u => <option key={u} value={u}>{u}</option>)}
-                                    </select>
-                                </div>
-                                <div className="md:col-span-1 flex items-center gap-1">
-                                    <span className="md:hidden text-[9px] font-bold text-gray-400">PRICE:</span>
-                                    <input type="number" step="0.01" className="w-full p-2.5 border rounded-lg text-[10px] md:text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.price} onChange={e => updateOrderItem(item.id, 'price', e.target.value)} />
-                                </div>
-                                <div className="md:col-span-1 text-right">
-                                    <button onClick={() => removeOrderItem(item.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><TrashIcon className="w-5 h-5 inline" /></button>
-                                </div>
-                            </div>
-                        ))}
-                        <button onClick={addBlankOrderItem} className="w-full py-3 border-2 border-dashed border-gray-200 text-gray-400 font-bold rounded-xl hover:border-blue-400 hover:text-blue-500 transition flex items-center justify-center gap-2 text-xs">
-                            <PlusIcon className="w-4 h-4" /> Add Item Manually
-                        </button>
+                          {/* ITEMS LIST */}
+                          {parsedOrderItems.map((item) => (
+                              <div key={item.id} className="flex flex-col lg:flex-row gap-3 lg:gap-2 items-start lg:items-center bg-white p-3 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 transition">
+                                  {/* Original Text */}
+                                  <div className="w-full lg:w-1/5 text-[10px] text-gray-500 italic truncate" title={item.rawLine}>
+                                      "{item.rawLine}"
+                                  </div>
+                                  
+                                  {/* Product Select (Flex-1 makes it stretch) */}
+                                  <div className="w-full lg:flex-1">
+                                      <SearchableProductSelect 
+                                          item={item} 
+                                          products={products} 
+                                          onUpdate={(code) => updateOrderItem(item.id, 'productCode', code)} 
+                                      />
+                                  </div>
+
+                                  {/* Qty, UOM, Price, Delete (Side-by-side on mobile) */}
+                                  <div className="flex w-full lg:w-auto gap-2 items-end lg:items-center mt-1 lg:mt-0">
+                                      <div className="flex-1 lg:w-16">
+                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">QTY</span>
+                                          <input type="number" step="0.1" className="w-full p-2.5 border border-gray-200 rounded-lg text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.qty} onChange={e => updateOrderItem(item.id, 'qty', e.target.value)} />
+                                      </div>
+                                      <div className="flex-[1.5] lg:w-20">
+                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">UOM</span>
+                                          <select className="w-full p-2.5 border border-gray-200 rounded-lg text-xs font-bold uppercase focus:ring-2 focus:ring-blue-500" value={item.uom} onChange={e => updateOrderItem(item.id, 'uom', e.target.value)}>
+                                              {KNOWN_UOMS.map(u => <option key={u} value={u}>{u}</option>)}
+                                          </select>
+                                      </div>
+                                      <div className="flex-1 lg:w-20">
+                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">PRICE</span>
+                                          <input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-lg text-[10px] md:text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.price} onChange={e => updateOrderItem(item.id, 'price', e.target.value)} />
+                                      </div>
+                                      <div className="w-8 flex justify-end pb-1.5 lg:pb-0">
+                                          <button onClick={() => removeOrderItem(item.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><TrashIcon className="w-5 h-5 inline" /></button>
+                                      </div>
+                                  </div>
+                              </div>
+                          ))}
+                          <button onClick={addBlankOrderItem} className="w-full py-3 border-2 border-dashed border-gray-200 text-gray-400 font-bold rounded-xl hover:border-blue-400 hover:text-blue-500 transition flex items-center justify-center gap-2 text-xs mt-2">
+                              <PlusIcon className="w-4 h-4" /> Add Item Manually
+                          </button>
                       </>
                   )}
               </div>
@@ -810,7 +937,7 @@ export default function QuickPastePage() {
       {activeTab === 'prices' && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start animate-in fade-in">
           {/* LEFT: Paste Area */}
-          <div className="lg:col-span-4 bg-white p-5 rounded-3xl shadow-sm border border-purple-100 flex flex-col h-[calc(100vh-180px)]">
+          <div className="lg:col-span-4 bg-white p-5 rounded-3xl shadow-sm border border-purple-100 flex flex-col min-h-[300px] lg:h-[calc(100vh-180px)]">
               <label className="text-[10px] font-black text-purple-500 uppercase tracking-widest mb-3 block flex-none">
                   Paste Supplier Price List Here
               </label>
@@ -829,8 +956,8 @@ export default function QuickPastePage() {
           </div>
 
           {/* RIGHT: Validation & Review */}
-          <div className="lg:col-span-8 bg-white p-5 md:p-6 rounded-3xl shadow-xl border border-purple-100 flex flex-col h-[calc(100vh-180px)] relative">
-              <div className="flex flex-col md:flex-row gap-4 mb-6 flex-none">
+          <div className="lg:col-span-8 bg-white p-4 md:p-6 rounded-3xl shadow-xl border border-purple-100 flex flex-col min-h-[500px] lg:h-[calc(100vh-180px)] relative">
+              <div className="flex flex-col lg:flex-row gap-4 mb-6 flex-none">
                   <div className="flex-1">
                       <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1.5">Select Supplier</label>
                       <select 
@@ -842,7 +969,7 @@ export default function QuickPastePage() {
                           {suppliers.map(s => <option key={s.SupplierName} value={s.SupplierName}>{s.SupplierName}</option>)}
                       </select>
                   </div>
-                  <div className="w-full md:w-48">
+                  <div className="w-full lg:w-48">
                       <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1.5">Price Date</label>
                       <input 
                           type="date"
@@ -855,43 +982,54 @@ export default function QuickPastePage() {
 
               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3">
                   {parsedPriceItems.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center text-purple-300 border-2 border-dashed border-purple-100 rounded-2xl">
+                      <div className="h-full flex flex-col items-center justify-center text-purple-300 border-2 border-dashed border-purple-100 rounded-2xl min-h-[200px]">
                           <CurrencyDollarIcon className="w-16 h-16 mb-4 opacity-20" />
                           <p className="font-bold text-sm">Unmatched products are ignored automatically</p>
                       </div>
                   ) : (
                       <>
-                        <div className="hidden md:grid grid-cols-12 gap-2 px-2 pb-2 border-b border-purple-100 text-[9px] font-black text-purple-400 uppercase tracking-wider">
-                            <div className="col-span-4">Original Text</div>
-                            <div className="col-span-3">Matched Product</div>
-                            <div className="col-span-2 text-center">UOM</div>
-                            <div className="col-span-2 text-center">Cost</div>
-                            <div className="col-span-1 text-right"></div>
-                        </div>
+                          {/* DESKTOP HEADER */}
+                          <div className="hidden lg:flex gap-2 px-3 pb-2 border-b border-purple-100 text-[9px] font-black text-purple-400 uppercase tracking-wider">
+                              <div className="w-1/4">Original Text</div>
+                              <div className="flex-1">Matched Product</div>
+                              <div className="w-24 text-center">UOM</div>
+                              <div className="w-24 text-center">Cost</div>
+                              <div className="w-8 text-right"></div>
+                          </div>
 
-                        {parsedPriceItems.map((item) => (
-                            <div key={item.id} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center bg-white p-3 rounded-xl border border-purple-100 shadow-sm hover:border-purple-300 transition">
-                                <div className="md:col-span-4 text-[10px] text-gray-500 font-bold truncate" title={item.rawLine}>
-                                    "{item.rawLine}"
-                                </div>
-                                <div className="md:col-span-3">
-                                    <SearchableProductSelect 
-                                        item={item} 
-                                        products={products} 
-                                        onUpdate={(code) => updatePriceItem(item.id, 'productCode', code)} 
-                                    />
-                                </div>
-                                <div className="md:col-span-2 flex items-center justify-center">
-                                    <span className="bg-purple-50 text-purple-700 font-bold text-xs px-3 py-1.5 rounded-lg border border-purple-100">{item.uom}</span>
-                                </div>
-                                <div className="md:col-span-2 flex items-center justify-center">
-                                    <span className="font-black text-red-600 text-sm">RM {Number(item.price).toFixed(2)}</span>
-                                </div>
-                                <div className="md:col-span-1 text-right">
-                                    <button onClick={() => removePriceItem(item.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><TrashIcon className="w-5 h-5 inline" /></button>
-                                </div>
-                            </div>
-                        ))}
+                          {/* ITEMS LIST */}
+                          {parsedPriceItems.map((item) => (
+                              <div key={item.id} className="flex flex-col lg:flex-row gap-3 lg:gap-2 items-start lg:items-center bg-white p-3 rounded-xl border border-purple-100 shadow-sm hover:border-purple-300 transition">
+                                  {/* Original Text */}
+                                  <div className="w-full lg:w-1/4 text-[10px] text-gray-500 font-bold truncate" title={item.rawLine}>
+                                      "{item.rawLine}"
+                                  </div>
+                                  
+                                  {/* Product Select */}
+                                  <div className="w-full lg:flex-1">
+                                      <SearchableProductSelect 
+                                          item={item} 
+                                          products={products} 
+                                          onUpdate={(code) => updatePriceItem(item.id, 'productCode', code)} 
+                                      />
+                                  </div>
+
+                                  {/* UOM, Cost, Delete (Side-by-side on mobile) */}
+                                  <div className="flex w-full lg:w-auto gap-2 items-end lg:items-center mt-1 lg:mt-0">
+                                      <div className="flex-1 lg:w-24 text-center">
+                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1">UOM</span>
+                                          <span className="bg-purple-50 text-purple-700 font-bold text-xs px-3 py-2 rounded-lg border border-purple-100 block">{item.uom}</span>
+                                      </div>
+                                      <div className="flex-1 lg:w-24 text-center">
+                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1">COST</span>
+                                          <span className="font-black text-red-600 text-sm block py-1.5">RM {Number(item.price).toFixed(2)}</span>
+                                      </div>
+                                      <div className="w-8 flex justify-end pb-1.5 lg:pb-0">
+                                          <button onClick={() => removePriceItem(item.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><TrashIcon className="w-5 h-5 inline" /></button>
+                                      </div>
+                                  </div>
+                              </div>
+                          ))}
                       </>
                   )}
               </div>
