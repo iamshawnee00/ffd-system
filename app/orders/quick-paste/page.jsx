@@ -15,7 +15,7 @@ import {
 
 const KNOWN_UOMS = ['KG', 'CTN', 'PCS', 'PKT', 'BKL', 'BOX', 'G', 'TRAY', 'BUNCH', 'BAG', 'ROLL'];
 
-// 自定义可搜索的客户下拉组件 (Custom Searchable Customer Dropdown Component)
+// Custom Searchable Customer Dropdown Component
 function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -23,7 +23,7 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
     const selectedCustomer = customers.find(c => c.id.toString() === selectedCustomerId);
     const displayName = selectedCustomer 
         ? (selectedCustomer.Branch ? `${selectedCustomer.CompanyName} - ${selectedCustomer.Branch}` : selectedCustomer.CompanyName)
-        : '-- 请选择客户 (SELECT CUSTOMER) --';
+        : '-- SELECT CUSTOMER --';
 
     const filteredCustomers = customers.filter(c => {
         if (!search) return true;
@@ -50,7 +50,7 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
                             <input 
                                 type="text"
                                 autoFocus
-                                placeholder="搜索客户或分店... (Search...)"
+                                placeholder="Search customer or branch..."
                                 className="w-full p-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
@@ -66,7 +66,7 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
                                     setSearch('');
                                 }}
                             >
-                                -- 清除选择 (CLEAR) --
+                                -- CLEAR SELECTION --
                             </div>
                             {filteredCustomers.map(c => (
                                 <div 
@@ -82,7 +82,7 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
                                 </div>
                             ))}
                             {filteredCustomers.length === 0 && (
-                                <div className="p-4 text-center text-sm text-gray-400 italic">未找到客户 (No found)</div>
+                                <div className="p-4 text-center text-sm text-gray-400 italic">No customers found</div>
                             )}
                         </div>
                     </div>
@@ -92,13 +92,13 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
     );
 }
 
-// 自定义可搜索的产品下拉组件 (Custom Searchable Product Dropdown Component)
+// Custom Searchable Product Dropdown Component
 function SearchableProductSelect({ item, products, onUpdate }) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
 
     const selectedProduct = products.find(p => p.ProductCode === item.productCode);
-    const displayName = selectedProduct ? selectedProduct.ProductName : '-- 未匹配 (UNMATCHED) --';
+    const displayName = selectedProduct ? selectedProduct.ProductName : '-- UNMATCHED --';
 
     const filteredProducts = products.filter(p => {
         if (!search) return true;
@@ -116,11 +116,11 @@ function SearchableProductSelect({ item, products, onUpdate }) {
                 <span className="text-gray-400 text-[10px] shrink-0 ml-1">▼</span>
             </div>
             
-            {/* 状态图标 (Status Icons) */}
+            {/* Status Icons */}
             {!item.productCode && !isOpen && <ExclamationTriangleIcon className="w-3 h-3 text-red-500 absolute right-6 top-3 pointer-events-none" />}
             {item.productCode && !isOpen && <CheckCircleIcon className="w-3 h-3 text-green-500 absolute right-6 top-3 pointer-events-none" />}
 
-            {/* 下拉菜单 (Dropdown Menu) */}
+            {/* Dropdown Menu */}
             {isOpen && (
                 <>
                     <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)}></div>
@@ -129,7 +129,7 @@ function SearchableProductSelect({ item, products, onUpdate }) {
                             <input 
                                 type="text"
                                 autoFocus
-                                placeholder="搜索产品... (Search...)"
+                                placeholder="Search product..."
                                 className="w-full p-2 border border-gray-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-blue-500 font-medium"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
@@ -145,7 +145,7 @@ function SearchableProductSelect({ item, products, onUpdate }) {
                                     setSearch('');
                                 }}
                             >
-                                -- 清除匹配 (CLEAR MATCH) --
+                                -- CLEAR MATCH --
                             </div>
                             {filteredProducts.map(p => (
                                 <div 
@@ -161,7 +161,7 @@ function SearchableProductSelect({ item, products, onUpdate }) {
                                 </div>
                             ))}
                             {filteredProducts.length === 0 && (
-                                <div className="p-4 text-center text-xs text-gray-400 italic">未找到产品 (No found)</div>
+                                <div className="p-4 text-center text-xs text-gray-400 italic">No products found</div>
                             )}
                         </div>
                     </div>
@@ -176,13 +176,13 @@ export default function QuickPastePage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('orders'); // 'orders', 'prices', 'compare'
   
-  // 基础数据 (Base Data)
+  // Base Data
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [currentUser, setCurrentUser] = useState('');
 
-  // 订单粘贴状态 (Order Paste State)
+  // Order Paste State
   const [orderRawText, setOrderRawText] = useState('');
   const [selectedCustomer, setSelectedCustomer] = useState('');
   const [deliveryDate, setDeliveryDate] = useState('');
@@ -190,19 +190,19 @@ export default function QuickPastePage() {
   const [parsedOrderItems, setParsedOrderItems] = useState([]);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
-  // 报价粘贴状态 (Price Paste State)
+  // Price Paste State
   const [priceRawText, setPriceRawText] = useState('');
   const [selectedSupplier, setSelectedSupplier] = useState('');
   const [priceDate, setPriceDate] = useState('');
   const [parsedPriceItems, setParsedPriceItems] = useState([]);
   const [isSubmittingPrice, setIsSubmittingPrice] = useState(false);
 
-  // 报价比对状态 (Price Compare State)
+  // Price Compare State
   const [compareSearchText, setCompareSearchText] = useState('');
   const [compareResults, setCompareResults] = useState([]);
   const [isComparing, setIsComparing] = useState(false);
 
-  // 初始化加载 (Load Initial Data)
+  // Load Initial Data
   useEffect(() => {
     async function loadData() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -225,12 +225,12 @@ export default function QuickPastePage() {
       
       const defaultDate = calculateDefaultDate();
       setDeliveryDate(defaultDate);
-      setPriceDate(new Date().toISOString().split('T')[0]); // 报价默认为今天 (Prices default to today)
+      setPriceDate(new Date().toISOString().split('T')[0]); 
     }
     loadData();
   }, [router]);
 
-  // 日期逻辑: 10am-6pm (次日), 6.01pm-9.59am (同日相对早班)
+  // Date Logic: 10am-6pm (Next Day), 6.01pm-9.59am (Same Day)
   const calculateDefaultDate = () => {
       const now = new Date();
       const hour = now.getHours();
@@ -245,7 +245,7 @@ export default function QuickPastePage() {
       return targetDate.toISOString().split('T')[0];
   };
 
-  // 客户分词匹配逻辑 (Token-based Customer Matching)
+  // Token-based Customer Matching
   const findBestCustomerMatch = (firstLine, customersList) => {
       const cleanLine = firstLine.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
       const lineTokens = cleanLine.split(' ').filter(t => t.length > 1);
@@ -293,7 +293,7 @@ export default function QuickPastePage() {
       return highestScore >= 30 ? bestMatch : null;
   };
 
-  // 产品分词匹配逻辑 (Token-based Product Matching)
+  // Token-based Product Matching
   const findBestProductMatch = (rawName, historyCodesSet = new Set()) => {
       const nameForMatching = rawName.replace(/\(.*?\)/g, '').trim().toLowerCase();
       if (!nameForMatching) return null;
@@ -328,7 +328,7 @@ export default function QuickPastePage() {
               }
           }
 
-          // 订单历史加成 (Order History Boost)
+          // Order History Boost
           if (score >= 20 && historyCodesSet.has(p.ProductCode)) {
               score += 40; 
           }
@@ -343,7 +343,7 @@ export default function QuickPastePage() {
   };
 
   // ==========================================
-  // 1. 订单解析逻辑 (ORDER PARSING LOGIC)
+  // 1. ORDER PARSING LOGIC
   // ==========================================
   const handleParseOrder = async () => {
       if (!orderRawText.trim()) return;
@@ -389,7 +389,7 @@ export default function QuickPastePage() {
       for (let i = startIndex; i < lines.length; i++) {
           const line = lines[i];
           
-          // 日期提取 (Date Extraction)
+          // Date Extraction
           const dateMatch = line.match(/^\s*(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?\s*$/);
           if (dateMatch) {
               let [_, day, month, year] = dateMatch;
@@ -477,7 +477,7 @@ export default function QuickPastePage() {
   };
 
   // ==========================================
-  // 2. 供应商报价解析逻辑 (SUPPLIER PRICE PARSING)
+  // 2. SUPPLIER PRICE PARSING
   // ==========================================
   const handleParsePrice = () => {
       if (!priceRawText.trim()) return;
@@ -485,11 +485,11 @@ export default function QuickPastePage() {
       const lines = priceRawText.split('\n').map(l => l.trim()).filter(l => l !== '');
       const newItems = [];
       const uomPattern = KNOWN_UOMS.join('|');
-      // 匹配: "12kg", "80gx50pkt", "200g x 20pkt"
+      // Match formats like: "12kg", "80gx50pkt", "200g x 20pkt"
       const uomRegex = new RegExp(`(\\d+(?:\\.\\d+)?\\s*(?:${uomPattern})(?:\\s*[xX\\*]\\s*\\d+\\s*[a-zA-Z]+)?)`, 'i');
 
       lines.forEach((line, i) => {
-          // 跳过分类标题或不相关的行 (Skip headers)
+          // Skip headers
           if (line.startsWith('*') || line.toLowerCase().includes('price:')) return;
 
           const match = line.match(uomRegex);
@@ -498,23 +498,23 @@ export default function QuickPastePage() {
               const namePart = line.substring(0, match.index).trim();
               const afterPart = line.substring(match.index + uomStr.length).trim();
 
-              // 在 UOM 之后寻找价格 (Find price after UOM)
+              // Find price after UOM
               const priceMatch = afterPart.match(/(\d+(?:\.\d+)?)/);
               if (priceMatch) {
                   const price = parseFloat(priceMatch[1]);
-                  // 清理产品名称，去除表情符号等 (Clean product name)
+                  // Clean product name
                   const cleanName = namePart.replace(/[^\w\s\u4e00-\u9fa5]/g, '').trim();
 
-                  // 使用基础模糊匹配，无历史记录加成 (Basic match, no history boost)
+                  // Basic match, no history boost
                   const bestProduct = findBestProductMatch(cleanName);
 
-                  // 仅添加系统内存在的产品，且价格大于0 (Only add matched products with price)
+                  // Only add matched products with price > 0
                   if (bestProduct && price > 0) {
                       newItems.push({
                           id: Date.now() + i,
                           rawLine: line,
                           productCode: bestProduct.ProductCode,
-                          productName: bestProduct.ProductName, // 显示用途
+                          productName: bestProduct.ProductName, 
                           uom: uomStr,
                           price: price
                       });
@@ -527,7 +527,7 @@ export default function QuickPastePage() {
   };
 
   // ==========================================
-  // 3. 价格比对查询 (PRICE COMPARISON SEARCH)
+  // 3. PRICE COMPARISON SEARCH
   // ==========================================
   const handleCompareSearch = async (productCode) => {
       if (!productCode) return;
@@ -546,16 +546,16 @@ export default function QuickPastePage() {
   };
 
   // ==========================================
-  // 数据库提交处理 (DATABASE SUBMISSIONS)
+  // DATABASE SUBMISSIONS
   // ==========================================
   const handleSubmitOrder = async () => {
-      if (!selectedCustomer) return alert("请选择客户 (Select a customer)");
-      if (!deliveryDate) return alert("请选择日期 (Select delivery date)");
-      if (parsedOrderItems.length === 0) return alert("没有有效的订单项目 (No items to order)");
+      if (!selectedCustomer) return alert("Please select a customer.");
+      if (!deliveryDate) return alert("Please select a delivery date.");
+      if (parsedOrderItems.length === 0) return alert("No items to order.");
 
       const unmatched = parsedOrderItems.find(i => !i.productCode);
       if (unmatched) {
-          const proceed = confirm("有未匹配的产品，确认要移除它们并继续吗？(Unmatched items will be removed. Proceed?)");
+          const proceed = confirm("Some items are missing a selected product. Do you want to remove them and proceed?");
           if (!proceed) return;
       }
 
@@ -593,17 +593,17 @@ export default function QuickPastePage() {
       const { error } = await supabase.from('Orders').insert(orderRows);
 
       if (error) {
-          alert("保存订单失败 (Error): " + error.message);
+          alert("Error saving order: " + error.message);
       } else {
-          alert(`订单创建成功！(Created) DO: ${doNumber}`);
+          alert(`Order successfully created! DO: ${doNumber}`);
           router.push('/orders/list');
       }
       setIsSubmittingOrder(false);
   };
 
   const handleSubmitPrice = async () => {
-      if (!selectedSupplier) return alert("请选择供应商 (Select a supplier)");
-      if (parsedPriceItems.length === 0) return alert("没有解析到报价项目 (No items parsed)");
+      if (!selectedSupplier) return alert("Please select a supplier.");
+      if (parsedPriceItems.length === 0) return alert("No items parsed.");
 
       setIsSubmittingPrice(true);
       
@@ -612,26 +612,26 @@ export default function QuickPastePage() {
           "ProductCode": item.productCode,
           "ProductName": item.productName,
           "Supplier": selectedSupplier,
-          "PurchaseQty": 0, // 设为0，不影响实际库存 (Set 0 to not affect stock)
+          "PurchaseQty": 0, // Set 0 to not affect stock
           "PurchaseUOM": item.uom,
           "CostPrice": item.price,
-          "InvoiceNumber": "PRICE_LIST", // 用于区分报价和实际采购 (Identifier)
+          "InvoiceNumber": "PRICE_LIST", // Identifier
           "LoggedBy": currentUser
       }));
 
       const { error } = await supabase.from('Purchase').insert(purchaseRows);
 
       if (error) {
-          alert("保存报价失败 (Error): " + error.message);
+          alert("Error saving price: " + error.message);
       } else {
-          alert("供应商报价已成功记录！(Prices Logged Successfully!)");
+          alert("Prices Logged Successfully!");
           setParsedPriceItems([]);
           setPriceRawText('');
       }
       setIsSubmittingPrice(false);
   };
 
-  // 渲染函数辅助 (Render Helpers)
+  // Render Helpers
   const updateOrderItem = (id, field, value) => {
       setParsedOrderItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
       if (field === 'productCode') {
@@ -642,21 +642,21 @@ export default function QuickPastePage() {
       }
   };
   const removeOrderItem = (id) => setParsedOrderItems(prev => prev.filter(item => item.id !== id));
-  const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: '手动添加 (Manual Entry)', qty: 1, uom: 'KG', price: 0, productCode: '' }]);
+  const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: 'Manual Entry', qty: 1, uom: 'KG', price: 0, productCode: '' }]);
   
   const updatePriceItem = (id, field, value) => {
       setParsedPriceItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
   };
   const removePriceItem = (id) => setParsedPriceItems(prev => prev.filter(item => item.id !== id));
 
-  if (loading) return <div className="p-10 text-center text-gray-500 font-bold">系统加载中 (Loading Engine)...</div>;
+  if (loading) return <div className="p-10 text-center text-gray-500 font-bold">Loading Engine...</div>;
 
   return (
     <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6 bg-gray-50 min-h-screen">
       
       <div className="mb-6">
-         <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">智能快捷录入 (Quick Paste Hub)</h1>
-         <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">一键解析订单与供应商报价 (Parse orders and supplier prices instantly)</p>
+         <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Quick Paste Hub</h1>
+         <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Parse orders and supplier prices instantly</p>
       </div>
 
       {/* TABS */}
@@ -665,35 +665,35 @@ export default function QuickPastePage() {
               onClick={() => setActiveTab('orders')} 
               className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'orders' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
           >
-              <ClipboardDocumentCheckIcon className="w-5 h-5" /> 客户订单解析 (Order Paste)
+              <ClipboardDocumentCheckIcon className="w-5 h-5" /> Order Paste
           </button>
           <button 
               onClick={() => setActiveTab('prices')} 
               className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'prices' ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
           >
-              <CurrencyDollarIcon className="w-5 h-5" /> 供应商报价解析 (Price Paste)
+              <CurrencyDollarIcon className="w-5 h-5" /> Price Paste
           </button>
           <button 
               onClick={() => setActiveTab('compare')} 
               className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'compare' ? 'bg-orange-500 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
           >
-              <ScaleIcon className="w-5 h-5" /> 报价比对查询 (Compare Prices)
+              <ScaleIcon className="w-5 h-5" /> Compare Prices
           </button>
       </div>
 
       {/* ==========================================
-          TAB 1: 订单解析 (ORDER PASTE)
+          TAB 1: ORDER PASTE
           ========================================== */}
       {activeTab === 'orders' && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start animate-in fade-in">
-          {/* 左侧：输入区 (LEFT: Paste Area) */}
+          {/* LEFT: Paste Area */}
           <div className="lg:col-span-4 bg-white p-5 rounded-3xl shadow-sm border border-gray-100 flex flex-col h-[calc(100vh-180px)]">
               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 block flex-none">
-                  在此处粘贴订单文本 (Paste Order Text Here)
+                  Paste Order Text Here
               </label>
               <textarea 
                   className="w-full flex-1 border border-gray-200 bg-gray-50 rounded-2xl p-4 text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none transition-all placeholder-gray-300"
-                  placeholder={`示例 (Example):\nHEYTEA GENTING\n2CTN MANGO GOLD SUSU\n5PCS avocado`}
+                  placeholder={`Example:\nHEYTEA GENTING\n2CTN MANGO GOLD SUSU\n5PCS avocado`}
                   value={orderRawText}
                   onChange={e => setOrderRawText(e.target.value)}
               />
@@ -701,15 +701,15 @@ export default function QuickPastePage() {
                   onClick={handleParseOrder}
                   className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl shadow-lg active:scale-95 flex items-center justify-center gap-2 transition flex-none"
               >
-                  <ClipboardDocumentCheckIcon className="w-5 h-5" /> 自动解析订单 (Auto-Parse Order)
+                  <ClipboardDocumentCheckIcon className="w-5 h-5" /> Auto-Parse Order
               </button>
           </div>
 
-          {/* 右侧：校验与审查 (RIGHT: Validation & Review) */}
+          {/* RIGHT: Validation & Review */}
           <div className="lg:col-span-8 bg-white p-5 md:p-6 rounded-3xl shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-180px)] relative">
               <div className="flex flex-col md:flex-row gap-4 mb-6 flex-none">
                   <div className="flex-1">
-                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">识别到的客户 (Detected Customer)</label>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Detected Customer</label>
                       <SearchableCustomerSelect 
                           selectedCustomerId={selectedCustomer}
                           customers={customers}
@@ -717,19 +717,19 @@ export default function QuickPastePage() {
                       />
                   </div>
                   <div className="w-full md:w-32">
-                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">配送方式 (Mode)</label>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Mode</label>
                       <select 
                           className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
                           value={deliveryMode}
                           onChange={e => setDeliveryMode(e.target.value)}
                       >
-                          <option value="Driver">司机 (Driver)</option>
+                          <option value="Driver">Driver</option>
                           <option value="Lalamove">Lalamove</option>
-                          <option value="Self Pick-up">自提 (Self Pick-up)</option>
+                          <option value="Self Pick-up">Self Pick-up</option>
                       </select>
                   </div>
                   <div className="w-full md:w-40">
-                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">送货日期 (Delivery Date)</label>
+                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Delivery Date</label>
                       <input 
                           type="date"
                           className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -743,16 +743,16 @@ export default function QuickPastePage() {
                   {parsedOrderItems.length === 0 ? (
                       <div className="h-full flex flex-col items-center justify-center text-gray-300 border-2 border-dashed border-gray-100 rounded-2xl">
                           <ClipboardDocumentCheckIcon className="w-16 h-16 mb-4 opacity-20" />
-                          <p className="font-bold text-sm">请粘贴文本并点击解析</p>
+                          <p className="font-bold text-sm">Paste text and click Parse</p>
                       </div>
                   ) : (
                       <>
                         <div className="hidden md:grid grid-cols-12 gap-2 px-2 pb-2 border-b border-gray-100 text-[9px] font-black text-gray-400 uppercase tracking-wider">
-                            <div className="col-span-3">原始文本 (Original Text)</div>
-                            <div className="col-span-3">匹配产品 (Matched Product)</div>
-                            <div className="col-span-2 text-center">数量 (Qty)</div>
-                            <div className="col-span-2 text-center">单位 (UOM)</div>
-                            <div className="col-span-1 text-center">单价 (Price)</div>
+                            <div className="col-span-3">Original Text</div>
+                            <div className="col-span-3">Matched Product</div>
+                            <div className="col-span-2 text-center">Qty</div>
+                            <div className="col-span-2 text-center">UOM</div>
+                            <div className="col-span-1 text-center">Price</div>
                             <div className="col-span-1 text-right"></div>
                         </div>
 
@@ -769,17 +769,17 @@ export default function QuickPastePage() {
                                     />
                                 </div>
                                 <div className="md:col-span-2 flex items-center gap-1">
-                                    <span className="md:hidden text-[9px] font-bold text-gray-400">数量 (QTY):</span>
+                                    <span className="md:hidden text-[9px] font-bold text-gray-400">QTY:</span>
                                     <input type="number" step="0.1" className="w-full p-2.5 border rounded-lg text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.qty} onChange={e => updateOrderItem(item.id, 'qty', e.target.value)} />
                                 </div>
                                 <div className="md:col-span-2 flex items-center gap-1">
-                                    <span className="md:hidden text-[9px] font-bold text-gray-400">单位 (UOM):</span>
+                                    <span className="md:hidden text-[9px] font-bold text-gray-400">UOM:</span>
                                     <select className="w-full p-2.5 border rounded-lg text-xs font-bold uppercase focus:ring-2 focus:ring-blue-500" value={item.uom} onChange={e => updateOrderItem(item.id, 'uom', e.target.value)}>
                                         {KNOWN_UOMS.map(u => <option key={u} value={u}>{u}</option>)}
                                     </select>
                                 </div>
                                 <div className="md:col-span-1 flex items-center gap-1">
-                                    <span className="md:hidden text-[9px] font-bold text-gray-400">价格 (PRICE):</span>
+                                    <span className="md:hidden text-[9px] font-bold text-gray-400">PRICE:</span>
                                     <input type="number" step="0.01" className="w-full p-2.5 border rounded-lg text-[10px] md:text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.price} onChange={e => updateOrderItem(item.id, 'price', e.target.value)} />
                                 </div>
                                 <div className="md:col-span-1 text-right">
@@ -788,16 +788,16 @@ export default function QuickPastePage() {
                             </div>
                         ))}
                         <button onClick={addBlankOrderItem} className="w-full py-3 border-2 border-dashed border-gray-200 text-gray-400 font-bold rounded-xl hover:border-blue-400 hover:text-blue-500 transition flex items-center justify-center gap-2 text-xs">
-                            <PlusIcon className="w-4 h-4" /> 手动添加项目 (Add Item Manually)
+                            <PlusIcon className="w-4 h-4" /> Add Item Manually
                         </button>
                       </>
                   )}
               </div>
 
               <div className="mt-4 pt-4 border-t border-gray-100 flex-none flex justify-between items-center">
-                  <div className="text-xs font-bold text-gray-500">有效项目总数 (Valid Items): <span className="text-gray-800 text-sm ml-1">{parsedOrderItems.filter(i => i.productCode).length}</span></div>
+                  <div className="text-xs font-bold text-gray-500">Total Valid Items: <span className="text-gray-800 text-sm ml-1">{parsedOrderItems.filter(i => i.productCode).length}</span></div>
                   <button onClick={handleSubmitOrder} disabled={isSubmittingOrder || parsedOrderItems.length === 0} className={`py-3 px-8 rounded-xl font-black text-sm text-white shadow-lg transition active:scale-95 ${isSubmittingOrder || parsedOrderItems.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-blue-600 hover:bg-blue-700'}`}>
-                      {isSubmittingOrder ? '记录中 (Logging)...' : '确认并生成订单 (Confirm & Log Order)'}
+                      {isSubmittingOrder ? 'Logging...' : 'Confirm & Log Order'}
                   </button>
               </div>
           </div>
@@ -805,18 +805,18 @@ export default function QuickPastePage() {
       )}
 
       {/* ==========================================
-          TAB 2: 供应商报价解析 (PRICE PASTE)
+          TAB 2: PRICE PASTE
           ========================================== */}
       {activeTab === 'prices' && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start animate-in fade-in">
-          {/* 左侧：输入区 */}
+          {/* LEFT: Paste Area */}
           <div className="lg:col-span-4 bg-white p-5 rounded-3xl shadow-sm border border-purple-100 flex flex-col h-[calc(100vh-180px)]">
               <label className="text-[10px] font-black text-purple-500 uppercase tracking-widest mb-3 block flex-none">
-                  在此处粘贴供应商报价单 (Paste Supplier Price List Here)
+                  Paste Supplier Price List Here
               </label>
               <textarea 
                   className="w-full flex-1 border border-purple-200 bg-purple-50/30 rounded-2xl p-4 text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none transition-all placeholder-purple-300"
-                  placeholder={`示例 (Example):\n*通用菜 General Vegetable*\n菜花 Cauliflower 12kg 30 KM\n红萝卜 Carrot 4.5kg 15`}
+                  placeholder={`Example:\n*General Vegetable*\nCauliflower 12kg 30 KM\nCarrot 4.5kg 15`}
                   value={priceRawText}
                   onChange={e => setPriceRawText(e.target.value)}
               />
@@ -824,26 +824,26 @@ export default function QuickPastePage() {
                   onClick={handleParsePrice}
                   className="w-full mt-4 bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 rounded-xl shadow-lg active:scale-95 flex items-center justify-center gap-2 transition flex-none"
               >
-                  <CurrencyDollarIcon className="w-5 h-5" /> 自动解析报价 (Auto-Parse Prices)
+                  <CurrencyDollarIcon className="w-5 h-5" /> Auto-Parse Prices
               </button>
           </div>
 
-          {/* 右侧：校验与审查 */}
+          {/* RIGHT: Validation & Review */}
           <div className="lg:col-span-8 bg-white p-5 md:p-6 rounded-3xl shadow-xl border border-purple-100 flex flex-col h-[calc(100vh-180px)] relative">
               <div className="flex flex-col md:flex-row gap-4 mb-6 flex-none">
                   <div className="flex-1">
-                      <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1.5">选择供应商 (Select Supplier)</label>
+                      <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1.5">Select Supplier</label>
                       <select 
                           className={`w-full border p-3 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 ${!selectedSupplier ? 'border-red-300 bg-red-50 text-red-700' : 'border-purple-200 bg-purple-50 text-purple-900'}`}
                           value={selectedSupplier}
                           onChange={e => setSelectedSupplier(e.target.value)}
                       >
-                          <option value="">-- 请选择供应商 (Select Supplier) --</option>
+                          <option value="">-- SELECT SUPPLIER --</option>
                           {suppliers.map(s => <option key={s.SupplierName} value={s.SupplierName}>{s.SupplierName}</option>)}
                       </select>
                   </div>
                   <div className="w-full md:w-48">
-                      <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1.5">报价日期 (Price Date)</label>
+                      <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1.5">Price Date</label>
                       <input 
                           type="date"
                           className="w-full border border-purple-200 bg-purple-50 p-3 rounded-xl text-sm font-bold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -857,15 +857,15 @@ export default function QuickPastePage() {
                   {parsedPriceItems.length === 0 ? (
                       <div className="h-full flex flex-col items-center justify-center text-purple-300 border-2 border-dashed border-purple-100 rounded-2xl">
                           <CurrencyDollarIcon className="w-16 h-16 mb-4 opacity-20" />
-                          <p className="font-bold text-sm">系统会自动忽略无法匹配的产品 (Unmatched products are ignored automatically)</p>
+                          <p className="font-bold text-sm">Unmatched products are ignored automatically</p>
                       </div>
                   ) : (
                       <>
                         <div className="hidden md:grid grid-cols-12 gap-2 px-2 pb-2 border-b border-purple-100 text-[9px] font-black text-purple-400 uppercase tracking-wider">
-                            <div className="col-span-4">原始文本 (Original Text)</div>
-                            <div className="col-span-3">匹配产品 (Matched Product)</div>
-                            <div className="col-span-2 text-center">规格/单位 (UOM)</div>
-                            <div className="col-span-2 text-center">价格 (Cost)</div>
+                            <div className="col-span-4">Original Text</div>
+                            <div className="col-span-3">Matched Product</div>
+                            <div className="col-span-2 text-center">UOM</div>
+                            <div className="col-span-2 text-center">Cost</div>
                             <div className="col-span-1 text-right"></div>
                         </div>
 
@@ -897,9 +897,9 @@ export default function QuickPastePage() {
               </div>
 
               <div className="mt-4 pt-4 border-t border-purple-100 flex-none flex justify-between items-center">
-                  <div className="text-xs font-bold text-gray-500">有效报价数 (Valid Prices): <span className="text-purple-800 text-sm ml-1 font-black">{parsedPriceItems.length}</span></div>
+                  <div className="text-xs font-bold text-gray-500">Total Valid Prices: <span className="text-purple-800 text-sm ml-1 font-black">{parsedPriceItems.length}</span></div>
                   <button onClick={handleSubmitPrice} disabled={isSubmittingPrice || parsedPriceItems.length === 0} className={`py-3 px-8 rounded-xl font-black text-sm text-white shadow-lg transition active:scale-95 ${isSubmittingPrice || parsedPriceItems.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-purple-600 hover:bg-purple-700'}`}>
-                      {isSubmittingPrice ? '记录中 (Logging)...' : '保存入库价格库 (Save to Price DB)'}
+                      {isSubmittingPrice ? 'Logging...' : 'Save to Price DB'}
                   </button>
               </div>
           </div>
@@ -907,7 +907,7 @@ export default function QuickPastePage() {
       )}
 
       {/* ==========================================
-          TAB 3: 报价比对查询 (PRICE COMPARE)
+          TAB 3: PRICE COMPARE
           ========================================== */}
       {activeTab === 'compare' && (
       <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-orange-100 h-[calc(100vh-180px)] flex flex-col animate-in fade-in">
@@ -916,7 +916,7 @@ export default function QuickPastePage() {
                   <span className="absolute left-4 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5" /></span>
                   <input 
                       type="text"
-                      placeholder="输入产品名称或编号查询... (Search product to compare prices...)"
+                      placeholder="Search product to compare prices..."
                       className="w-full pl-12 p-4 bg-orange-50/30 border border-orange-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all placeholder-orange-300"
                       value={compareSearchText}
                       onChange={e => setCompareSearchText(e.target.value)}
@@ -925,9 +925,9 @@ export default function QuickPastePage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 flex-1 overflow-hidden">
-              {/* 左侧：搜索结果列表 */}
+              {/* LEFT: Search Results List */}
               <div className="overflow-y-auto custom-scrollbar border border-gray-100 rounded-2xl p-2 bg-gray-50">
-                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest p-2 mb-2">匹配产品 (Matching Products)</div>
+                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest p-2 mb-2">Matching Products</div>
                   {products.filter(p => !compareSearchText || p.ProductName.toLowerCase().includes(compareSearchText.toLowerCase()) || p.ProductCode.toLowerCase().includes(compareSearchText.toLowerCase())).slice(0,20).map(p => (
                       <div 
                           key={p.ProductCode} 
@@ -940,14 +940,14 @@ export default function QuickPastePage() {
                   ))}
               </div>
 
-              {/* 右侧：比对结果 */}
+              {/* RIGHT: Compare Results */}
               <div className="overflow-y-auto custom-scrollbar border-l-2 border-orange-100 pl-6 relative">
                   {isComparing ? (
-                      <div className="flex justify-center items-center h-full font-bold text-orange-400">查询中... (Searching...)</div>
+                      <div className="flex justify-center items-center h-full font-bold text-orange-400">Searching...</div>
                   ) : compareResults.length > 0 ? (
                       <>
                           <h3 className="text-lg font-black text-gray-800 mb-6 sticky top-0 bg-white py-2 z-10 flex items-center gap-2">
-                              <ScaleIcon className="w-6 h-6 text-orange-500" /> 近期历史报价 (Recent Price History)
+                              <ScaleIcon className="w-6 h-6 text-orange-500" /> Recent Price History
                           </h3>
                           <div className="space-y-4">
                               {compareResults.map((res, idx) => (
@@ -957,15 +957,15 @@ export default function QuickPastePage() {
                                           <div className="flex gap-2 items-center">
                                               <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded uppercase">{new Date(res.Timestamp).toLocaleDateString('en-GB')}</span>
                                               {res.InvoiceNumber === 'PRICE_LIST' ? (
-                                                  <span className="text-[9px] font-bold text-purple-600 bg-purple-100 px-2 py-0.5 rounded border border-purple-200">报价单 (Quotation)</span>
+                                                  <span className="text-[9px] font-bold text-purple-600 bg-purple-100 px-2 py-0.5 rounded border border-purple-200">Quotation</span>
                                               ) : (
-                                                  <span className="text-[9px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded border border-blue-200">实际采购 (Actual Buy)</span>
+                                                  <span className="text-[9px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded border border-blue-200">Actual Buy</span>
                                               )}
                                           </div>
                                       </div>
                                       <div className="text-right">
                                           <div className="font-black text-red-600 text-lg">RM {Number(res.CostPrice).toFixed(2)}</div>
-                                          <div className="text-[10px] font-bold text-gray-400 uppercase mt-0.5">每 (per) {res.PurchaseUOM}</div>
+                                          <div className="text-[10px] font-bold text-gray-400 uppercase mt-0.5">per {res.PurchaseUOM}</div>
                                       </div>
                                   </div>
                               ))}
@@ -974,8 +974,7 @@ export default function QuickPastePage() {
                   ) : (
                       <div className="flex flex-col justify-center items-center h-full text-gray-300">
                           <ScaleIcon className="w-16 h-16 mb-4 opacity-20" />
-                          <p className="font-bold text-sm">选择左侧产品以查看比对结果</p>
-                          <p className="text-xs mt-1">Select a product to compare prices</p>
+                          <p className="font-bold text-sm">Select a product on the left to view comparison</p>
                       </div>
                   )}
               </div>
