@@ -35,6 +35,7 @@ export default function Sidebar() {
   const menuItems = [
     { name: 'Dashboard', path: '/', icon: HomeIcon },
     { name: 'New Order', path: '/orders/new', icon: PlusCircleIcon },
+    { name: 'Quick Paste Order', path: '/orders/quick-paste', icon: ClipboardDocumentListIcon },
     { name: 'Log Purchase', path: '/purchase/new', icon: ShoppingBagIcon },
     { name: 'Order List', path: '/orders/list', icon: ClipboardDocumentListIcon },
     { name: 'Delivery / Reports', path: '/delivery', icon: TruckIcon },
