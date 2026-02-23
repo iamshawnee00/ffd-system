@@ -33,7 +33,7 @@ function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
     const filteredCustomers = customers.filter(c => {
         if (!search) return true;
         const term = search.toLowerCase();
-        const fullName = `${c.CompanyName} ${c.Branch || ''}`.toLowerCase();
+        const fullName = `${c.CompanyName || ''} ${c.Branch || ''}`.toLowerCase();
         return fullName.includes(term);
     });
 
@@ -117,9 +117,8 @@ function SearchableProductSelect({ item, products, onUpdate }) {
 
     const filteredProducts = products.filter(p => {
         if (!search) return true;
-        // Split search into words and ensure ALL words are present in the product name/code
         const terms = search.toLowerCase().split(' ').filter(t => t);
-        const searchStr = `${p.ProductName} ${p.ProductCode}`.toLowerCase();
+        const searchStr = `${p.ProductName || ''} ${p.ProductCode || ''}`.toLowerCase();
         return terms.every(term => searchStr.includes(term));
     });
 
@@ -191,7 +190,7 @@ function SearchableProductSelect({ item, products, onUpdate }) {
 export default function QuickPastePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('orders'); // 'orders', 'prices', 'compare'
+  const [activeTab, setActiveTab] = useState('orders'); 
   
   // Base Data
   const [customers, setCustomers] = useState([]);
@@ -207,7 +206,7 @@ export default function QuickPastePage() {
   const [parsedOrderItems, setParsedOrderItems] = useState([]);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   
-  // New Customer State
+  // Customer Contact State
   const [newCustName, setNewCustName] = useState('');
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustAddress, setNewCustAddress] = useState('');
@@ -224,7 +223,6 @@ export default function QuickPastePage() {
   const [compareResults, setCompareResults] = useState([]);
   const [isComparing, setIsComparing] = useState(false);
 
-  // Load Initial Data
   useEffect(() => {
     async function loadData() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -245,14 +243,12 @@ export default function QuickPastePage() {
       setSuppliers(suppRes.data || []);
       setLoading(false);
       
-      const defaultDate = calculateDefaultDate();
-      setDeliveryDate(defaultDate);
+      setDeliveryDate(calculateDefaultDate());
       setPriceDate(new Date().toISOString().split('T')[0]); 
     }
     loadData();
   }, [router]);
 
-  // Date Logic: 10am-6pm (Next Day), 6.01pm-9.59am (Same Day)
   const calculateDefaultDate = () => {
       const now = new Date();
       const hour = now.getHours();
@@ -267,7 +263,6 @@ export default function QuickPastePage() {
       return targetDate.toISOString().split('T')[0];
   };
 
-  // Token-based Customer Matching
   const findBestCustomerMatch = (firstLine, customersList) => {
       const cleanLine = firstLine.toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
       const lineTokens = cleanLine.split(' ').filter(t => t.length > 1);
@@ -277,7 +272,7 @@ export default function QuickPastePage() {
 
       customersList.forEach(c => {
           let score = 0;
-          const compName = c.CompanyName.toLowerCase();
+          const compName = (c.CompanyName || '').toLowerCase();
           const branchName = (c.Branch || '').toLowerCase();
           const fullStr = `${compName} ${branchName}`.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
           const dbTokens = fullStr.split(' ').filter(t => t.length > 1);
@@ -315,7 +310,6 @@ export default function QuickPastePage() {
       return highestScore >= 30 ? bestMatch : null;
   };
 
-  // Token-based Product Matching (STRICTER)
   const findBestProductMatch = (rawName, historyCodesSet = new Set()) => {
       const nameForMatching = rawName.replace(/\(.*?\)/g, '').trim().toLowerCase();
       if (!nameForMatching) return null;
@@ -327,7 +321,9 @@ export default function QuickPastePage() {
       const totalRawLength = rawWords.join('').length;
 
       products.forEach(p => {
-          const lowerProd = p.ProductName.toLowerCase();
+          const lowerProd = (p.ProductName || '').toLowerCase();
+          if (!lowerProd) return;
+
           let score = 0;
 
           if (lowerProd === nameForMatching) {
@@ -343,20 +339,18 @@ export default function QuickPastePage() {
                       exactWordMatches++;
                   } 
                   else if (rw.length > 2 && prodWords.some(pw => pw.includes(rw) || rw.includes(pw))) {
-                      matchedWordsLength += rw.length * 0.7; // penalize partial match slightly
+                      matchedWordsLength += rw.length * 0.7; 
                   }
               });
 
               if (totalRawLength > 0) {
                   score = (matchedWordsLength / totalRawLength) * 60;
-                  // Bonus if a large percentage of raw words found exact matches
                   if (exactWordMatches > 0) {
                       score += (exactWordMatches / rawWords.length) * 20;
                   }
               }
           }
 
-          // Order History Boost
           if (score >= 35 && historyCodesSet.has(p.ProductCode)) {
               score += 40; 
           }
@@ -367,7 +361,6 @@ export default function QuickPastePage() {
           }
       });
 
-      // Increased threshold to 45 to reduce false positives
       return highestScore >= 45 ? bestMatch : null;
   };
 
@@ -380,20 +373,26 @@ export default function QuickPastePage() {
       const lines = orderRawText.split('\n').map(l => l.trim()).filter(l => l !== '');
       if (lines.length === 0) return;
 
-      let startIndex = 0;
-      let matchedCust = null;
-      let customerHistoryCodes = new Set();
-      let isNewCust = false;
-      let tempNewName = '';
-
+      // Clean first line of bold formatting (asterisks) immediately
+      lines[0] = lines[0].replace(/^\*+/, '').replace(/\*+$/, '').trim();
       const firstLine = lines[0];
-      matchedCust = findBestCustomerMatch(firstLine, customers);
+
+      let startIndex = 0;
+      let matchedCust = findBestCustomerMatch(firstLine, customers);
+      let customerHistoryCodes = new Set();
+      
+      // Reset meta states
+      setNewCustName('');
+      setNewCustPhone('');
+      setNewCustAddress('');
 
       if (matchedCust) {
           setSelectedCustomer(matchedCust.id.toString());
+          setNewCustPhone(matchedCust.ContactNumber || '');
+          setNewCustAddress(matchedCust.DeliveryAddress || '');
           startIndex = 1; 
           
-          const safeSearchName = matchedCust.CompanyName.split(' ')[0].replace(/[^\w\s]/g, '');
+          const safeSearchName = (matchedCust.CompanyName || '').split(' ')[0].replace(/[^\w\s]/g, '');
           const { data: hist } = await supabase
               .from('Orders')
               .select('"Product Code"')
@@ -405,12 +404,10 @@ export default function QuickPastePage() {
               hist.forEach(h => customerHistoryCodes.add(h["Product Code"]));
           }
       } else {
-          // Unmatched, assume new customer
+          // If unmatched, check if it's a product line
           if (!/^[-*•\s]*\d+/.test(firstLine)) {
               setSelectedCustomer('NEW');
               setNewCustName(firstLine);
-              tempNewName = firstLine;
-              isNewCust = true;
               startIndex = 1; 
           } else {
               setSelectedCustomer(''); 
@@ -420,13 +417,11 @@ export default function QuickPastePage() {
 
       const uomPattern = KNOWN_UOMS.join('|');
       
-      // PATTERN 1: Looks for "... [Qty] [UOM] [Optional Price]" at the very end of the string
-      // e.g., "australia white peach 8's - 1 box 68" -> Qty: 1, UOM: BOX, Price: 68
-      const endQtyUomPriceRegex = new RegExp(`(?:-|\\s|x|X)+([\\d.]+)\\s*(${uomPattern})(?:\\s*(?:-)?\\s*(?:RM|rm)?\\s*([\\d.]+))?\\s*$`, 'i');
+      // Regex 1: Matches Qty & UOM at the END (e.g. "Apple - 2 box x 65")
+      const endQtyUomPriceRegex = new RegExp(`(?:[- \\t@xX]+)([\\d.]+)\\s*(${uomPattern})(?:[- \\t@xX]*(?:RM|rm)?\\s*([\\d.]+))?\\s*$`, 'i');
       
-      // PATTERN 2: Looks for "[Qty] [UOM] ..." at the start of the string
-      // e.g., "2CTN MANGO"
-      const startQtyUomRegex = new RegExp(`^([\\d.]+)\\s*(${uomPattern})\\b(.*)$`, 'i');
+      // Regex 2: Matches Qty & UOM at the START (e.g. "2 CTN Apple")
+      const startQtyUomRegex = new RegExp(`^([\\d.]+)\\s*(${uomPattern})\\b(?:[- \\t@xX]*(.*))?$`, 'i');
 
       let extractedPhone = '';
       let extractedAddress = '';
@@ -434,7 +429,10 @@ export default function QuickPastePage() {
 
       const newItems = [];
       for (let i = startIndex; i < lines.length; i++) {
-          const line = lines[i];
+          let line = lines[i];
+          
+          // Remove bold formatting if it exists on the line
+          line = line.replace(/^\*+/, '').replace(/\*+$/, '').trim();
           
           // --- DATE EXTRACTION ---
           const dateMatch = line.match(/^\s*(\d{1,2})[\/\-\.](\d{1,2})(?:[\/\-\.](\d{2,4}))?\s*$/);
@@ -452,38 +450,38 @@ export default function QuickPastePage() {
 
           // --- HEADER METADATA EXTRACTION (Phone & Address) ---
           if (checkingHeaders) {
-              // 1. Phone extraction
-              const phoneMatch = line.match(/^(?:\+?6?0)[1-9][0-9\-\s]{6,12}$/);
-              if (phoneMatch && !extractedPhone) {
-                  extractedPhone = line.trim();
+              // Extract phone number
+              if (line.match(/^(?:\+?6?0)[1-9][0-9\-\s]{6,12}$/)) {
+                  if (!extractedPhone) extractedPhone = line.trim();
                   continue;
               }
 
-              // 2. Address extraction
-              if (!extractedAddress) {
-                  const addressKeywords = ['jalan', 'jln', 'taman', 'tmn', 'lorong', 'bukit', 'kampung', 'kpg', 'kuala lumpur', 'selangor', 'kondominium', 'condo', 'apartment', 'apt', 'no.', 'no ', 'batu'];
-                  const hasAddressKeyword = addressKeywords.some(kw => line.toLowerCase().includes(kw));
-                  const hasQtyUom = line.match(qtyUomRegex);
-                  const startsWithNumber = line.match(/^[-*•\s]*\d+\.?\s+/);
+              // Address Extraction Logic (Checks if line is NOT a product)
+              const hasUom = new RegExp(`(?:\\b\\d+\\.?\\d*\\s*(?:${uomPattern})\\b)`, 'i').test(line);
+              const hasBullet = /^[-*•]/.test(line);
+              const startsWithNumber = /^\d+/.test(line);
 
-                  // If it contains an address keyword OR (it's a new customer and doesn't look like a product)
-                  if (hasAddressKeyword || (isNewCust && !hasQtyUom && !startsWithNumber && line.length > 5)) {
+              if (!hasUom && !hasBullet && !startsWithNumber && line.length > 3) {
+                  // Valid address or subtitle line
+                  if (!extractedAddress) {
                       extractedAddress = line.trim();
-                      continue;
+                  } else {
+                      extractedAddress += ', ' + line.trim();
                   }
+                  continue;
               }
 
-              // If line didn't match Date, Phone, or Address, it's likely the first item. Stop checking headers.
+              // If it hits a product line, stop checking headers
               checkingHeaders = false;
           }
           
           // --- PRODUCT ITEM EXTRACTION ---
           let cleanLine = line.replace(/^[-*•\s]+|^\d+\.\s+/, '').trim();
           let bracketNote = '';
-          const bracketMatch = cleanLine.match(/\((.*?)\)$/);
+          const bracketMatch = cleanLine.match(/\s*(\(.*?\))\s*$/);
           if (bracketMatch) {
-              bracketNote = ` (${bracketMatch[1]})`;
-              cleanLine = cleanLine.replace(/\(.*?\)$/, '').trim();
+              bracketNote = bracketMatch[1];
+              cleanLine = cleanLine.substring(0, bracketMatch.index).trim();
           }
           
           let qty = 1;
@@ -491,53 +489,44 @@ export default function QuickPastePage() {
           let price = 0;
           let rawName = cleanLine;
 
-          // Attempt Match 1: Extract Qty, UOM, and Price from the END of the string
           const endMatch = rawName.match(endQtyUomPriceRegex);
-          
           if (endMatch) {
               qty = parseFloat(endMatch[1]);
               uom = endMatch[2].toUpperCase();
-              if (endMatch[3]) {
-                  price = parseFloat(endMatch[3]);
-              }
-              // Keep whatever was before the Qty/UOM as the product name
+              if (endMatch[3]) price = parseFloat(endMatch[3]);
               rawName = rawName.substring(0, endMatch.index).trim();
           } else {
-              // Attempt Match 2: Extract Qty and UOM from the START of the string
               const startMatch = rawName.match(startQtyUomRegex);
               if (startMatch) {
                   qty = parseFloat(startMatch[1]);
                   uom = startMatch[2].toUpperCase();
-                  rawName = startMatch[3].trim();
+                  rawName = (startMatch[3] || '').trim();
                   
-                  // Check for explicit trailing price since Qty/UOM were at the front
-                  const explicitPriceRegex = /\s+(?:(?:RM|rm)\s*([\d.]+)|(\d+\.\d{1,2}))\s*$/i;
-                  const pMatch = rawName.match(explicitPriceRegex);
+                  // Secondary price check for front-loaded formats
+                  const pMatch = rawName.match(/\s+[- \t@xX]*(?:RM|rm)?\s*(\d+(?:\.\d{1,2})?)\s*$/i);
                   if (pMatch) {
-                      price = parseFloat(pMatch[1] || pMatch[2]);
+                      price = parseFloat(pMatch[1]);
                       rawName = rawName.substring(0, pMatch.index).trim();
                   }
               } else {
-                  // Fallback: Just a multiplier at the end without UOM (e.g., "x5")
-                  const qtyOnlyRegex = /(?:\s|-|x|X)\s*([\d.]+)\s*$/i;
-                  const qtyMatch = rawName.match(qtyOnlyRegex);
+                  const qtyMatch = rawName.match(/(?:[- \t@xX]+)([\d.]+)\s*$/i);
                   if (qtyMatch) {
                       qty = parseFloat(qtyMatch[1]);
                       rawName = rawName.substring(0, qtyMatch.index).trim();
                   }
-
-                  // Check for explicit price fallback
-                  const explicitPriceRegex = /\s+(?:(?:RM|rm)\s*([\d.]+)|(\d+\.\d{1,2}))\s*$/i;
-                  const pMatch = rawName.match(explicitPriceRegex);
+                  
+                  const pMatch = rawName.match(/\s+[- \t@xX]*(?:RM|rm)?\s*(\d+(?:\.\d{1,2})?)\s*$/i);
                   if (pMatch) {
-                      price = parseFloat(pMatch[1] || pMatch[2]);
+                      price = parseFloat(pMatch[1]);
                       rawName = rawName.substring(0, pMatch.index).trim();
                   }
               }
           }
 
           rawName = rawName.replace(/^[-:]+\s*/, '').replace(/\s*[-:]+$/, '').trim();
-          const bestProduct = findBestProductMatch(rawName + bracketNote, customerHistoryCodes);
+          rawName = rawName + (bracketNote ? ' ' + bracketNote : '');
+
+          const bestProduct = findBestProductMatch(rawName, customerHistoryCodes);
 
           let finalUom = uom;
           if (!finalUom && bestProduct) finalUom = bestProduct.BaseUOM;
@@ -553,8 +542,10 @@ export default function QuickPastePage() {
           });
       }
 
-      setNewCustPhone(extractedPhone);
-      setNewCustAddress(extractedAddress);
+      // Override state with extracted metadata if found
+      if (extractedPhone) setNewCustPhone(extractedPhone);
+      if (extractedAddress) setNewCustAddress(extractedAddress);
+      
       setParsedOrderItems(newItems);
   };
 
@@ -567,11 +558,9 @@ export default function QuickPastePage() {
       const lines = priceRawText.split('\n').map(l => l.trim()).filter(l => l !== '');
       const newItems = [];
       const uomPattern = KNOWN_UOMS.join('|');
-      // Match formats like: "12kg", "80gx50pkt", "200g x 20pkt"
       const uomRegex = new RegExp(`(\\d+(?:\\.\\d+)?\\s*(?:${uomPattern})(?:\\s*[xX\\*]\\s*\\d+\\s*[a-zA-Z]+)?)`, 'i');
 
       lines.forEach((line, i) => {
-          // Skip headers
           if (line.startsWith('*') || line.toLowerCase().includes('price:')) return;
 
           const match = line.match(uomRegex);
@@ -580,17 +569,12 @@ export default function QuickPastePage() {
               const namePart = line.substring(0, match.index).trim();
               const afterPart = line.substring(match.index + uomStr.length).trim();
 
-              // Find price after UOM
               const priceMatch = afterPart.match(/(\d+(?:\.\d+)?)/);
               if (priceMatch) {
                   const price = parseFloat(priceMatch[1]);
-                  // Clean product name
                   const cleanName = namePart.replace(/[^\w\s\u4e00-\u9fa5]/g, '').trim();
-
-                  // Basic match, no history boost
                   const bestProduct = findBestProductMatch(cleanName);
 
-                  // Only add matched products with price > 0
                   if (bestProduct && price > 0) {
                       newItems.push({
                           id: Date.now() + i,
@@ -646,8 +630,6 @@ export default function QuickPastePage() {
 
       let finalCustomerName = '';
       let finalContactPerson = '';
-      let finalContactNumber = '';
-      let finalDeliveryAddress = '';
 
       if (selectedCustomer === 'NEW') {
           if (!newCustName.trim()) {
@@ -655,15 +637,15 @@ export default function QuickPastePage() {
               return alert("Please enter the new customer's name.");
           }
           finalCustomerName = newCustName.toUpperCase();
-          finalContactNumber = newCustPhone;
-          finalDeliveryAddress = newCustAddress;
       } else {
           const cust = customers.find(c => c.id.toString() === selectedCustomer);
           finalCustomerName = cust.Branch ? `${cust.CompanyName} - ${cust.Branch}`.toUpperCase() : cust.CompanyName.toUpperCase();
           finalContactPerson = cust.ContactPerson || '';
-          finalContactNumber = cust.ContactNumber || '';
-          finalDeliveryAddress = cust.DeliveryAddress || '';
       }
+
+      // Both New and Existing customers use the exposed input fields for Address/Phone
+      const finalContactNumber = newCustPhone;
+      const finalDeliveryAddress = newCustAddress;
 
       const dateStr = deliveryDate.replaceAll('-', '').slice(2);
       const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -712,10 +694,10 @@ export default function QuickPastePage() {
           "ProductCode": item.productCode,
           "ProductName": item.productName,
           "Supplier": selectedSupplier,
-          "PurchaseQty": 0, // Set 0 to not affect stock
+          "PurchaseQty": 0, 
           "PurchaseUOM": item.uom,
           "CostPrice": item.price,
-          "InvoiceNumber": "PRICE_LIST", // Identifier
+          "InvoiceNumber": "PRICE_LIST", 
           "LoggedBy": currentUser
       }));
 
@@ -793,7 +775,7 @@ export default function QuickPastePage() {
               </label>
               <textarea 
                   className="w-full flex-1 border border-gray-200 bg-gray-50 rounded-2xl p-4 text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none transition-all placeholder-gray-300"
-                  placeholder={`Example:\nNEW CAFE BISTRO\n012-3456789\n123 Jalan Bukit Bintang, KL\n24/02\n2CTN MANGO GOLD SUSU\n5PCS avocado`}
+                  placeholder={`Example:\n*NEW CAFE BISTRO*\n012-3456789\n123 Jalan Bukit Bintang, KL\n24/02\n2CTN MANGO GOLD SUSU\n5PCS avocado`}
                   value={orderRawText}
                   onChange={e => setOrderRawText(e.target.value)}
               />
@@ -807,55 +789,72 @@ export default function QuickPastePage() {
 
           {/* RIGHT: Validation & Review */}
           <div className="lg:col-span-8 bg-white p-4 md:p-6 rounded-3xl shadow-xl border border-gray-100 flex flex-col min-h-[500px] lg:h-[calc(100vh-180px)] relative">
-              <div className="flex flex-col lg:flex-row gap-4 mb-4 flex-none">
-                  <div className="flex-1">
-                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Detected Customer</label>
-                      <SearchableCustomerSelect 
-                          selectedCustomerId={selectedCustomer}
-                          customers={customers}
-                          onSelect={(id) => setSelectedCustomer(id)}
-                      />
+              
+              {/* Dynamic Header Block */}
+              <div className="flex flex-col gap-4 mb-6 flex-none bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                  <div className="flex flex-col lg:flex-row gap-4">
+                      <div className="flex-[2]">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Customer Selection</label>
+                          <SearchableCustomerSelect 
+                              selectedCustomerId={selectedCustomer}
+                              customers={customers}
+                              onSelect={(id) => {
+                                  setSelectedCustomer(id);
+                                  if (id === 'NEW') {
+                                      setNewCustName('');
+                                  } else if (id) {
+                                      const cust = customers.find(c => c.id.toString() === id);
+                                      if (cust) {
+                                          setNewCustPhone(cust.ContactNumber || '');
+                                          setNewCustAddress(cust.DeliveryAddress || '');
+                                      }
+                                  }
+                              }}
+                          />
+                      </div>
+                      
+                      {selectedCustomer === 'NEW' && (
+                          <div className="flex-[1.5]">
+                              <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1.5">New Company Name *</label>
+                              <input type="text" className="w-full p-2.5 rounded-xl border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-blue-900 bg-white" value={newCustName} onChange={e=>setNewCustName(e.target.value)} placeholder="e.g. BISTRO 123" />
+                          </div>
+                      )}
+
+                      <div className="w-full lg:w-32">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Mode</label>
+                          <select 
+                              className="w-full border border-gray-200 bg-white p-2.5 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              value={deliveryMode}
+                              onChange={e => setDeliveryMode(e.target.value)}
+                          >
+                              <option value="Driver">Driver</option>
+                              <option value="Lalamove">Lalamove</option>
+                              <option value="Self Pick-up">Self Pick-up</option>
+                          </select>
+                      </div>
+                      <div className="w-full lg:w-40">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Delivery Date</label>
+                          <input 
+                              type="date"
+                              className="w-full border border-gray-200 bg-white p-2.5 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              value={deliveryDate}
+                              onChange={e => setDeliveryDate(e.target.value)}
+                          />
+                      </div>
                   </div>
-                  <div className="w-full lg:w-32">
-                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Mode</label>
-                      <select 
-                          className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          value={deliveryMode}
-                          onChange={e => setDeliveryMode(e.target.value)}
-                      >
-                          <option value="Driver">Driver</option>
-                          <option value="Lalamove">Lalamove</option>
-                          <option value="Self Pick-up">Self Pick-up</option>
-                      </select>
-                  </div>
-                  <div className="w-full lg:w-40">
-                      <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Delivery Date</label>
-                      <input 
-                          type="date"
-                          className="w-full border border-gray-200 bg-gray-50 p-3 rounded-xl text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          value={deliveryDate}
-                          onChange={e => setDeliveryDate(e.target.value)}
-                      />
+                  
+                  {/* Exposed Contact & Address Fields */}
+                  <div className="flex flex-col lg:flex-row gap-4">
+                      <div className="flex-1">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Phone Number</label>
+                          <input type="text" className="w-full p-2.5 rounded-xl border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white" value={newCustPhone} onChange={e=>setNewCustPhone(e.target.value)} placeholder="e.g. 012-3456789" />
+                      </div>
+                      <div className="flex-[2]">
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5">Delivery Address</label>
+                          <input type="text" className="w-full p-2.5 rounded-xl border border-gray-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white" value={newCustAddress} onChange={e=>setNewCustAddress(e.target.value)} placeholder="Full delivery address" />
+                      </div>
                   </div>
               </div>
-
-              {/* NEW CUSTOMER INPUT FIELDS */}
-              {selectedCustomer === 'NEW' && (
-                   <div className="flex flex-col lg:flex-row gap-4 mb-6 flex-none bg-blue-50/50 p-4 rounded-xl border border-blue-100 shadow-sm animate-in fade-in">
-                        <div className="flex-1">
-                            <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1.5">Customer Name *</label>
-                            <input type="text" className="w-full p-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none font-bold text-gray-800" value={newCustName} onChange={e=>setNewCustName(e.target.value)} placeholder="e.g. BISTRO 123" />
-                        </div>
-                        <div className="flex-1">
-                            <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1.5">Phone Number</label>
-                            <input type="text" className="w-full p-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={newCustPhone} onChange={e=>setNewCustPhone(e.target.value)} placeholder="e.g. 012-3456789" />
-                        </div>
-                        <div className="flex-1 lg:flex-[1.5]">
-                            <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1.5">Delivery Address</label>
-                            <input type="text" className="w-full p-2.5 rounded-lg border border-blue-200 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={newCustAddress} onChange={e=>setNewCustAddress(e.target.value)} placeholder="Full address" />
-                        </div>
-                   </div>
-              )}
 
               <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3">
                   {parsedOrderItems.length === 0 ? (
