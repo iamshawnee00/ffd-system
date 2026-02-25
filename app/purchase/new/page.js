@@ -2,14 +2,90 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
-// Removed Sidebar import as it is handled in layout
+import { 
+  ShoppingBagIcon, 
+  ClipboardDocumentListIcon, 
+  PencilSquareIcon, 
+  TrashIcon, 
+  CheckIcon, 
+  XMarkIcon 
+} from '@heroicons/react/24/outline';
+
+// Custom Searchable Product Dropdown for History Editing
+function HistoryProductSelect({ currentProductCode, products, onChange }) {
+    const [isOpen, setIsOpen] = useState(false);
+    const [search, setSearch] = useState('');
+
+    const selectedProduct = products.find(p => p.ProductCode === currentProductCode);
+    const displayName = selectedProduct ? selectedProduct.ProductName : '-- Select Product --';
+
+    const filteredProducts = products.filter(p => {
+        if (!search) return true;
+        const terms = search.toLowerCase().split(' ').filter(t => t);
+        const searchStr = `${p.ProductName || ''} ${p.ProductCode || ''}`.toLowerCase();
+        return terms.every(term => searchStr.includes(term));
+    });
+
+    return (
+        <div className="relative w-full min-w-[200px]">
+            <div 
+                onClick={() => setIsOpen(!isOpen)}
+                className="p-1.5 border border-purple-300 rounded outline-none focus:ring-1 focus:ring-purple-500 w-full font-bold uppercase bg-white cursor-pointer text-xs flex justify-between items-center"
+            >
+                <span className="truncate">{displayName}</span>
+                <span className="text-[10px] text-gray-400 ml-1 shrink-0">▼</span>
+            </div>
+            {isOpen && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)}></div>
+                    <div className="absolute z-50 mt-1 w-64 bg-white border border-gray-200 rounded-lg shadow-xl flex flex-col overflow-hidden">
+                        <div className="p-2 border-b border-gray-100 bg-gray-50">
+                            <input 
+                                type="text"
+                                autoFocus
+                                placeholder="Search product..."
+                                className="w-full p-1.5 border border-gray-200 rounded text-xs outline-none focus:ring-1 focus:ring-purple-500"
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                onClick={(e) => e.stopPropagation()}
+                            />
+                        </div>
+                        <div className="max-h-48 overflow-y-auto custom-scrollbar">
+                            {filteredProducts.map(p => (
+                                <div 
+                                    key={p.ProductCode}
+                                    className="p-2 hover:bg-purple-50 cursor-pointer text-xs border-b border-gray-50 last:border-0"
+                                    onClick={() => {
+                                        onChange(p.ProductCode, p.ProductName);
+                                        setIsOpen(false);
+                                        setSearch('');
+                                    }}
+                                >
+                                    <div className="font-bold text-gray-800 uppercase">{p.ProductName}</div>
+                                    <div className="text-[9px] text-gray-400 font-mono">{p.ProductCode}</div>
+                                </div>
+                            ))}
+                            {filteredProducts.length === 0 && (
+                                <div className="p-3 text-center text-xs text-gray-400">No products found</div>
+                            )}
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+}
 
 export default function NewPurchasePage() {
   const router = useRouter();
   
+  // Tab State
+  const [activeTab, setActiveTab] = useState('new'); // 'new' or 'history'
+
   // Data States
   const [suppliers, setSuppliers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [purchaseHistory, setPurchaseHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // User State
@@ -29,6 +105,11 @@ export default function NewPurchasePage() {
 
   // Temporary input state for product cards
   const [productInputs, setProductInputs] = useState({});
+
+  // History Edit State
+  const [editingId, setEditingId] = useState(null);
+  const [editData, setEditData] = useState({});
+  const [historySearchTerm, setHistorySearchTerm] = useState('');
 
   // 1. Fetch Data & User on Load
   useEffect(() => {
@@ -58,12 +139,24 @@ export default function NewPurchasePage() {
 
       setSuppliers(suppData || []);
       setProducts(prodData || []);
+      
+      await fetchPurchaseHistory();
       setLoading(false);
     }
     loadData();
   }, [router]);
 
-  // Handle inputs for individual product cards
+  const fetchPurchaseHistory = async () => {
+    const { data } = await supabase
+        .from('Purchase')
+        .select('*')
+        .order('Timestamp', { ascending: false })
+        .limit(5000); // Fetch a large batch to allow comprehensive searching
+    if (data) setPurchaseHistory(data);
+  };
+
+  // --- NEW PURCHASE LOGIC ---
+
   const handleProductInputChange = (code, field, value) => {
     setProductInputs(prev => ({
       ...prev,
@@ -71,11 +164,9 @@ export default function NewPurchasePage() {
     }));
   };
 
-  // Add Item to Cart
   const addToCart = (product) => {
     const inputs = productInputs[product.ProductCode] || {};
     const qty = parseFloat(inputs.qty);
-    // Use inputted cost, or default to 0
     const cost = inputs.cost === undefined || inputs.cost === '' ? 0 : parseFloat(inputs.cost);
     
     if (!qty || qty <= 0) return;
@@ -96,7 +187,6 @@ export default function NewPurchasePage() {
 
     setCart([...cart, newItem]);
     
-    // Clear inputs for this product
     setProductInputs(prev => {
       const newState = { ...prev };
       delete newState[product.ProductCode];
@@ -109,7 +199,6 @@ export default function NewPurchasePage() {
     setCart(cart.filter(item => item.ProductCode !== code));
   };
 
-  // Submit Purchase
   const handleSubmit = async () => {
     if (!selectedSupplier || !purchaseDate || cart.length === 0) {
       alert("Please select a supplier, date, and items.");
@@ -119,7 +208,7 @@ export default function NewPurchasePage() {
     setSubmitting(true);
 
     const purchaseRows = cart.map(item => ({
-      "Timestamp": new Date(), 
+      "Timestamp": new Date(`${purchaseDate}T12:00:00`), // Use selected date
       "ProductCode": item.ProductCode,
       "ProductName": item.ProductName,
       "Supplier": selectedSupplier,
@@ -130,7 +219,6 @@ export default function NewPurchasePage() {
       "LoggedBy": currentUser 
     }));
 
-    // Insert into 'Purchase' table
     const { error } = await supabase.from('Purchase').insert(purchaseRows);
 
     if (error) {
@@ -138,12 +226,64 @@ export default function NewPurchasePage() {
       setSubmitting(false);
     } else {
       alert("Purchase Logged Successfully!");
-      // Reset form
       setCart([]);
       setInvoiceNumber('');
       setSubmitting(false);
+      fetchPurchaseHistory(); // Refresh history table
     }
   };
+
+  // --- HISTORY EDIT LOGIC ---
+
+  const startEditing = (item) => {
+      setEditingId(item.id);
+      setEditData({ ...item });
+  };
+
+  const cancelEditing = () => {
+      setEditingId(null);
+      setEditData({});
+  };
+
+  const handleSaveEdit = async () => {
+      if (!editData.Supplier || !editData.ProductCode || editData.PurchaseQty === '' || editData.CostPrice === '') {
+          return alert("Please fill in all required fields.");
+      }
+
+      const { error } = await supabase
+          .from('Purchase')
+          .update({
+              Supplier: editData.Supplier,
+              ProductCode: editData.ProductCode,
+              ProductName: editData.ProductName,
+              PurchaseQty: Number(editData.PurchaseQty),
+              PurchaseUOM: editData.PurchaseUOM,
+              CostPrice: Number(editData.CostPrice),
+              InvoiceNumber: editData.InvoiceNumber || ''
+          })
+          .eq('id', editingId);
+
+      if (error) {
+          alert("Error updating purchase: " + error.message);
+      } else {
+          alert("Purchase updated successfully.");
+          setEditingId(null);
+          fetchPurchaseHistory();
+      }
+  };
+
+  const handleDeletePurchase = async (id) => {
+      if (!confirm("Are you sure you want to delete this purchase record? This action cannot be undone.")) return;
+      
+      const { error } = await supabase.from('Purchase').delete().eq('id', id);
+      if (error) {
+          alert("Error deleting: " + error.message);
+      } else {
+          fetchPurchaseHistory();
+      }
+  };
+
+  // --- HELPERS ---
 
   const filteredProducts = products.filter(p => {
     if (!searchTerm) return false;
@@ -152,6 +292,19 @@ export default function NewPurchasePage() {
     const combinedText = (p.ProductName + ' ' + p.ProductCode + ' ' + (p.Category || '')).toLowerCase();
     return searchParts.every(part => combinedText.includes(part));
   });
+
+  const filteredPurchaseHistory = purchaseHistory.filter(item => {
+    if (!historySearchTerm) return true;
+    const searchTerms = historySearchTerm.toLowerCase().split(' ').filter(t => t);
+    
+    const dateStr = new Date(item.Timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    const combinedText = `${dateStr} ${item.Supplier || ''} ${item.ProductName || ''} ${item.ProductCode || ''} ${item.InvoiceNumber || ''}`.toLowerCase();
+    
+    return searchTerms.every(part => combinedText.includes(part));
+  });
+
+  // Limit direct view to 50 items, but allow full results if searching
+  const displayedHistory = historySearchTerm ? filteredPurchaseHistory : filteredPurchaseHistory.slice(0, 50);
 
   const getStockColor = (balance) => {
     if (balance === null || balance === undefined) return 'bg-gray-100 text-gray-500'; 
@@ -164,21 +317,40 @@ export default function NewPurchasePage() {
   if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-500 font-bold">Loading...</div>;
 
   return (
-    // RESPONSIVE LAYOUT FIX: No manual margin-left, handled by layout wrapper
-    <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6">
+    <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6 bg-gray-50 min-h-screen">
       
       {/* Page Header */}
       <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
          <div>
-             <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Log New Purchase</h1>
-             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Record incoming stock and costs.</p>
+             <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Purchase Hub</h1>
+             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Record and manage incoming stock costs</p>
          </div>
          <div className="text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm">
              Logged as: {currentUser}
          </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6">
+      {/* TABS */}
+      <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200">
+          <button 
+              onClick={() => setActiveTab('new')} 
+              className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'new' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+          >
+              <ShoppingBagIcon className="w-5 h-5" /> Log New Purchase
+          </button>
+          <button 
+              onClick={() => setActiveTab('history')} 
+              className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'history' ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+          >
+              <ClipboardDocumentListIcon className="w-5 h-5" /> Purchase History
+          </button>
+      </div>
+
+      {/* ==============================
+          TAB 1: LOG NEW PURCHASE 
+          ============================== */}
+      {activeTab === 'new' && (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in">
         
         {/* --- LEFT COLUMN --- */}
         <div className="lg:col-span-2 space-y-4 md:space-y-6">
@@ -392,6 +564,170 @@ export default function NewPurchasePage() {
         </div>
 
       </div>
+      )}
+
+      {/* ==============================
+          TAB 2: PURCHASE HISTORY 
+          ============================== */}
+      {activeTab === 'history' && (
+      <div className="bg-white p-4 md:p-6 rounded-3xl shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-180px)] flex flex-col">
+         
+         {/* History Header & Search */}
+         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
+             <h2 className="text-lg font-black text-gray-800 tracking-tight flex items-center gap-2">
+                 <ClipboardDocumentListIcon className="w-6 h-6 text-purple-600" />
+                 Recent Purchases
+             </h2>
+             <div className="relative w-full sm:w-72">
+                 <input 
+                     type="text" 
+                     placeholder="Search date, product, supplier, invoice..." 
+                     className="w-full pl-10 p-2.5 border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50/50 transition-all"
+                     value={historySearchTerm}
+                     onChange={(e) => setHistorySearchTerm(e.target.value)}
+                 />
+                 <span className="absolute left-3 top-3 text-gray-400">🔍</span>
+             </div>
+         </div>
+
+         <div className="flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-2xl pb-32">
+             <table className="w-full text-left whitespace-nowrap min-w-[800px]">
+                 <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-wider sticky top-0 z-10 shadow-sm">
+                     <tr>
+                         <th className="p-3 pl-4">Date</th>
+                         <th className="p-3">Supplier</th>
+                         <th className="p-3">Product</th>
+                         <th className="p-3 text-center">Qty</th>
+                         <th className="p-3 text-center">UOM</th>
+                         <th className="p-3 text-right">Cost (RM)</th>
+                         <th className="p-3">Invoice/Ref</th>
+                         <th className="p-3 text-center pr-4">Actions</th>
+                     </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-50 text-xs font-medium text-gray-700">
+                     {displayedHistory.map((item) => (
+                         <tr key={item.id} className="hover:bg-purple-50/30 transition-colors group">
+                             {/* Date */}
+                             <td className="p-3 pl-4 text-gray-500 font-mono text-[10px]">
+                                 {new Date(item.Timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                             </td>
+                             
+                             {/* Supplier */}
+                             <td className="p-3">
+                                 {editingId === item.id ? (
+                                     <select 
+                                        className="p-1.5 border border-purple-300 rounded outline-none focus:ring-1 focus:ring-purple-500 w-full font-bold uppercase"
+                                        value={editData.Supplier}
+                                        onChange={e => setEditData({...editData, Supplier: e.target.value})}
+                                     >
+                                        <option value="">Select...</option>
+                                        {suppliers.map(s => <option key={s.SupplierName} value={s.SupplierName}>{s.SupplierName}</option>)}
+                                     </select>
+                                 ) : (
+                                     <span className="font-bold text-gray-800 uppercase">{item.Supplier}</span>
+                                 )}
+                             </td>
+
+                             {/* Product - Now Editable via Custom Select */}
+                             <td className="p-3">
+                                 {editingId === item.id ? (
+                                     <HistoryProductSelect 
+                                         currentProductCode={editData.ProductCode}
+                                         products={products}
+                                         onChange={(code, name) => setEditData({...editData, ProductCode: code, ProductName: name})}
+                                     />
+                                 ) : (
+                                     <>
+                                         <div className="font-bold text-gray-800 uppercase">{item.ProductName}</div>
+                                         <div className="text-[9px] text-gray-400 font-mono mt-0.5">{item.ProductCode}</div>
+                                     </>
+                                 )}
+                             </td>
+
+                             {/* Qty */}
+                             <td className="p-3 text-center">
+                                 {editingId === item.id ? (
+                                     <input 
+                                        type="number" 
+                                        className="p-1.5 border border-purple-300 rounded outline-none focus:ring-1 focus:ring-purple-500 w-16 text-center font-bold"
+                                        value={editData.PurchaseQty}
+                                        onChange={e => setEditData({...editData, PurchaseQty: e.target.value})}
+                                     />
+                                 ) : (
+                                     <span className="font-black text-gray-800 bg-gray-100 px-2 py-1 rounded-lg">{item.PurchaseQty}</span>
+                                 )}
+                             </td>
+
+                             {/* UOM */}
+                             <td className="p-3 text-center">
+                                 {editingId === item.id ? (
+                                     <input 
+                                        type="text" 
+                                        className="p-1.5 border border-purple-300 rounded outline-none focus:ring-1 focus:ring-purple-500 w-16 text-center font-bold uppercase"
+                                        value={editData.PurchaseUOM}
+                                        onChange={e => setEditData({...editData, PurchaseUOM: e.target.value.toUpperCase()})}
+                                     />
+                                 ) : (
+                                     <span className="font-bold text-gray-500 uppercase">{item.PurchaseUOM}</span>
+                                 )}
+                             </td>
+
+                             {/* Cost */}
+                             <td className="p-3 text-right">
+                                 {editingId === item.id ? (
+                                     <input 
+                                        type="number" 
+                                        step="0.01"
+                                        className="p-1.5 border border-purple-300 rounded outline-none focus:ring-1 focus:ring-purple-500 w-20 text-right font-black text-red-600"
+                                        value={editData.CostPrice}
+                                        onChange={e => setEditData({...editData, CostPrice: e.target.value})}
+                                     />
+                                 ) : (
+                                     <span className="font-black text-red-600">{Number(item.CostPrice).toFixed(2)}</span>
+                                 )}
+                             </td>
+
+                             {/* Invoice */}
+                             <td className="p-3">
+                                 {editingId === item.id ? (
+                                     <input 
+                                        type="text" 
+                                        className="p-1.5 border border-purple-300 rounded outline-none focus:ring-1 focus:ring-purple-500 w-full uppercase text-xs"
+                                        value={editData.InvoiceNumber}
+                                        onChange={e => setEditData({...editData, InvoiceNumber: e.target.value})}
+                                     />
+                                 ) : (
+                                     <span className="text-gray-400 font-mono text-[10px] bg-gray-50 px-2 py-1 rounded">{item.InvoiceNumber || '-'}</span>
+                                 )}
+                             </td>
+
+                             {/* Actions */}
+                             <td className="p-3 text-center pr-4">
+                                 {editingId === item.id ? (
+                                     <div className="flex items-center justify-center gap-2">
+                                         <button onClick={handleSaveEdit} className="p-1.5 bg-green-100 text-green-600 hover:bg-green-200 rounded transition"><CheckIcon className="w-4 h-4" /></button>
+                                         <button onClick={cancelEditing} className="p-1.5 bg-gray-100 text-gray-500 hover:bg-gray-200 rounded transition"><XMarkIcon className="w-4 h-4" /></button>
+                                     </div>
+                                 ) : (
+                                     <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                         <button onClick={() => startEditing(item)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition"><PencilSquareIcon className="w-4 h-4" /></button>
+                                         <button onClick={() => handleDeletePurchase(item.id)} className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition"><TrashIcon className="w-4 h-4" /></button>
+                                     </div>
+                                 )}
+                             </td>
+                         </tr>
+                     ))}
+                     {displayedHistory.length === 0 && (
+                         <tr>
+                             <td colSpan="8" className="p-10 text-center text-gray-400 italic">No purchase records found matching your search.</td>
+                         </tr>
+                     )}
+                 </tbody>
+             </table>
+         </div>
+      </div>
+      )}
+
     </div>
   );
 }

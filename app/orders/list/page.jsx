@@ -1,206 +1,135 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabaseClient';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { 
+  ClipboardDocumentListIcon, 
+  PencilSquareIcon, 
+  TrashIcon
+} from '@heroicons/react/24/outline';
 
 export default function OrderListPage() {
-  const [orders, setOrders] = useState([]); 
+  const router = useRouter();
+  
+  // Data States
+  const [orderHistory, setOrderHistory] = useState([]);
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  // Use localStorage to persist the active tab, defaulting to 'Packing'
-  const [activeTab, setActiveTab] = useState('Packing');
-  const [selectedOrders, setSelectedOrders] = useState(new Set());
-  const [products, setProducts] = useState([]); 
-  const [customers, setCustomers] = useState([]); 
-  
-  // Search State for Order List
-  const [orderSearchTerm, setOrderSearchTerm] = useState('');
 
-  // Edit Modal State
+  // Search & Filter
+  const [historySearchTerm, setHistorySearchTerm] = useState('');
+
+  // Edit Modal States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editingOrder, setEditingOrder] = useState(null); 
-  const [editingItems, setEditingItems] = useState([]); 
+  const [editingOrder, setEditingOrder] = useState(null);
+  const [editingItems, setEditingItems] = useState([]);
   const [deletedItemIds, setDeletedItemIds] = useState([]);
   const [productSearchTerm, setProductSearchTerm] = useState('');
-  const [isSendingToShipday, setIsSendingToShipday] = useState(false);
-  const [isBulkSending, setIsBulkSending] = useState(false);
 
-  const router = useRouter();
-
-  // Load active tab from localStorage on mount
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedTab = localStorage.getItem('orderListActiveTab');
-      if (savedTab) {
-        setActiveTab(savedTab);
-      }
-    }
-  }, []);
-
-  // Save active tab to localStorage whenever it changes
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('orderListActiveTab', activeTab);
-    }
-    setSelectedOrders(new Set()); // Reset selection when switching tabs
-  }, [activeTab]);
-
-  useEffect(() => {
-    fetchOrders();
-    fetchProducts();
-    fetchCustomers();
-  }, []);
-
-  async function fetchProducts() {
-    const { data } = await supabase
-      .from('ProductMaster')
-      .select('ProductCode, ProductName, BaseUOM, AllowedUOMs');
-    if (data) setProducts(data);
-  }
-
-  async function fetchCustomers() {
-    const { data } = await supabase
-      .from('Customers')
-      .select('CompanyName, ContactPerson, DeliveryAddress, ContactNumber')
-      .order('CompanyName');
-    if (data) setCustomers(data);
-  }
-
-  async function fetchOrders() {
-    setLoading(true);
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      router.push('/login');
-      return;
-    }
-
+  // 1. Fetch Orders & Products
+  const fetchOrders = async () => {
     const { data, error } = await supabase
-      .from('Orders')
-      .select('*')
-      // Sort by Timestamp descending (latest first)
-      .order('Timestamp', { ascending: false });
-
+        .from('Orders')
+        .select('*') // Select all, or explicitly select Status if needed: select('*, Status')
+        .order('Timestamp', { ascending: false })
+        .limit(3000); 
+    
     if (error) {
-      console.error('Error fetching orders:', error);
-    } else {
-      // Deduplicate by DO Number - keep first occurrence (which is latest due to sort)
-      const uniqueOrders = [];
-      const seenDOs = new Set();
-      data.forEach(row => {
-        if (!seenDOs.has(row.DONumber)) {
-          seenDOs.add(row.DONumber);
-          uniqueOrders.push(row);
-        }
-      });
-      setOrders(uniqueOrders);
+        console.error("Error fetching orders:", error);
+        return;
     }
-    setLoading(false);
-  }
-
-  // --- ACTIONS ---
-
-  const updateOrderStatus = async (doNumber, newStatus) => {
-    setOrders(prev => prev.map(o => 
-      o.DONumber === doNumber ? { ...o, Status: newStatus } : o
-    ));
-    await supabase.from('Orders').update({ Status: newStatus }).eq('DONumber', doNumber);
-  };
-
-  const deleteOrder = async (doNumber) => {
-    if (!confirm(`Are you sure you want to delete order ${doNumber}? This cannot be undone.`)) return;
-    
-    // Optimistic UI Update
-    setOrders(prev => prev.filter(o => o.DONumber !== doNumber));
-
-    const { error } = await supabase
-      .from('Orders')
-      .delete()
-      .eq('DONumber', doNumber);
-
-    if (error) {
-      alert("Error deleting order: " + error.message);
-      fetchOrders(); // Revert on error
-    }
-  };
-
-  // --- SEARCH LOGIC ---
-  const handleSearch = async (term) => {
-    setOrderSearchTerm(term);
-    
-    if (!term) {
-      fetchOrders(); 
-      return;
-    }
-
-    // Do NOT set full page loading for search to avoid UI flicker
-    
-    const { data, error } = await supabase
-      .from('Orders')
-      .select('*')
-      .or(`"Customer Name".ilike.%${term}%,"Order Items".ilike.%${term}%`)
-      .order('Timestamp', { ascending: false });
 
     if (data) {
-      const uniqueOrders = [];
-      const seenDOs = new Set();
-      data.forEach(row => {
-        if (!seenDOs.has(row.DONumber)) {
-          seenDOs.add(row.DONumber);
-          uniqueOrders.push(row);
-        }
-      });
-      setOrders(uniqueOrders);
+        const grouped = {};
+        data.forEach(row => {
+            if (!grouped[row.DONumber]) {
+                // Store the ENTIRE row as info, ensuring Status is captured
+                grouped[row.DONumber] = { info: { ...row }, items: [] };
+            }
+            grouped[row.DONumber].items.push(row);
+        });
+        const sortedHistory = Object.values(grouped).sort((a, b) => new Date(b.info.Timestamp) - new Date(a.info.Timestamp));
+        setOrderHistory(sortedHistory);
     }
   };
 
-  // --- EDIT MODAL LOGIC ---
-  const openEditModal = async (orderSummary) => {
-    const { data: items, error } = await supabase
-      .from('Orders')
-      .select('*')
-      .eq('DONumber', orderSummary.DONumber);
-
-    if (error || !items) return;
-
-    setEditingOrder({ ...items[0] });
-    setEditingItems(items);
-    setDeletedItemIds([]);
-    setProductSearchTerm('');
-    setIsEditModalOpen(true);
-  };
-
-  const handleEditHeaderChange = (field, value) => {
-    setEditingOrder(prev => {
-      const newState = { ...prev, [field]: value };
-      if (field === "Customer Name") {
-        const matched = customers.find(c => c.CompanyName.toLowerCase() === value.toLowerCase());
-        if (matched) {
-          newState["Delivery Address"] = matched.DeliveryAddress || newState["Delivery Address"];
-          newState["Contact Person"] = matched.ContactPerson || newState["Contact Person"];
-          newState["Contact Number"] = matched.ContactNumber || newState["Contact Number"];
-        }
+  useEffect(() => {
+    async function loadData() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/login');
+        return;
       }
-      return newState;
-    });
+
+      await fetchOrders();
+      
+      const { data: prodData } = await supabase
+        .from('ProductMaster')
+        .select('ProductCode, ProductName, BaseUOM, AllowedUOMs')
+        .order('ProductName');
+      setProducts(prodData || []);
+      
+      setLoading(false);
+    }
+    
+    loadData();
+
+    // 🔴 REAL-TIME LISTENER: Auto-refresh Order List when Shipday Webhook updates the database
+    const channel = supabase
+      .channel('realtime_orders_status')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'Orders' }, () => {
+          fetchOrders(); // Silently pull the new data in the background
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [router]);
+
+  // ==========================================
+  // ORDER DELETION & MODAL TOGGLES
+  // ==========================================
+  const handleDeleteDO = async (doNumber) => {
+      if (!confirm(`Are you sure you want to delete order ${doNumber}? This will remove all items inside it.`)) return;
+      
+      const { error } = await supabase.from('Orders').delete().eq('DONumber', doNumber);
+      if (error) {
+          alert("Error deleting order: " + error.message);
+      } else {
+          fetchOrders();
+      }
   };
 
+  const openEditModal = (group) => {
+      setEditingOrder({ ...group.info });
+      setEditingItems([...group.items]);
+      setDeletedItemIds([]);
+      setProductSearchTerm('');
+      setIsEditModalOpen(true);
+  };
+
+  // ==========================================
+  // EDIT MODAL ITEM LOGIC
+  // ==========================================
   const handleEditItemChange = (index, field, value) => {
-    const newItems = [...editingItems];
-    newItems[index][field] = value;
-    if (field === 'Order Items') {
-        const matched = products.find(p => p.ProductName === value);
-        if (matched) {
-            newItems[index]["Product Code"] = matched.ProductCode;
-            newItems[index]["UOM"] = matched.BaseUOM;
-        }
-    }
-    setEditingItems(newItems);
+    setEditingItems(prev => {
+      const newItems = [...prev];
+      newItems[index] = { ...newItems[index], [field]: value };
+
+      if (field === 'Order Items') {
+          const matched = products.find(p => p.ProductName === value);
+          if (matched) {
+              newItems[index]["Product Code"] = matched.ProductCode;
+              newItems[index]["UOM"] = matched.BaseUOM;
+          }
+      }
+      return newItems;
+    });
   };
 
   const handleDeleteItem = (index) => {
     const item = editingItems[index];
-    // If it has a real DB id (doesn't start with new-), mark for deletion
     if (item.id && !String(item.id).startsWith('new-')) {
       setDeletedItemIds(prev => [...prev, item.id]);
     }
@@ -216,7 +145,7 @@ export default function OrderListPage() {
       "Delivery Address": editingOrder["Delivery Address"],
       "Contact Person": editingOrder["Contact Person"],
       "Contact Number": editingOrder["Contact Number"],
-      Status: editingOrder.Status,
+      Status: formatDisplayStatus(getRawStatus(editingOrder)),
       "Product Code": product.ProductCode,
       "Order Items": product.ProductName,
       Quantity: 1,
@@ -231,19 +160,19 @@ export default function OrderListPage() {
   const saveEditedOrder = async () => {
     if (!confirm("Save changes?")) return;
     
-    // 1. Delete removed items
     if (deletedItemIds.length > 0) {
       await supabase.from('Orders').delete().in('id', deletedItemIds);
     }
     
-    // 2. Separate New vs Existing Items
     const newItems = [];
     const existingItems = [];
 
+    // Ensure status is cleanly saved regardless of DB column origins
+    const cleanStatus = formatDisplayStatus(getRawStatus(editingOrder));
+
     editingItems.forEach(item => {
-        const isNew = String(item.id).startsWith('new-');
+        const isNew = !item.id || (typeof item.id === 'string' && item.id.startsWith('new-'));
         
-        // Common payload for both
         const payload = {
             "Customer Name": editingOrder["Customer Name"],
             "Delivery Address": editingOrder["Delivery Address"],
@@ -251,43 +180,31 @@ export default function OrderListPage() {
             "Contact Number": editingOrder["Contact Number"],
             "Delivery Date": editingOrder["Delivery Date"],
             "Delivery Mode": editingOrder["Delivery Mode"],
-            "Replacement": item.Replacement || "", // Fix null error
-            // Fields that might change per item
+            "Replacement": item.Replacement || "", 
             "Product Code": item["Product Code"],
             "Order Items": item["Order Items"],
             "Quantity": item.Quantity,
             "UOM": item.UOM,
             "Price": item.Price,
-            "DONumber": editingOrder.DONumber, // Ensure DO is correct
-            "Status": editingOrder.Status
+            "DONumber": editingOrder.DONumber,
+            "Status": cleanStatus
         };
 
         if (isNew) {
-            // For new items, we must NOT include 'id' so Supabase generates it
-            newItems.push({
-                ...payload,
-                "Timestamp": new Date() // Add timestamp for new items
-            });
+            newItems.push({ ...payload, "Timestamp": new Date() });
         } else {
-            // For existing items, we MUST include 'id' to update the specific row
-            existingItems.push({
-                ...payload,
-                id: item.id
-            });
+            existingItems.push({ ...payload, id: item.id });
         }
     });
 
-    // 3. Execute Operations
     let error = null;
 
     if (newItems.length > 0) {
-        // Explicitly insert new items (ID column omitted -> DB generates it)
         const { error: insertError } = await supabase.from('Orders').insert(newItems);
         if (insertError) error = insertError;
     }
 
     if (!error && existingItems.length > 0) {
-        // Upsert existing items (ID present -> DB updates it)
         const { error: updateError } = await supabase.from('Orders').upsert(existingItems);
         if (updateError) error = updateError;
     }
@@ -295,272 +212,368 @@ export default function OrderListPage() {
     if (error) {
       alert("Error saving: " + error.message);
     } else {
+      alert("Order updated successfully.");
       setIsEditModalOpen(false); 
       fetchOrders(); 
     }
   };
 
-  // --- SHIPDAY INTEGRATION ---
-  const sendToShipday = async () => {
-    if (!editingOrder) return;
-    setIsSendingToShipday(true);
-    try {
-      const response = await fetch('/api/shipday', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ order: { info: editingOrder, items: editingItems } }),
-      });
+  // ==========================================
+  // STATUS MAPPER & ROBUST UI HELPERS
+  // ==========================================
+  
+  // 1. Safely extract status checking multiple possible casing/column names from different API syncs
+  const getRawStatus = (info) => {
+      if (!info) return 'PENDING';
+      return info.Status || info.status || info.delivery_status || 'PENDING';
+  };
+
+  // 2. Map raw DB or Shipday statuses into clean UI labels
+  const formatDisplayStatus = (rawStatus) => {
+      if (!rawStatus) return 'PENDING';
+      const s = String(rawStatus).toUpperCase().trim();
       
-      const result = await response.json();
-      if (response.ok) {
-        alert(`Sent order ${editingOrder.DONumber} to Shipday!`);
-      } else {
-        alert(`Failed: ${result.error?.message || "Unknown Error"}`);
-      }
-    } catch (err) {
-      alert("Network Error");
-    } finally { 
-      setIsSendingToShipday(false); 
-    }
+      if (s === 'NOT_ASSIGNED' || s === 'PENDING') return 'PENDING';
+      if (s === 'NOT_ACCEPTED' || s === 'NOT_STARTED_YET' || s === 'ASSIGNED') return 'ASSIGNED';
+      if (s === 'STARTED' || s === 'PICKED_UP' || s === 'READY_TO_DELIVER' || s === 'IN TRANSIT') return 'IN TRANSIT';
+      if (s === 'ALREADY_DELIVERED' || s === 'DELIVERED') return 'DELIVERED';
+      if (s === 'FAILED_DELIVERY' || s === 'INCOMPLETE' || s === 'CANCELLED' || s === 'FAILED') return 'FAILED';
+      
+      return s; // Fallback to whatever raw string it is if unrecognized
   };
 
-  const sendSelectedToShipday = async () => {
-    if (selectedOrders.size === 0) return;
-    if (!confirm(`Send ${selectedOrders.size} orders to Shipday?`)) return;
-
-    setIsBulkSending(true);
-    let successCount = 0;
-    const doNumbers = Array.from(selectedOrders);
-    
-    for (const doNum of doNumbers) {
-      try {
-        const { data: items } = await supabase.from('Orders').select('*').eq('DONumber', doNum);
-        if (items?.length) {
-          let dateStr = items[0]["Delivery Date"];
-          const d = new Date(dateStr);
-          if(!isNaN(d.getTime())) dateStr = d.toISOString().split('T')[0];
-
-          const info = { ...items[0], "Delivery Date": dateStr };
-          
-          await fetch('/api/shipday', { 
-            method: 'POST', 
-            headers: { 'Content-Type': 'application/json' }, 
-            body: JSON.stringify({ order: { info, items } }) 
-          });
-          successCount++;
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    }
-    setIsBulkSending(false);
-    setSelectedOrders(new Set());
-    alert(`Bulk Send Complete. Processed: ${successCount}`);
+  // 3. Apply color styling based on the clean UI label
+  const getStatusColor = (rawStatus) => {
+      const s = formatDisplayStatus(rawStatus);
+      if(s === 'PENDING') return 'bg-orange-100 text-orange-700 border-orange-200';
+      if(s === 'ASSIGNED') return 'bg-blue-100 text-blue-700 border-blue-200';
+      if(s === 'IN TRANSIT') return 'bg-purple-100 text-purple-700 border-purple-200';
+      if(s === 'DELIVERED') return 'bg-green-100 text-green-700 border-green-200';
+      if(s === 'FAILED' || s === 'CANCELLED') return 'bg-red-100 text-red-700 border-red-200';
+      return 'bg-gray-100 text-gray-700 border-gray-200';
   };
 
-  const printOrder = () => {
-    window.open(`/orders/${editingOrder.id}/print`, '_blank');
-  };
-
-  // --- SELECTION & FILTER LOGIC ---
-  const filteredOrders = orders.filter(order => {
-    const status = order.Status || 'Pending';
-    if (activeTab === 'Packing') return status === 'Pending' || status === 'Packing';
-    if (activeTab === 'Completed') return status === 'Completed';
-    return false;
+  const filteredOrderHistory = orderHistory.filter(group => {
+      if (!historySearchTerm) return true;
+      const terms = historySearchTerm.toLowerCase().split(' ').filter(t => t);
+      const cleanStatus = formatDisplayStatus(getRawStatus(group.info));
+      const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${cleanStatus}`.toLowerCase();
+      return terms.every(t => searchStr.includes(t));
   });
 
-  const toggleSelectAll = () => {
-    if (selectedOrders.size === filteredOrders.length) {
-      setSelectedOrders(new Set());
-    } else {
-      const allDOs = filteredOrders.map(o => o.DONumber);
-      setSelectedOrders(new Set(allDOs));
-    }
-  };
+  const displayedHistory = historySearchTerm ? filteredOrderHistory : filteredOrderHistory.slice(0, 100);
 
-  const toggleSelectOrder = (doNumber) => {
-    const newSet = new Set(selectedOrders);
-    if (newSet.has(doNumber)) newSet.delete(doNumber);
-    else newSet.add(doNumber);
-    setSelectedOrders(newSet);
-  };
+  const filteredModalProducts = products.filter(p => {
+      if (!productSearchTerm) return false;
+      const lowerTerm = productSearchTerm.toLowerCase();
+      const searchParts = lowerTerm.split(' ');
+      const combinedText = (p.ProductName + ' ' + p.ProductCode).toLowerCase();
+      return searchParts.every(part => combinedText.includes(part));
+  });
 
-  const getCount = (tab) => {
-    return orders.filter(o => {
-      const s = o.Status || 'Pending';
-      if (tab === 'Packing') return s === 'Pending' || s === 'Packing';
-      if (tab === 'Completed') return s === 'Completed';
-      return false;
-    }).length;
-  };
 
-  const getUOMOptions = (prodCode) => {
-    const p = products.find(x => x.ProductCode === prodCode);
-    return p?.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()) : [];
-  };
-
-  const getDeliveryModeStyle = (mode) => {
-      if (!mode) return 'bg-purple-100 text-purple-700 border-purple-200'; // Default Driver
-      const m = mode.toLowerCase();
-      if (m.includes('lalamove')) return 'bg-orange-100 text-orange-800 border-orange-200';
-      if (m.includes('pick') || m.includes('self')) return 'bg-blue-100 text-blue-800 border-blue-200';
-      return 'bg-purple-100 text-purple-700 border-purple-200'; // Default Driver
-  };
-
-  if (loading) return <div className="p-10 text-center font-bold text-gray-400">Loading Orders...</div>;
+  if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-500 font-bold">Loading Order List...</div>;
 
   return (
-    <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6">
-      <datalist id="global-product-list">
-        {products.map(p => <option key={p.ProductCode} value={p.ProductName} />)}
-      </datalist>
-
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
-        <div>
-          <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Order Management</h1>
-          <p className="text-[10px] text-gray-400 font-bold uppercase">Workflow status list</p>
-        </div>
-        <Link href="/orders/new" className="w-full sm:w-auto bg-green-600 text-white font-bold py-2.5 px-6 rounded-xl text-xs text-center shadow-lg active:scale-95">+ New Order</Link>
+    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50">
+      
+      {/* Page Header */}
+      <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"> 
+         <div>
+             <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Order List</h1> 
+             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Manage and track your full order history</p> 
+         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="mb-4 relative">
-        <input 
-          type="text" 
-          placeholder="Search Customer or Product..." 
-          className="w-full p-3 pl-10 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-          value={orderSearchTerm}
-          onChange={(e) => handleSearch(e.target.value)}
-        />
-        <span className="absolute left-3 top-3 text-gray-400">🔍</span>
+      <div className="bg-white p-4 md:p-6 rounded-3xl shadow-xl border border-gray-100 animate-in fade-in flex flex-col h-[calc(100vh-140px)]">
+         
+         {/* History Header & Search */}
+         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4 flex-none">
+             <h2 className="text-lg font-black text-gray-800 tracking-tight flex items-center gap-2">
+                 <ClipboardDocumentListIcon className="w-6 h-6 text-blue-600" />
+                 All Orders
+             </h2>
+             <div className="relative w-full sm:w-80">
+                 <input 
+                     type="text" 
+                     placeholder="Search DO, Customer, Date, Status..." 
+                     className="w-full pl-10 p-3 border border-gray-200 rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50/50 transition-all"
+                     value={historySearchTerm}
+                     onChange={(e) => setHistorySearchTerm(e.target.value)}
+                 />
+                 <span className="absolute left-3.5 top-3.5 text-gray-400">🔍</span>
+             </div>
+         </div>
+
+         <div className="flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-2xl">
+             <table className="w-full text-left whitespace-nowrap min-w-[800px]">
+                 <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-wider sticky top-0 z-10 shadow-sm">
+                     <tr>
+                         <th className="p-4 pl-5">Delivery Date</th>
+                         <th className="p-4">DO Number</th>
+                         <th className="p-4">Customer Name</th>
+                         <th className="p-4 text-center">Items</th>
+                         <th className="p-4 text-center">Live Status</th>
+                         <th className="p-4 text-center pr-5">Actions</th>
+                     </tr>
+                 </thead>
+                 <tbody className="divide-y divide-gray-50 text-xs font-medium text-gray-700">
+                     {displayedHistory.map((group) => {
+                         const rawStatus = getRawStatus(group.info);
+                         const displayStatus = formatDisplayStatus(rawStatus);
+
+                         return (
+                         <tr key={group.info.DONumber} className="hover:bg-blue-50/30 transition-colors group/row">
+                             <td className="p-4 pl-5 font-mono text-gray-500 text-[11px]">
+                                 {new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                             </td>
+                             <td className="p-4 font-bold text-blue-600 font-mono text-xs">{group.info.DONumber}</td>
+                             <td className="p-4 font-black text-gray-800 uppercase">{group.info["Customer Name"]}</td>
+                             <td className="p-4 text-center">
+                                 <span className="bg-gray-100 px-3 py-1 rounded-full font-bold">{group.items.length}</span>
+                             </td>
+                             <td className="p-4 text-center">
+                                 <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase border ${getStatusColor(rawStatus)}`}>
+                                     {displayStatus}
+                                 </span>
+                             </td>
+                             <td className="p-4 text-center pr-5">
+                                 <div className="flex items-center justify-center gap-2 opacity-0 group-hover/row:opacity-100 transition-opacity">
+                                     <button onClick={() => openEditModal(group)} className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition" title="Edit Order"><PencilSquareIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition" title="Delete Entire Order"><TrashIcon className="w-5 h-5" /></button>
+                                 </div>
+                             </td>
+                         </tr>
+                     )})}
+                     {displayedHistory.length === 0 && (
+                         <tr>
+                             <td colSpan="6" className="p-12 text-center text-gray-400 italic font-bold">No order records found matching your search.</td>
+                         </tr>
+                     )}
+                 </tbody>
+             </table>
+         </div>
       </div>
 
-      <div className="flex space-x-1 mb-4 bg-white p-1 rounded-2xl shadow-sm border border-gray-100 w-full sm:w-fit">
-        {['Packing', 'Completed'].map((tab) => (
-          <button key={tab} onClick={() => setActiveTab(tab)} className={`flex-1 sm:flex-none px-6 py-2 rounded-xl font-black text-xs transition-all ${activeTab === tab ? 'bg-green-100 text-green-800 shadow-sm' : 'text-gray-400 hover:bg-gray-50'}`}>
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      {selectedOrders.size > 0 && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl flex justify-between items-center animate-in fade-in">
-          <span className="text-xs font-black text-blue-700">{selectedOrders.size} Selected</span>
-          <button onClick={sendSelectedToShipday} disabled={isBulkSending} className="bg-indigo-600 text-white text-[10px] font-black py-1.5 px-4 rounded-lg shadow-md">
-            {isBulkSending ? 'Sending...' : '🚀 Send to Shipday'}
-          </button>
-        </div>
-      )}
-
-      <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left min-w-[700px]">
-            <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100">
-              <tr>
-                <th className="p-4 w-10">
-                  <input type="checkbox" onChange={() => setSelectedOrders(selectedOrders.size === filteredOrders.length ? new Set() : new Set(filteredOrders.map(o => o.DONumber)))} checked={selectedOrders.size > 0 && selectedOrders.size === filteredOrders.length} />
-                </th>
-                <th className="p-4">DO Details</th>
-                <th className="p-4">Customer</th>
-                <th className="p-4">Driver / Mode</th>
-                <th className="p-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50 text-xs">
-              {filteredOrders.map((order) => (
-                <tr key={order.DONumber} className="hover:bg-gray-50/50 transition-colors cursor-pointer" onClick={() => openEditModal(order)}>
-                  <td className="p-4" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" checked={selectedOrders.has(order.DONumber)} onChange={() => { const n = new Set(selectedOrders); n.has(order.DONumber) ? n.delete(order.DONumber) : n.add(order.DONumber); setSelectedOrders(n); }} />
-                  </td>
-                  <td className="p-4">
-                    <div className="font-mono text-blue-600 font-bold mb-1">{order.DONumber}</div>
-                    <div className="text-gray-400 font-bold">{order["Delivery Date"]}</div>
-                    <div className="text-[9px] text-gray-300 mt-1">{new Date(order.Timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
-                  </td>
-                  <td className="p-4">
-                    <div className="font-black text-gray-800 uppercase">{order["Customer Name"]}</div>
-                    <div className="text-[10px] text-gray-400 mt-1 truncate max-w-[200px]">{order["Delivery Address"]}</div>
-                  </td>
-                  <td className="p-4">
-                    <span className="bg-purple-50 text-purple-700 px-2 py-1 rounded-lg font-black text-[10px] border border-purple-100 uppercase">{order.DriverName || order["Delivery Mode"] || 'Driver'}</span>
-                  </td>
-                  <td className="p-4 text-right" onClick={e => e.stopPropagation()}>
-                    <div className="flex justify-end gap-2">
-                       <Link href={`/orders/${order.id}/print`} target="_blank" className="p-2 bg-gray-50 rounded-lg hover:bg-gray-100">🖨️</Link>
-                       {activeTab === 'Packing' && <button onClick={() => updateOrderStatus(order.DONumber, 'Completed')} className="bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black py-1.5 px-4 rounded-lg shadow-sm transition">Done</button>}
-                       {activeTab === 'Completed' && <button onClick={() => updateOrderStatus(order.DONumber, 'Packing')} className="text-gray-400 hover:text-red-500 font-bold px-2 transition">Revert</button>}
-                       <button onClick={() => deleteOrder(order.DONumber)} className="p-2 text-red-300 hover:text-red-600 transition" title="Delete Order">🗑️</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* --- EDIT MODAL --- */}
+      {/* ==========================================
+          EDIT ORDER MODAL
+          ========================================== */}
       {isEditModalOpen && editingOrder && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
-              <h3 className="font-black text-gray-800">Edit DO: {editingOrder.DONumber}</h3>
-              <div className="flex gap-2">
-                <button onClick={sendToShipday} disabled={isSendingToShipday} className="text-[10px] font-black bg-indigo-50 text-indigo-600 px-3 py-1.5 rounded-lg">🚀 {isSendingToShipday ? '...' : 'Shipday'}</button>
-                <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 font-bold text-xl px-2">×</button>
-              </div>
-            </div>
-            <div className="p-6 overflow-y-auto space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-blue-50 p-4 rounded-2xl">
-                 <input list="edit-cust" className="p-2 rounded-xl border text-sm font-bold uppercase" value={editingOrder["Customer Name"]} onChange={e => handleEditHeaderChange("Customer Name", e.target.value)} placeholder="CUSTOMER" />
-                 <datalist id="edit-cust">{customers.map(c => <option key={c.id} value={c.CompanyName} />)}</datalist>
-                 <input type="date" className="p-2 rounded-xl border text-sm font-bold" value={editingOrder["Delivery Date"]} onChange={e => handleEditHeaderChange("Delivery Date", e.target.value)} />
-                 <input className="p-2 rounded-xl border text-sm md:col-span-2 uppercase" value={editingOrder["Delivery Address"]} onChange={e => handleEditHeaderChange("Delivery Address", e.target.value)} />
-              </div>
-              <div className="relative">
-                <input type="text" placeholder="Add product..." className="w-full p-3 border rounded-2xl text-sm" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
-                {productSearchTerm && (
-                  <div className="absolute z-10 w-full bg-white border mt-1 rounded-xl shadow-xl max-h-40 overflow-y-auto">
-                    {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).map(p => (
-                      <div key={p.ProductCode} className="p-3 hover:bg-gray-50 cursor-pointer flex justify-between text-xs" onClick={() => handleAddItem(p)}>
-                        <span className="font-bold">{p.ProductName}</span>
-                        <span className="text-gray-400">{p.ProductCode}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="border rounded-2xl overflow-hidden">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-gray-50 font-black text-[10px] uppercase">
-                    <tr><th className="p-3">Item</th><th className="p-3 text-center">Qty</th><th className="p-3">UOM</th><th className="p-3 text-right">Price</th><th className="p-3"></th></tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {editingItems.map((item, idx) => (
-                      <tr key={item.id || idx}>
-                        <td className="p-3"><input list="global-product-list" className="w-full font-bold uppercase" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)} /></td>
-                        <td className="p-3"><input type="number" className="w-12 text-center" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td>
-                        <td className="p-3">
-                          <select className="uppercase" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
-                            {getUOMOptions(item["Product Code"]).map(u => <option key={u} value={u}>{u}</option>)}
-                          </select>
-                        </td>
-                        <td className="p-3"><input type="number" className="w-16 text-right font-bold" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} /></td>
-                        <td className="p-3"><button onClick={() => { if(item.id && !String(item.id).startsWith('new-')) setDeletedItemIds([...deletedItemIds, item.id]); setEditingItems(editingItems.filter((_, i) => i !== idx)); }} className="text-red-400">✕</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-            <div className="p-6 border-t flex justify-end gap-3">
-              <button onClick={() => setIsEditModalOpen(false)} className="px-6 py-2 text-sm font-bold text-gray-400">Cancel</button>
-              <button onClick={saveEditedOrder} className="px-8 py-2 bg-green-600 text-white rounded-xl text-sm font-black shadow-lg">Save Changes</button>
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-3xl w-full max-w-5xl p-6 shadow-2xl flex flex-col max-h-[95vh] animate-in zoom-in duration-200">
+                
+                {/* Modal Header */}
+                <div className="flex justify-between items-center mb-4 border-b border-gray-100 pb-4 shrink-0">
+                    <div>
+                        <h2 className="text-xl font-black text-gray-800 uppercase flex items-center gap-2">
+                            Edit Order 
+                            <span className="text-blue-600 font-mono text-lg">{editingOrder.DONumber}</span>
+                        </h2>
+                        <div className="flex items-center gap-2 mt-2">
+                            <span className="text-[10px] font-bold text-gray-400 uppercase">Status:</span>
+                            <select 
+                                className={`border rounded-lg px-2 py-1 text-xs font-black outline-none ${getStatusColor(getRawStatus(editingOrder))}`}
+                                value={formatDisplayStatus(getRawStatus(editingOrder))}
+                                onChange={e => setEditingOrder({...editingOrder, Status: e.target.value})}
+                            >
+                                <option value="PENDING">PENDING</option>
+                                <option value="ASSIGNED">ASSIGNED</option>
+                                <option value="IN TRANSIT">IN TRANSIT</option>
+                                <option value="DELIVERED">DELIVERED</option>
+                                <option value="FAILED">FAILED</option>
+                                <option value="CANCELLED">CANCELLED</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-colors pb-1">×</button>
+                </div>
+
+                {/* Customer Details Editing */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6 shrink-0 bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                    <div className="md:col-span-2">
+                        <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Customer Name</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-2 border border-gray-200 rounded-xl text-xs font-bold uppercase focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={editingOrder["Customer Name"]}
+                            onChange={e => setEditingOrder({...editingOrder, "Customer Name": e.target.value})}
+                        />
+                    </div>
+                    <div className="md:col-span-2">
+                        <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Delivery Address</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-2 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                            value={editingOrder["Delivery Address"]}
+                            onChange={e => setEditingOrder({...editingOrder, "Delivery Address": e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Contact Person</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-2 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                            value={editingOrder["Contact Person"] || ''}
+                            onChange={e => setEditingOrder({...editingOrder, "Contact Person": e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Contact Number</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-2 border border-gray-200 rounded-xl text-xs focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={editingOrder["Contact Number"] || ''}
+                            onChange={e => setEditingOrder({...editingOrder, "Contact Number": e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Delivery Date</label>
+                        <input 
+                            type="date" 
+                            className="w-full p-2 border border-gray-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={editingOrder["Delivery Date"]}
+                            onChange={e => setEditingOrder({...editingOrder, "Delivery Date": e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">Mode</label>
+                        <select 
+                            className="w-full p-2 border border-gray-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none"
+                            value={editingOrder["Delivery Mode"] || 'Driver'}
+                            onChange={e => setEditingOrder({...editingOrder, "Delivery Mode": e.target.value})}
+                        >
+                            <option value="Driver">Driver</option>
+                            <option value="Lalamove">Lalamove</option>
+                            <option value="Self Pick-up">Self Pick-up</option>
+                        </select>
+                    </div>
+                </div>
+
+                {/* Items Table */}
+                <div className="flex-1 overflow-auto border border-gray-200 rounded-2xl mb-4 custom-scrollbar">
+                    <table className="w-full text-left text-xs whitespace-nowrap">
+                        <thead className="bg-gray-100 font-black text-gray-500 sticky top-0 z-10 text-[10px] uppercase tracking-wider">
+                            <tr>
+                                <th className="p-3 pl-4">Product Name</th>
+                                <th className="p-3 w-20 text-center">Qty</th>
+                                <th className="p-3 w-24 text-center">UOM</th>
+                                <th className="p-3 w-28 text-right">Price (RM)</th>
+                                <th className="p-3 w-24 text-center">Replace?</th>
+                                <th className="p-3 w-12 text-center pr-4"></th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                            {editingItems.map((item, idx) => (
+                                <tr key={idx} className={item.Replacement === 'YES' ? 'bg-red-50/30' : ''}>
+                                    <td className="p-2 pl-4">
+                                        <select 
+                                            className="w-full p-2 border border-gray-200 rounded-lg text-xs font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500"
+                                            value={item["Order Items"]}
+                                            onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}
+                                        >
+                                            <option value={item["Order Items"]}>{item["Order Items"]}</option>
+                                            {products.filter(p => p.ProductName !== item["Order Items"]).map(p => (
+                                                <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>
+                                            ))}
+                                        </select>
+                                    </td>
+                                    <td className="p-2 text-center">
+                                        <input 
+                                            type="number" 
+                                            className="w-full p-2 border border-gray-200 rounded-lg text-center font-black outline-none focus:ring-2 focus:ring-blue-500" 
+                                            value={item.Quantity} 
+                                            onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} 
+                                        />
+                                    </td>
+                                    <td className="p-2 text-center">
+                                        <select 
+                                            className="w-full p-2 border border-gray-200 rounded-lg text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500" 
+                                            value={item.UOM} 
+                                            onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)} 
+                                        >
+                                            {(() => {
+                                                const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);
+                                                const uoms = matchedProd && matchedProd.AllowedUOMs 
+                                                    ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean)
+                                                    : [item.UOM, 'KG', 'CTN', 'PCS', 'PKT', 'BKL', 'BOX'];
+                                                const uniqueUoms = Array.from(new Set([item.UOM, ...uoms])).filter(Boolean);
+                                                return uniqueUoms.map(u => <option key={u} value={u}>{u}</option>);
+                                            })()}
+                                        </select>
+                                    </td>
+                                    <td className="p-2 text-right">
+                                        <input 
+                                            type="number" 
+                                            className="w-full p-2 border border-gray-200 rounded-lg text-right font-black outline-none focus:ring-2 focus:ring-blue-500" 
+                                            value={item.Price} 
+                                            onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} 
+                                            disabled={item.Replacement === 'YES'}
+                                        />
+                                    </td>
+                                    <td className="p-2 text-center">
+                                        <input 
+                                            type="checkbox" 
+                                            className="w-4 h-4 text-red-500 rounded focus:ring-red-500 cursor-pointer"
+                                            checked={item.Replacement === 'YES'} 
+                                            onChange={e => {
+                                                handleEditItemChange(idx, 'Replacement', e.target.checked ? 'YES' : '');
+                                                if (e.target.checked) handleEditItemChange(idx, 'Price', 0);
+                                            }} 
+                                        />
+                                    </td>
+                                    <td className="p-2 text-center pr-4">
+                                        <button onClick={() => handleDeleteItem(idx)} className="p-2 bg-red-50 text-red-500 hover:bg-red-100 rounded-lg transition"><TrashIcon className="w-4 h-4" /></button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Add New Item Section */}
+                <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 mb-6 shrink-0 relative">
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-2">Add Product to Order</label>
+                    <div className="flex gap-2 relative">
+                        <span className="absolute left-3 top-2.5 text-gray-400">🔍</span>
+                        <input 
+                            type="text" 
+                            placeholder="Search product to add..." 
+                            className="w-full pl-9 p-2 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                            value={productSearchTerm}
+                            onChange={e => setProductSearchTerm(e.target.value)}
+                        />
+                    </div>
+                    {/* Add Item Search Dropdown */}
+                    {productSearchTerm && (
+                        <div className="absolute left-4 right-4 mt-1 bg-white border border-gray-200 rounded-xl shadow-2xl max-h-48 overflow-y-auto z-20 custom-scrollbar">
+                            {filteredModalProducts.map(p => (
+                                <div 
+                                    key={p.ProductCode} 
+                                    onClick={() => handleAddItem(p)}
+                                    className="p-3 hover:bg-blue-50 cursor-pointer border-b border-gray-50 last:border-0 flex justify-between items-center group/add"
+                                >
+                                    <div>
+                                        <div className="font-bold text-gray-800 text-xs uppercase">{p.ProductName}</div>
+                                        <div className="text-[10px] text-gray-400 font-mono mt-0.5">{p.ProductCode}</div>
+                                    </div>
+                                    <span className="text-blue-600 font-bold text-xl opacity-0 group-hover/add:opacity-100 transition-opacity">+</span>
+                                </div>
+                            ))}
+                            {filteredModalProducts.length === 0 && <div className="p-4 text-center text-xs text-gray-400">No products found</div>}
+                        </div>
+                    )}
+                </div>
+
+                {/* Modal Actions */}
+                <div className="flex justify-end gap-3 mt-auto shrink-0 pt-4 border-t border-gray-100">
+                    <button onClick={() => setIsEditModalOpen(false)} className="px-6 py-3 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition active:scale-95">Cancel</button>
+                    <button onClick={saveEditedOrder} className="px-8 py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 hover:shadow-blue-500/30 transition active:scale-95">Save Changes</button>
+                </div>
+
             </div>
           </div>
-        </div>
       )}
+
     </div>
   );
 }

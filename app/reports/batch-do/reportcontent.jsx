@@ -13,8 +13,8 @@ export default function BatchDoReportContent() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  // Constants for A4 Layout - 18 is optimal for single-page A4 given our header/footer heights
-  const ITEMS_PER_PAGE = 18; 
+  // Constants for A4 Layout - Adjusted to fit 25 items with flexible header
+  const ITEMS_PER_PAGE = 25; 
 
   useEffect(() => {
     async function fetchAllDOs() {
@@ -161,7 +161,7 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
              style={{ width: '210mm', height: '297mm', padding: '10mm' }}>
           
           {/* --- HEADER SECTION --- */}
-          <div className="flex justify-between items-start mb-4 border-b-2 border-black pb-2 h-[28mm]">
+          <div className="flex justify-between items-start mb-4 border-b-2 border-black pb-2 h-[28mm] shrink-0">
              <div className="flex gap-4 items-center h-full">
                 <img 
                   src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" 
@@ -171,8 +171,8 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
                 <div>
                     <h1 className="text-xl font-black uppercase tracking-tight leading-none mb-1">FRESHER FARM DIRECT SDN BHD</h1>
                     <div className="text-[9px] leading-tight text-gray-700 font-bold uppercase">
-                        <p>Reg No: 200701010054 | TIN No: C20176000020</p>
-                        <p>Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, 68100 Batu Caves</p>
+                        <p>Reg No: 200701010054 | TIN No: C20176000020 | MSIC Code: 46319</p>
+                        <p>Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, 68100 Batu Caves, Selangor</p>
                         <p>Tel: 011-2862 8667 | Email: fresherfarmdirect2.0@gmail.com</p>
                     </div>
                 </div>
@@ -183,12 +183,12 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
           </div>
 
           {/* --- CUSTOMER INFO & DO DETAILS --- */}
-          <div className="flex justify-between items-start text-xs mb-4 h-[35mm]">
-              <div className="w-[65%] pr-4">
+          <div className="flex justify-between items-start text-xs mb-3 min-h-[30mm] shrink-0">
+              <div className="w-[65%] pr-4 flex flex-col">
                   <span className="font-bold text-[9px] text-gray-500 uppercase tracking-widest block mb-1">Deliver To:</span>
-                  <div className="font-black text-lg uppercase leading-tight mb-1">{orderData["Customer Name"]}</div>
-                  <div className="whitespace-pre-line leading-tight text-gray-800 font-bold text-[11px] mb-1 line-clamp-3">{orderData["Delivery Address"]}</div>
-                  <div className="font-black text-gray-900 text-[12px]">
+                  <div className="font-black text-[16px] uppercase leading-tight mb-1">{orderData["Customer Name"]}</div>
+                  <div className="whitespace-pre-line leading-tight text-gray-800 font-bold text-[11px] mb-1">{orderData["Delivery Address"]}</div>
+                  <div className="font-black text-gray-900 text-[12px] mt-1">
                       {orderData["Contact Number"]} {orderData["Contact Person"] ? `(${orderData["Contact Person"]})` : ''}
                   </div>
               </div>
@@ -215,28 +215,45 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
             <table className="w-full text-[10px] border-collapse table-fixed border-t-2 border-black">
               <thead>
                 <tr className="bg-gray-100 border-b-2 border-black text-black uppercase font-black text-[9px]">
-                  <th className="py-1.5 px-1 text-center w-8 border-r border-black">No</th>
-                  <th className="py-1.5 px-2 text-left border-r border-black">Description</th>
-                  <th className="py-1.5 px-1 text-center w-12 border-r border-black">Qty</th>
-                  <th className="py-1.5 px-1 text-center w-12 border-r border-black">UOM</th>
-                  <th className="py-1.5 px-1 text-center w-16 border-r border-black">Wgt</th>
-                  <th className="py-1.5 px-2 text-right w-16">Price</th>
+                  <th className="py-1 px-1 text-center w-8 border-r border-black">No</th>
+                  <th className="py-1 px-2 text-left border-r border-black">Description</th>
+                  <th className="py-1 px-1 text-center w-12 border-r border-black">Qty</th>
+                  <th className="py-1 px-1 text-center w-12 border-r border-black">UOM</th>
+                  <th className="py-1 px-1 text-center w-16 border-r border-black">Wgt</th>
+                  <th className="py-1 px-2 text-right w-16">Price</th>
                 </tr>
               </thead>
               <tbody className="font-bold">
-                {pageItems.map((item, index) => (
-                  <tr key={index} className="border-b border-gray-200 h-7">
-                    <td className="py-1 px-1 text-center border-r border-gray-300 text-[9px]">{index + 1 + (pageIndex * itemsPerPage)}</td>
-                    <td className="py-1 px-2 border-r border-gray-300 truncate uppercase text-[10px]">{item["Order Items"]}</td>
-                    <td className="py-1 px-1 text-center border-r border-gray-300 text-[12px]">{item["Quantity"]}</td>
-                    <td className="py-1 px-1 text-center border-r border-gray-300 uppercase text-[9px]">{item["UOM"]}</td>
-                    <td className="py-1 px-1 text-center border-r border-gray-300"></td>
-                    <td className="py-1 px-2 text-right text-[10px]">{item.Price > 0 ? Number(item.Price).toFixed(2) : '-'}</td>
-                  </tr>
-                ))}
+                {pageItems.map((item, index) => {
+                  const isReplacement = item.Replacement === 'YES' || item.Replacement === true || item.isReplacement === true;
+                  
+                  // Price Logic
+                  let priceDisplay = ""; // Default empty
+                  if (Number(item.Price) > 0) {
+                      priceDisplay = Number(item.Price).toFixed(2);
+                  } else if (isReplacement) {
+                      priceDisplay = "0"; 
+                  }
+
+                  return (
+                    <tr key={index} className="border-b border-gray-200 h-[22px]">
+                      <td className="py-0 px-1 text-center border-r border-gray-300 text-[9px] leading-tight">{index + 1 + (pageIndex * itemsPerPage)}</td>
+                      <td className="py-0 px-2 border-r border-gray-300 truncate uppercase text-[10px] leading-tight">
+                          <div className="flex justify-between items-center w-full">
+                             <span className="truncate pr-1">{item["Order Items"]}</span>
+                             {isReplacement && <span className="font-black text-black ml-1 shrink-0">(R)</span>}
+                          </div>
+                      </td>
+                      <td className="py-0 px-1 text-center border-r border-gray-300 text-[12px] leading-tight">{item["Quantity"]}</td>
+                      <td className="py-0 px-1 text-center border-r border-gray-300 uppercase text-[9px] leading-tight">{item["UOM"]}</td>
+                      <td className="py-0 px-1 text-center border-r border-gray-300 leading-tight"></td>
+                      <td className="py-0 px-2 text-right text-[10px] leading-tight">{priceDisplay}</td>
+                    </tr>
+                  );
+                })}
                 {/* Filler lines to maintain table structure */}
                 {Array.from({ length: Math.max(0, itemsPerPage - pageItems.length) }).map((_, i) => (
-                  <tr key={`fill-${i}`} className="border-b border-gray-100 h-7">
+                  <tr key={`fill-${i}`} className="border-b border-gray-100 h-[22px]">
                     <td className="border-r border-gray-100"></td>
                     <td className="border-r border-gray-100"></td>
                     <td className="border-r border-gray-100"></td>
@@ -250,11 +267,25 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
           </div>
 
           {/* --- FOOTER SECTION --- */}
-          <div className="h-[50mm] mt-auto">
+          <div className="h-[50mm] mt-auto shrink-0">
               <div className="mb-4">
                   <div className="font-black text-[9px] uppercase mb-1">NOTE</div>
-                  <div className="border-2 border-black h-[15mm] p-2 text-[10px] font-bold italic leading-tight overflow-hidden">
-                    {orderData.SpecialNotes}
+                  <div className="border-2 border-black h-[15mm] p-2 text-[10px] font-bold italic leading-tight overflow-hidden flex flex-col gap-1">
+                      {orderData.notes && <div className="whitespace-pre-line">{orderData.notes}</div>}
+                      {/* Formatted Special Notes (e.g., "1. MANGO GOLD SUSU - 10A: masak sikit") */}
+                      {(() => {
+                          const validItemsWithNotes = items.filter(i => i.SpecialNotes && i.SpecialNotes.trim() !== "" && !i.SpecialNotes.trim().toLowerCase().startsWith("pasted:"));
+                          const uniqueNotes = [];
+                          validItemsWithNotes.forEach(item => {
+                              const noteStr = `${item["Order Items"]}: ${item.SpecialNotes}`;
+                              if (!uniqueNotes.includes(noteStr)) {
+                                  uniqueNotes.push(noteStr);
+                              }
+                          });
+                          return uniqueNotes.map((noteStr, idx) => (
+                              <div key={idx} className="whitespace-pre-line">{idx + 1}. {noteStr}</div>
+                          ));
+                      })()}
                   </div>
               </div>
 

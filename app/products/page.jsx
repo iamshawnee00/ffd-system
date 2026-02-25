@@ -185,8 +185,13 @@ export default function ProductManagementPage() {
   const categories = ['All', ...new Set(products.map(p => p.Category || 'Others'))];
 
   const filteredProducts = products.filter(p => {
-    const matchesSearch = (p.ProductName + ' ' + p.ProductCode).toLowerCase().includes(searchTerm.toLowerCase());
+    // Token-based fuzzy search: Split search term into words and check if ALL words exist in the product string
+    const searchTerms = searchTerm.toLowerCase().split(' ').filter(t => t);
+    const productString = `${p.ProductName || ''} ${p.ProductCode || ''}`.toLowerCase();
+    
+    const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => productString.includes(term));
     const matchesCategory = selectedCategory === 'All' || p.Category === selectedCategory;
+    
     return matchesSearch && matchesCategory;
   });
 
