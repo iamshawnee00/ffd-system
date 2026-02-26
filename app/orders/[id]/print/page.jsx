@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation';
 
 export default function PrintOrderPage() {
   const params = useParams();
-  const { id } = params;
+  const { id } = params; // 'id' from the URL is actually the DONumber passed by the print buttons
   
   const [orderData, setOrderData] = useState(null);
   const [items, setItems] = useState([]);
@@ -18,37 +18,36 @@ export default function PrintOrderPage() {
     async function fetchFullOrder() {
       if (!id) return;
 
-      const { data: currentItem, error: fetchError } = await supabase
+      // FIX: Query the DONumber column directly using the 'id' parameter from the URL. 
+      // We no longer try to match the URL string against the database's internal row 'id'.
+      const { data: allItems, error: listError } = await supabase
         .from('Orders')
-        .select('DONumber')
-        .eq('id', id)
-        .single();
+        .select('*')
+        .eq('DONumber', id);
 
-      if (fetchError || !currentItem) {
-        console.error("Error finding order:", fetchError);
+      if (listError) {
+        console.error("Error fetching items:", listError);
         setLoading(false);
         return;
       }
 
-      const { data: allItems, error: listError } = await supabase
-        .from('Orders')
-        .select('*')
-        .eq('DONumber', currentItem.DONumber);
-
-      if (listError) {
-        console.error("Error fetching items:", listError);
-      } else {
-        setOrderData(allItems[0]);
-        setItems(allItems);
+      // If no items match the DO Number, trigger the not found state
+      if (!allItems || allItems.length === 0) {
+        console.error("Order not found for DO:", id);
+        setLoading(false);
+        return;
       }
+
+      setOrderData(allItems[0]);
+      setItems(allItems);
       setLoading(false);
     }
 
     fetchFullOrder();
   }, [id]);
 
-  if (loading) return <div className="p-10 text-center">Loading Invoice...</div>;
-  if (!orderData) return <div className="p-10 text-center text-red-500">Order not found.</div>;
+  if (loading) return <div className="p-10 text-center font-bold text-gray-500 animate-pulse">Loading Invoice...</div>;
+  if (!orderData) return <div className="p-10 text-center text-red-500 font-bold">Order not found.</div>;
 
   const pages = [];
   for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
@@ -103,7 +102,6 @@ export default function PrintOrderPage() {
           </div>
 
           {/* --- CUSTOMER INFO & DO DETAILS --- */}
-          {/* Removed strict h-[25mm] and used min-h-[30mm] with flex-col so it expands safely as a block */}
           <div className="flex justify-between items-start text-xs mb-3 min-h-[30mm] shrink-0">
               <div className="w-[65%] pr-4 flex flex-col">
                   <span className="font-bold text-[9px] text-gray-500 uppercase tracking-widest block mb-1">Deliver To:</span>
@@ -156,7 +154,6 @@ export default function PrintOrderPage() {
                       priceDisplay = "0"; 
                   }
 
-                  // Compact height h-[22px] ensures 25 items fit regardless of address length
                   return (
                     <tr key={index} className="border-b border-gray-200 h-[22px]">
                       <td className="py-0 px-1 text-center border-r border-gray-300 text-[9px] leading-tight">{index + 1 + (pageIndex * ITEMS_PER_PAGE)}</td>
@@ -194,7 +191,7 @@ export default function PrintOrderPage() {
                   <div className="font-black text-[9px] uppercase mb-1">NOTE</div>
                   <div className="border-2 border-black h-[15mm] p-2 text-[10px] font-bold italic leading-tight overflow-hidden flex flex-col gap-1">
                       {orderData.notes && <div className="whitespace-pre-line">{orderData.notes}</div>}
-                      {/* Formatted Special Notes (e.g., "1. MANGO GOLD SUSU - 10A: masak sikit") */}
+                      {/* Formatted Special Notes */}
                       {(() => {
                           const validItemsWithNotes = items.filter(i => i.SpecialNotes && i.SpecialNotes.trim() !== "" && !i.SpecialNotes.trim().toLowerCase().startsWith("pasted:"));
                           const uniqueNotes = [];
