@@ -8,6 +8,7 @@ export default function BatchDoReportContent() {
   const searchParams = useSearchParams();
   const date = searchParams.get('date');
   const driverFilter = searchParams.get('driver'); 
+  const dosFilter = searchParams.get('dos');
 
   const [doList, setDoList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -18,10 +19,12 @@ export default function BatchDoReportContent() {
 
   useEffect(() => {
     async function fetchAllDOs() {
-      if (!date) {
+      // Allow fetching if EITHER a date OR specific DOs are provided
+      if (!date && !dosFilter) {
         setLoading(false);
         return;
       }
+      
       setLoading(true);
       setErrorMsg(null);
 
@@ -29,11 +32,22 @@ export default function BatchDoReportContent() {
         let query = supabase
           .from('Orders')
           .select('*')
-          .eq('Delivery Date', date) 
           .order('DONumber');
 
+        // Apply date filter if present
+        if (date) {
+            query = query.eq('Delivery Date', date);
+        }
+
+        // Apply driver filter if present
         if (driverFilter && driverFilter.trim() !== '') {
             query = query.eq('DriverName', driverFilter);
+        }
+        
+        // Apply specific DOs filter if present
+        if (dosFilter) {
+            const doArray = dosFilter.split(',');
+            query = query.in('DONumber', doArray);
         }
 
         const { data, error } = await query;
@@ -87,12 +101,14 @@ export default function BatchDoReportContent() {
       setLoading(false);
     }
     
-    if (date) fetchAllDOs();
+    if (date || dosFilter) fetchAllDOs();
     else setLoading(false);
-  }, [date, driverFilter]);
+  }, [date, driverFilter, dosFilter]);
 
   if (loading) return <div className="p-10 text-center text-white">Generating Batch DOs...</div>;
-  if (!date) return <div className="p-10 text-center text-gray-400">Please provide a date parameter.</div>;
+  
+  // Update the fallback message to reflect both acceptable parameters
+  if (!date && !dosFilter) return <div className="p-10 text-center text-gray-400">Please provide a date parameter or select specific orders.</div>;
   
   if (errorMsg) return (
     <div className="p-10 text-center text-red-500">
@@ -100,7 +116,7 @@ export default function BatchDoReportContent() {
     </div>
   );
 
-  if (doList.length === 0) return <div className="p-10 text-center text-gray-400">No orders found for this date.</div>;
+  if (doList.length === 0) return <div className="p-10 text-center text-gray-400">No orders found for the given criteria.</div>;
 
   return (
     <div className="text-black font-sans">

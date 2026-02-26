@@ -1,7 +1,37 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabaseClient';
-// Removed Sidebar import as it is handled in layout
+import { 
+  PencilSquareIcon,
+  TrashIcon,
+  PrinterIcon,
+  TruckIcon,
+  XMarkIcon,
+  ArrowPathIcon
+} from '@heroicons/react/24/outline';
+
+// --- STATUS HELPERS ---
+const getRawStatus = (info) => info?.Status || info?.status || info?.delivery_status || 'PENDING';
+
+const formatDisplayStatus = (rawStatus) => {
+  if (!rawStatus) return 'PENDING';
+  const s = String(rawStatus).toUpperCase().trim().replace(/_/g, ' ');
+  if (s.includes('DELIVERED') || s.includes('COMPLETED') || s.includes('DEPOSITED') || s.includes('POD')) return 'DELIVERED';
+  if (s.includes('TRANSIT') || s.includes('STARTED') || s.includes('PICKED') || s.includes('WAY') || s.includes('READY')) return 'IN TRANSIT';
+  if (s.includes('ASSIGNED') || s.includes('ACCEPTED')) return 'ASSIGNED';
+  if (s.includes('FAILED') || s.includes('CANCELLED') || s.includes('INCOMPLETE')) return 'FAILED';
+  return 'PENDING'; 
+};
+
+const getStatusColor = (rawStatus) => {
+  const s = formatDisplayStatus(rawStatus);
+  if(s === 'PENDING') return 'bg-orange-100 text-orange-700 border-orange-200';
+  if(s === 'ASSIGNED') return 'bg-blue-100 text-blue-700 border-blue-200';
+  if(s === 'IN TRANSIT') return 'bg-purple-100 text-purple-700 border-purple-200';
+  if(s === 'DELIVERED') return 'bg-green-100 text-green-700 border-green-200';
+  if(s === 'FAILED') return 'bg-red-100 text-red-700 border-red-200';
+  return 'bg-gray-100 text-gray-700 border-gray-200';
+};
 
 export default function DeliveryPage() {
   const [loading, setLoading] = useState(true);
@@ -31,7 +61,6 @@ export default function DeliveryPage() {
   
   const [products, setProducts] = useState([]);
   const [customers, setCustomers] = useState([]); 
-  const [targetDriver, setTargetDriver] = useState('');
   const [selectedDOs, setSelectedDOs] = useState(new Set());
   const [isUsageExpanded, setIsUsageExpanded] = useState(false);
   const [isBulkSending, setIsBulkSending] = useState(false); 
@@ -46,7 +75,10 @@ export default function DeliveryPage() {
   const [editingItems, setEditingItems] = useState([]); 
   const [deletedItemIds, setDeletedItemIds] = useState([]);
   const [productSearchTerm, setProductSearchTerm] = useState('');
-  const [isSendingToShipday, setIsSendingToShipday] = useState(false);
+  
+  // Bulk Edit State
+  const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
+  const [bulkEditData, setBulkEditData] = useState({ deliveryDate: '', deliveryMode: '', status: '', driverName: '' });
 
   // --- 1. INITIAL LOAD ---
   useEffect(() => {
@@ -61,6 +93,18 @@ export default function DeliveryPage() {
   useEffect(() => {
     fetchDayOrders(selectedDate);
     setSelectedDOs(new Set()); 
+
+    // REAL-TIME LISTENER for status updates
+    const channel = supabase
+      .channel('realtime_delivery_status')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'Orders' }, () => {
+          fetchDayOrders(selectedDate); // Silently pull new data when DB updates
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [selectedDate]);
 
   // Effect to filter orders when search term changes
@@ -71,11 +115,8 @@ export default function DeliveryPage() {
     }
     const lowerTerm = searchTerm.toLowerCase();
     const filtered = groupedOrders.filter(group => {
-        // Search in Customer Name
         if (group.info["Customer Name"].toLowerCase().includes(lowerTerm)) return true;
-        // Search in DO Number
         if (group.info.DONumber.toLowerCase().includes(lowerTerm)) return true;
-        // Search in Items
         return group.items.some(item => item["Order Items"].toLowerCase().includes(lowerTerm));
     });
     setFilteredGroupedOrders(filtered);
@@ -177,6 +218,17 @@ export default function DeliveryPage() {
           items: [],
           itemCount: 0
         };
+      } else {
+          // Status Progression Logic
+          const currentRaw = getRawStatus(groups[row.DONumber].info);
+          const newRaw = getRawStatus(row);
+          const currentMapped = formatDisplayStatus(currentRaw);
+          const newMapped = formatDisplayStatus(newRaw);
+          const statusPriority = { 'FAILED': 0, 'PENDING': 1, 'ASSIGNED': 2, 'IN TRANSIT': 3, 'DELIVERED': 4 };
+          
+          if (statusPriority[newMapped] > statusPriority[currentMapped]) {
+              groups[row.DONumber].info.Status = newRaw;
+          }
       }
       groups[row.DONumber].items.push(row);
       groups[row.DONumber].itemCount += 1;
@@ -214,23 +266,109 @@ export default function DeliveryPage() {
     }
   };
 
-  const handleAssignDriver = async () => {
-    if (selectedDOs.size === 0) return alert("Select at least one order.");
-    if (!targetDriver) return alert("Please select a driver.");
-    if (!confirm(`Assign ${targetDriver} to ${selectedDOs.size} orders?`)) return;
-
-    const { error } = await supabase
-      .from('Orders')
-      .update({ DriverName: targetDriver })
-      .in('DONumber', Array.from(selectedDOs));
-
-    if (error) {
-      alert("Error: " + error.message);
-    } else {
-      alert("Assigned!");
-      fetchDayOrders(selectedDate);
-      setSelectedDOs(new Set());
+  // --- INDIVIDUAL ACTIONS ---
+  const handleDeleteDO = async (doNumber) => {
+    if (!confirm(`Delete entire order ${doNumber}?`)) return;
+    const { error } = await supabase.from('Orders').delete().eq('DONumber', doNumber);
+    if (!error) {
+        setSelectedDOs(prev => {
+            const newSet = new Set(prev);
+            newSet.delete(doNumber);
+            return newSet;
+        });
+        fetchDayOrders(selectedDate);
+        fetchCalendarData();
     }
+  };
+
+  const handlePrintOrder = (doNumber) => {
+      window.open(`/orders/${doNumber}/print`, '_blank');
+  };
+
+  const handleSendToShipday = async (doNumber) => {
+      if (!confirm(`Push order ${doNumber} to Shipday delivery?`)) return;
+      try {
+          const res = await fetch('/api/shipday', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ doNumber }) // Based on your API implementation
+          });
+          if (res.ok) alert(`Success! Sent ${doNumber} to Shipday.`);
+          else alert(`Failed to send ${doNumber} to Shipday.`);
+      } catch (err) {
+          alert("Server connection error.");
+      }
+  };
+
+  // --- BULK ACTIONS ---
+  const handleBulkDelete = async () => {
+      if (!confirm(`Are you sure you want to permanently delete ${selectedDOs.size} selected orders?`)) return;
+      const doNumbers = Array.from(selectedDOs);
+      const { error } = await supabase.from('Orders').delete().in('DONumber', doNumbers);
+      if (!error) {
+          setSelectedDOs(new Set());
+          fetchDayOrders(selectedDate);
+          fetchCalendarData();
+      } else {
+          alert("Error deleting orders: " + error.message);
+      }
+  };
+
+  const handleBulkPrint = () => {
+      const doNumbers = Array.from(selectedDOs).join(',');
+      window.open(`/reports/batch-do?date=${selectedDate}&dos=${doNumbers}`, '_blank');
+  };
+
+  const handleBulkEditSave = async () => {
+      const updates = {};
+      if (bulkEditData.deliveryDate) updates["Delivery Date"] = bulkEditData.deliveryDate;
+      if (bulkEditData.deliveryMode) updates["Delivery Mode"] = bulkEditData.deliveryMode;
+      if (bulkEditData.status) updates["Status"] = bulkEditData.status;
+      if (bulkEditData.driverName) updates["DriverName"] = bulkEditData.driverName;
+
+      if (Object.keys(updates).length === 0) {
+          alert("No fields to update.");
+          return;
+      }
+      
+      if (!confirm(`Apply changes to ${selectedDOs.size} orders?`)) return;
+
+      const { error } = await supabase.from('Orders').update(updates).in('DONumber', Array.from(selectedDOs));
+      if (error) {
+          alert("Bulk Edit Error: " + error.message);
+      } else {
+          alert("Bulk update successful!");
+          setIsBulkEditOpen(false);
+          setSelectedDOs(new Set());
+          setBulkEditData({ deliveryDate: '', deliveryMode: '', status: '', driverName: '' });
+          fetchDayOrders(selectedDate);
+          if (updates["Delivery Date"]) fetchCalendarData(); 
+      }
+  };
+
+  const sendSelectedToShipday = async () => {
+    if (selectedDOs.size === 0) return alert("Select orders to send.");
+    if (!confirm(`Send ${selectedDOs.size} orders to Shipday?`)) return;
+
+    setIsBulkSending(true);
+    let successCount = 0;
+    const doNumbers = Array.from(selectedDOs);
+
+    for (const doNum of doNumbers) {
+      try {
+          const res = await fetch('/api/shipday', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ doNumber: doNum })
+          });
+          if (res.ok) successCount++;
+      } catch (err) {
+          console.error(`Exception sending ${doNum}:`, err);
+      }
+    }
+
+    setIsBulkSending(false);
+    alert(`Completed Shipday push. Successful: ${successCount} / ${selectedDOs.size}`);
   };
 
   // --- SYNC WITH SHIPDAY ---
@@ -281,7 +419,6 @@ export default function DeliveryPage() {
                 });
                 
                 setGroupedOrders(prev => updateOrdersState(prev));
-                // Also update filtered list
                 setFilteredGroupedOrders(prev => updateOrdersState(prev));
 
                 alert(`Sync Complete! Updated ${updateCount} drivers.`);
@@ -298,71 +435,6 @@ export default function DeliveryPage() {
     } finally {
         setIsSyncing(false);
     }
-  };
-
-  // --- BULK SHIPDAY SEND ---
-  const sendSelectedToShipday = async () => {
-    if (selectedDOs.size === 0) return alert("Select orders to send.");
-    if (!confirm(`Send ${selectedDOs.size} orders to Shipday?`)) return;
-
-    setIsBulkSending(true);
-    let successCount = 0;
-    let failCount = 0;
-    const doNumbers = Array.from(selectedDOs);
-
-    for (const doNum of doNumbers) {
-      try {
-        const { data: items, error } = await supabase
-          .from('Orders')
-          .select('*')
-          .eq('DONumber', doNum);
-
-        if (error || !items || items.length === 0) {
-          console.error(`Failed to fetch items for ${doNum}`);
-          failCount++;
-          continue;
-        }
-
-        let formattedDate = items[0]["Delivery Date"];
-        if (formattedDate) {
-             const d = new Date(formattedDate);
-             if(!isNaN(d.getTime())) {
-                 formattedDate = d.toISOString().split('T')[0];
-             }
-        }
-        
-        const orderInfo = {
-             ...items[0],
-             "Delivery Date": formattedDate
-        };
-
-        const orderPayload = {
-          info: orderInfo, 
-          items: items   
-        };
-        
-        const response = await fetch('/api/shipday', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order: orderPayload }),
-        });
-
-        if (response.ok) {
-          successCount++;
-        } else {
-          console.error(`Shipday API failed for ${doNum}`);
-          failCount++;
-        }
-
-      } catch (err) {
-        console.error(`Exception sending ${doNum}:`, err);
-        failCount++;
-      }
-    }
-
-    setIsBulkSending(false);
-    alert(`Bulk Send Complete:\n✅ Success: ${successCount}\n❌ Failed: ${failCount}`);
-    setSelectedDOs(new Set()); 
   };
 
   // --- EDIT MODAL LOGIC ---
@@ -382,131 +454,6 @@ export default function DeliveryPage() {
     setDeletedItemIds([]);
     setProductSearchTerm('');
     setIsEditModalOpen(true);
-  };
-
-  const handleEditHeaderChange = (field, value) => {
-    setEditingOrder(prev => {
-      const newState = { ...prev, [field]: value };
-      if (field === "Customer Name") {
-        const matchedCustomer = customers.find(c => c.CompanyName.toLowerCase() === value.toLowerCase());
-        if (matchedCustomer) {
-          newState["Delivery Address"] = matchedCustomer.DeliveryAddress || newState["Delivery Address"];
-          newState["Contact Person"] = matchedCustomer.ContactPerson || newState["Contact Person"];
-          newState["Contact Number"] = matchedCustomer.ContactNumber || newState["Contact Number"];
-        }
-      }
-      return newState;
-    });
-  };
-
-  const handleEditItemChange = (index, field, value) => {
-    const newItems = [...editingItems];
-    newItems[index][field] = value;
-    if (field === 'Order Items') {
-        const matchedProduct = products.find(p => p.ProductName === value);
-        if (matchedProduct) {
-            newItems[index]["Product Code"] = matchedProduct.ProductCode;
-            newItems[index]["UOM"] = matchedProduct.BaseUOM;
-        }
-    }
-    setEditingItems(newItems);
-  };
-
-  const handleDeleteItem = (index) => {
-    const item = editingItems[index];
-    if (item.id) {
-      setDeletedItemIds(prev => [...prev, item.id]);
-    }
-    setEditingItems(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleAddItem = (product) => {
-    const newItem = {
-      id: `new-${Date.now()}`, 
-      DONumber: editingOrder.DONumber,
-      "Delivery Date": editingOrder["Delivery Date"],
-      "Customer Name": editingOrder["Customer Name"],
-      "Delivery Address": editingOrder["Delivery Address"],
-      "Contact Person": editingOrder["Contact Person"],
-      "Contact Number": editingOrder["Contact Number"],
-      Status: editingOrder.Status,
-      "Product Code": product.ProductCode,
-      "Order Items": product.ProductName,
-      Quantity: 1,
-      UOM: product.BaseUOM,
-      Price: 0,
-      SpecialNotes: ''
-    };
-    setEditingItems([...editingItems, newItem]);
-    setProductSearchTerm('');
-  };
-
-  const saveEditedOrder = async () => {
-    if (!confirm("Save changes?")) return;
-
-    if (deletedItemIds.length > 0) {
-      await supabase.from('Orders').delete().in('id', deletedItemIds);
-    }
-
-    const upsertPayload = editingItems.map(item => {
-      const isNew = String(item.id).startsWith('new-');
-      const { id, ...rest } = item;
-      const cleanItem = isNew ? rest : item;
-      return {
-        ...cleanItem,
-        "Customer Name": editingOrder["Customer Name"],
-        "Delivery Address": editingOrder["Delivery Address"],
-        "Contact Person": editingOrder["Contact Person"],
-        "Contact Number": editingOrder["Contact Number"],
-        "Delivery Date": editingOrder["Delivery Date"],
-        "Delivery Mode": editingOrder["Delivery Mode"],
-      };
-    });
-
-    const { error } = await supabase.from('Orders').upsert(upsertPayload);
-
-    if (error) {
-      alert("Error saving: " + error.message);
-    } else {
-      alert("Order updated successfully.");
-      setIsEditModalOpen(false);
-      fetchDayOrders(selectedDate);
-    }
-  };
-
-  const sendSingleToShipday = async () => {
-    if (!editingOrder) return;
-    setIsSendingToShipday(true);
-
-    try {
-      const response = await fetch('/api/shipday', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          order: {
-            info: editingOrder,
-            items: editingItems
-          }
-        }),
-      });
-
-      const result = await response.json();
-
-      if (response.ok) {
-        alert(`Successfully sent order ${editingOrder.DONumber} to Shipday!`);
-      } else {
-        alert(`Failed to send to Shipday: ${result.error?.message || JSON.stringify(result.error) || "Unknown error"}`);
-      }
-    } catch (error) {
-      console.error("API Request failed:", error);
-      alert("Error connecting to server. Please try again.");
-    } finally {
-      setIsSendingToShipday(false);
-    }
-  };
-  
-  const printOrder = () => {
-    window.open(`/orders/${editingOrder.id}/print`, '_blank');
   };
 
   // --- CALENDAR NAVIGATION ---
@@ -538,14 +485,8 @@ export default function DeliveryPage() {
     return "bg-red-200 text-red-800";
   };
 
-  const getUOMOptions = (prodCode) => {
-    const p = products.find(x => x.ProductCode === prodCode);
-    if (!p || !p.AllowedUOMs) return [];
-    return p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean);
-  };
-  
   const getDeliveryModeStyle = (mode) => {
-      if (!mode) return 'bg-purple-100 text-purple-700'; 
+      if (!mode) return 'bg-purple-100 text-purple-700 border-purple-200'; 
       const m = mode.toLowerCase();
       if (m.includes('lalamove')) return 'bg-orange-100 text-orange-800 border-orange-200';
       if (m.includes('pick') || m.includes('self')) return 'bg-blue-100 text-blue-800 border-blue-200';
@@ -553,8 +494,7 @@ export default function DeliveryPage() {
   };
 
   return (
-    // RESPONSIVE LAYOUT FIX: No manual margin-left, handled by layout wrapper
-    <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6">
+    <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6 pb-32">
       
       {/* HEADER & ACTIONS */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-3">
@@ -564,7 +504,18 @@ export default function DeliveryPage() {
           </div>
           
           <div className="flex gap-2 w-full sm:w-auto">
-             <button onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')} className="flex-1 sm:flex-none bg-purple-600 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-lg hover:bg-purple-700 transition transform active:scale-95 flex items-center justify-center gap-2">
+             <button 
+                onClick={syncWithShipday} 
+                disabled={isSyncing}
+                className="flex-1 sm:flex-none bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold py-2.5 px-4 rounded-xl text-xs border border-indigo-200 shadow-sm transition transform active:scale-95 flex items-center justify-center gap-2"
+             >
+                <ArrowPathIcon className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                {isSyncing ? 'Syncing...' : 'Sync Shipday'}
+             </button>
+             <button 
+                onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')} 
+                className="flex-1 sm:flex-none bg-purple-600 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-lg hover:bg-purple-700 transition transform active:scale-95 flex items-center justify-center gap-2"
+             >
                 <span>📦</span> All DOs
              </button>
              <button 
@@ -627,42 +578,8 @@ export default function DeliveryPage() {
                   Orders for <span className="text-blue-600">{formatDateLabel(selectedDate)}</span>
                   <span className="bg-gray-200 text-gray-600 text-xs px-2.5 py-1 rounded-full font-black">{filteredGroupedOrders.length}</span>
               </h3>
-              
-              <div className="flex flex-wrap gap-2 w-full md:w-auto">
-                  <input 
-                      list="drivers" 
-                      placeholder="Assign Driver..." 
-                      className="border border-gray-300 rounded-xl px-3 py-2 text-base md:text-xs font-bold w-full md:w-40 focus:ring-2 focus:ring-blue-500 outline-none"
-                      value={targetDriver}
-                      onChange={e => setTargetDriver(e.target.value)}
-                  />
-                  <datalist id="drivers">
-                      <option value="Ali" /><option value="Muthu" /><option value="Ah Meng" /><option value="Lalamove" />
-                  </datalist>
-                  <button 
-                      onClick={handleAssignDriver}
-                      className="bg-gray-800 text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-black shadow-md transition flex-1 md:flex-none"
-                  >
-                      Assign
-                  </button>
-                  <button 
-                      onClick={syncWithShipday}
-                      disabled={isSyncing}
-                      className={`bg-blue-500 text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-blue-600 shadow-md transition flex-1 md:flex-none ${isSyncing ? 'opacity-50 cursor-wait' : ''}`}
-                  >
-                      {isSyncing ? '...' : 'Sync'}
-                  </button>
-                  <button 
-                      onClick={sendSelectedToShipday}
-                      disabled={isBulkSending || selectedDOs.size === 0}
-                      className={`bg-indigo-600 text-white font-bold px-4 py-2 rounded-xl text-xs hover:bg-indigo-700 shadow-md transition flex items-center justify-center gap-2 flex-1 md:flex-none ${isBulkSending ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                      {isBulkSending ? 'Sending...' : '🚀 Send'}
-                  </button>
-              </div>
           </div>
 
-          {/* 2. SEARCH BAR ADDED HERE */}
           <div className="p-4 border-b border-gray-100 bg-white">
               <div className="relative">
                   <input 
@@ -699,27 +616,30 @@ export default function DeliveryPage() {
           </div>
 
           <div className="overflow-x-auto">
-              <table className="w-full text-left min-w-[700px]">
+              <table className="w-full text-left min-w-[1050px]">
                   <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-wider border-b border-gray-100">
                       <tr>
                           <th className="p-4 w-10 text-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedDOs.size > 0 && selectedDOs.size === filteredGroupedOrders.length} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer" /></th>
-                          <th className="p-4">DO Number</th>
-                          <th className="p-4">Customer Info</th>
-                          <th className="p-4">Logistics</th>
-                          <th className="p-4 text-center">Items</th>
-                          <th className="p-4">Driver</th>
-                          <th className="p-4 text-right">Action</th>
+                          <th className="p-4 w-32">DO Number</th>
+                          <th className="p-4 w-[350px]">Customer Info</th>
+                          <th className="p-4 w-[220px]">Logistics</th>
+                          <th className="p-4 text-center w-16">Items</th>
+                          <th className="p-4 w-28">Driver</th>
+                          <th className="p-4 text-center w-28">Live Status</th>
+                          <th className="p-4 text-right w-24 pr-4">Action</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                       {filteredGroupedOrders.length === 0 ? (
-                          <tr><td colSpan="7" className="p-12 text-center text-gray-400 italic bg-gray-50/30">No orders found.</td></tr>
+                          <tr><td colSpan="8" className="p-12 text-center text-gray-400 italic bg-gray-50/30">No orders found.</td></tr>
                       ) : (
-                          filteredGroupedOrders.map(group => (
+                          filteredGroupedOrders.map(group => {
+                              const rawStatus = getRawStatus(group.info);
+                              return (
                               <tr 
                                   key={group.info.DONumber} 
-                                  className="hover:bg-blue-50/40 transition-colors group cursor-pointer"
-                                  onClick={() => openEditModal(group)} 
+                                  className={`transition-colors group/row cursor-pointer ${selectedDOs.has(group.info.DONumber) ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'}`}
+                                  onClick={() => handleCheckbox(group.info.DONumber)} 
                               >
                                   <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                                       <input 
@@ -734,9 +654,8 @@ export default function DeliveryPage() {
                                           {group.info.DONumber}
                                       </span>
                                   </td>
-                                  {/* 3. ENLARGED WORDINGS */}
                                   <td className="p-4">
-                                      <div className="font-black text-gray-800 text-sm md:text-base uppercase">{group.info["Customer Name"]}</div>
+                                      <div className="font-black text-gray-800 text-sm md:text-base uppercase max-w-[350px] whitespace-normal leading-tight" title={group.info["Customer Name"]}>{group.info["Customer Name"]}</div>
                                       <div className="text-xs text-gray-500 mt-1 font-medium">{group.info["Contact Person"]}</div>
                                   </td>
                                   <td className="p-4">
@@ -759,34 +678,148 @@ export default function DeliveryPage() {
                                           <span className="text-gray-300 text-xs italic">--</span>
                                       )}
                                   </td>
-                                  <td className="p-4 text-right" onClick={(e) => e.stopPropagation()}>
-                                      <button 
-                                          onClick={() => openEditModal(group)} 
-                                          className="text-gray-400 hover:text-blue-600 p-2 rounded-lg hover:bg-blue-50 transition text-lg"
-                                      >
-                                          👁️
-                                      </button>
+                                  <td className="p-4 text-center">
+                                      <span className={`px-2.5 py-1.5 rounded-full text-[10px] font-black uppercase border shadow-sm whitespace-nowrap ${getStatusColor(rawStatus)}`}>
+                                          {formatDisplayStatus(rawStatus)}
+                                      </span>
+                                  </td>
+                                  <td className="p-4 text-right pr-4" onClick={(e) => e.stopPropagation()}>
+                                      <div className="flex items-center justify-end gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity w-full">
+                                          <button onClick={() => openEditModal(group)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Modify Order"><PencilSquareIcon className="w-5 h-5" /></button>
+                                          <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Print DO"><PrinterIcon className="w-5 h-5" /></button>
+                                          <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition" title="Push to Shipday"><TruckIcon className="w-5 h-5" /></button>
+                                          <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition" title="Purge Record"><TrashIcon className="w-5 h-5" /></button>
+                                      </div>
                                   </td>
                               </tr>
-                          ))
+                          )})
                       )}
                   </tbody>
               </table>
           </div>
       </div>
 
-      {/* --- EDIT MODAL (Identical logic to Order List) --- */}
+      {/* STICKY FLOATING ACTION BAR FOR MULTI-SELECT */}
+      {selectedDOs.size > 0 && (
+          <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-900/95 backdrop-blur-md text-white px-6 py-4 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.3)] flex items-center gap-6 z-[100] animate-in slide-in-from-bottom-10 border border-gray-700 w-max">
+              <div className="flex items-center gap-3">
+                  <span className="bg-blue-600 text-white w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shadow-inner">
+                      {selectedDOs.size}
+                  </span>
+                  <span className="font-bold text-[10px] uppercase tracking-widest text-gray-300 mr-2">Selected</span>
+              </div>
+              
+              <div className="flex gap-2 border-l border-gray-700 pl-6 border-r pr-6">
+                  <button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                      <PencilSquareIcon className="w-4 h-4 text-blue-400" /> Multi-Edit
+                  </button>
+                  <button onClick={handleBulkPrint} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                      <PrinterIcon className="w-4 h-4 text-gray-300" /> Batch Print
+                  </button>
+                  <button onClick={sendSelectedToShipday} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                      <TruckIcon className="w-4 h-4 text-green-400" /> Push Shipday
+                  </button>
+                  <button onClick={handleBulkDelete} className="flex items-center gap-2 hover:bg-red-500/20 px-4 py-2 rounded-xl transition font-bold text-xs text-red-400 hover:text-red-300">
+                      <TrashIcon className="w-4 h-4" /> Batch Delete
+                  </button>
+              </div>
+              
+              <button onClick={() => setSelectedDOs(new Set())} className="text-gray-400 hover:text-white transition bg-gray-800 p-2 rounded-full hover:bg-gray-700" title="Clear Selection">
+                  <XMarkIcon className="w-5 h-5" />
+              </button>
+          </div>
+      )}
+
+      {/* ==========================================
+          BULK EDIT MODAL
+          ========================================== */}
+      {isBulkEditOpen && (
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
+             <div className="bg-white rounded-3xl w-full max-w-lg p-8 shadow-2xl flex flex-col animate-in zoom-in duration-200 border border-gray-100">
+                 <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+                     <div>
+                         <h2 className="text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit Orders</h2>
+                         <p className="text-xs text-gray-400 font-bold mt-1">Applying changes to <span className="text-blue-600">{selectedDOs.size}</span> orders.</p>
+                     </div>
+                     <button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                 </div>
+                 
+                 <div className="space-y-4 mb-8">
+                     <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+                         <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">New Delivery Date</label>
+                         <input type="date" className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryDate} onChange={e => setBulkEditData({...bulkEditData, deliveryDate: e.target.value})} />
+                         <p className="text-[9px] text-gray-400 mt-1 italic">*Leave blank to keep existing dates</p>
+                     </div>
+                     
+                     <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                         <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Assign Driver</label>
+                         <input 
+                             list="modal-drivers" 
+                             placeholder="Select or type driver name..." 
+                             className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500"
+                             value={bulkEditData.driverName}
+                             onChange={e => setBulkEditData({...bulkEditData, driverName: e.target.value})}
+                         />
+                         <datalist id="modal-drivers">
+                             <option value="Ali" /><option value="Muthu" /><option value="Ah Meng" /><option value="Lalamove" />
+                         </datalist>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-4">
+                         <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                             <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Delivery Mode</label>
+                             <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryMode} onChange={e => setBulkEditData({...bulkEditData, deliveryMode: e.target.value})}>
+                                 <option value="">-- No Change --</option>
+                                 <option value="Driver">Driver</option>
+                                 <option value="Lalamove">Lalamove</option>
+                                 <option value="Self Pick-up">Self Pick-up</option>
+                             </select>
+                         </div>
+
+                         <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                             <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Status</label>
+                             <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.status} onChange={e => setBulkEditData({...bulkEditData, status: e.target.value})}>
+                                 <option value="">-- No Change --</option>
+                                 <option value="PENDING">PENDING</option>
+                                 <option value="ASSIGNED">ASSIGNED</option>
+                                 <option value="IN TRANSIT">IN TRANSIT</option>
+                                 <option value="DELIVERED">DELIVERED</option>
+                                 <option value="FAILED">FAILED</option>
+                                 <option value="CANCELLED">CANCELLED</option>
+                             </select>
+                         </div>
+                     </div>
+                 </div>
+
+                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                    <button onClick={() => setIsBulkEditOpen(false)} className="px-6 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
+                    <button onClick={handleBulkEditSave} className="px-8 py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 hover:shadow-blue-500/30 transition-all active:scale-95 text-xs uppercase tracking-widest">Apply to {selectedDOs.size} Orders</button>
+                </div>
+             </div>
+          </div>
+      )}
+
+      {/* --- EDIT MODAL (Simplified Item View for Delivery Context) --- */}
       {isEditModalOpen && editingOrder && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
                 <div className="p-6 border-b bg-gray-50 flex justify-between items-center">
-                    <h3 className="font-black text-gray-800">Edit DO: {editingOrder.DONumber}</h3>
+                    <h3 className="font-black text-gray-800">Order Preview: {editingOrder.DONumber}</h3>
                     <div className="flex gap-2">
                         <button onClick={setIsEditModalOpen.bind(null, false)} className="text-gray-400 font-bold text-xl px-2">×</button>
                     </div>
                 </div>
-                {/* Simplified Edit View for Calendar Context - Just List Items */}
                 <div className="p-6 overflow-y-auto flex-1">
+                    <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
+                        <div>
+                            <span className="text-gray-400 font-bold text-[10px] uppercase">Customer</span>
+                            <div className="font-black text-gray-800">{editingOrder["Customer Name"]}</div>
+                        </div>
+                        <div>
+                            <span className="text-gray-400 font-bold text-[10px] uppercase">Address</span>
+                            <div className="font-medium text-gray-800">{editingOrder["Delivery Address"]}</div>
+                        </div>
+                    </div>
                     <h4 className="text-xs font-black text-gray-400 uppercase mb-4">Order Items</h4>
                     <table className="w-full text-xs text-left">
                         <thead className="bg-gray-50 font-black text-[10px] uppercase">
@@ -812,12 +845,3 @@ export default function DeliveryPage() {
     </div>
   );
 }
-
-// Helper for delivery badges
-const getDeliveryModeStyle = (mode) => {
-    if (!mode) return 'bg-purple-100 text-purple-700 border-purple-200'; 
-    const m = mode.toLowerCase();
-    if (m.includes('lalamove')) return 'bg-orange-100 text-orange-800 border-orange-200';
-    if (m.includes('pick') || m.includes('self')) return 'bg-blue-100 text-blue-800 border-blue-200';
-    return 'bg-purple-100 text-purple-700 border-purple-200'; 
-};

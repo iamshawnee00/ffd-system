@@ -8,7 +8,9 @@ import {
   PencilSquareIcon, 
   TrashIcon,
   ArrowPathIcon,
-  SignalIcon
+  PrinterIcon,
+  TruckIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 
 export default function NewOrderPage() {
@@ -70,6 +72,11 @@ export default function NewOrderPage() {
   const [deletedItemIds, setDeletedItemIds] = useState([]);
   const [productSearchTerm, setProductSearchTerm] = useState('');
 
+  // --- MULTI-SELECT & BULK ACTION STATES ---
+  const [selectedOrders, setSelectedOrders] = useState([]);
+  const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
+  const [bulkEditData, setBulkEditData] = useState({ deliveryDate: '', deliveryMode: '', status: '' });
+
   const fetchOrderHistory = async () => {
     const { data, error } = await supabase
         .from('Orders')
@@ -89,8 +96,6 @@ export default function NewOrderPage() {
             if (!grouped[dn]) {
                 grouped[dn] = { info: { ...row }, items: [] };
             } else {
-                // STATUS PROGRESSION LOGIC: 
-                // Ensure the header displays the "furthest" status among its items
                 const currentRaw = getRawStatus(grouped[dn].info);
                 const newRaw = getRawStatus(row);
                 
@@ -118,7 +123,6 @@ export default function NewOrderPage() {
     }
   };
 
-  // Initial Load & Real-time Setup
   useEffect(() => {
     async function loadData() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -150,11 +154,10 @@ export default function NewOrderPage() {
     
     loadData();
 
-    // 🔴 AUTO-SYNC REALTIME LISTENER
     const channel = supabase
       .channel('realtime_orders_sync')
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'Orders' }, () => {
-          fetchOrderHistory(); // Instantly refresh UI when DB is updated by webhooks
+          fetchOrderHistory();
       })
       .subscribe((status) => {
           if (status === 'SUBSCRIBED') setIsRealtimeActive(true);
@@ -301,14 +304,124 @@ export default function NewOrderPage() {
   };
 
   // ==========================================
-  // ORDER LIST ACTIONS
+  // ORDER LIST ACTIONS (INDIVIDUAL & BULK)
   // ==========================================
+  const toggleOrderSelection = (doNumber) => {
+    setSelectedOrders(prev => 
+        prev.includes(doNumber) 
+            ? prev.filter(id => id !== doNumber) 
+            : [...prev, doNumber]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedOrders.length === displayedHistory.length) {
+        setSelectedOrders([]);
+    } else {
+        setSelectedOrders(displayedHistory.map(group => group.info.DONumber));
+    }
+  };
+
+  // 1. Delete
   const handleDeleteDO = async (doNumber) => {
       if (!confirm(`Delete entire order ${doNumber}?`)) return;
       const { error } = await supabase.from('Orders').delete().eq('DONumber', doNumber);
-      if (!error) fetchOrderHistory();
+      if (!error) {
+          setSelectedOrders(prev => prev.filter(id => id !== doNumber));
+          fetchOrderHistory();
+      }
   };
 
+  const handleBulkDelete = async () => {
+      if (!confirm(`Are you sure you want to permanently delete ${selectedOrders.length} selected orders?`)) return;
+      const { error } = await supabase.from('Orders').delete().in('DONumber', selectedOrders);
+      if (!error) {
+          setSelectedOrders([]);
+          fetchOrderHistory();
+      } else {
+          alert("Error deleting orders: " + error.message);
+      }
+  };
+
+  // 2. Print
+  const handlePrintOrder = (doNumber) => {
+      window.open(`/orders/${doNumber}/print`, '_blank');
+  };
+
+  const handleBulkPrint = () => {
+      if (selectedOrders.length === 0) return;
+      // Get the date of the first selected order to satisfy the batch-do page requirement
+      const firstSelectedGroup = orderHistory.find(group => selectedOrders.includes(group.info.DONumber));
+      const targetDate = firstSelectedGroup ? firstSelectedGroup.info["Delivery Date"] : '';
+      
+      window.open(`/reports/batch-do?date=${targetDate}&dos=${selectedOrders.join(',')}`, '_blank');
+  };
+
+  // 3. Shipday Sync
+  const handleSendToShipday = async (doNumber) => {
+      if (!confirm(`Push order ${doNumber} to Shipday delivery?`)) return;
+      try {
+          const res = await fetch('/api/shipday', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ doNumber })
+          });
+          if (res.ok) alert(`Success! Sent ${doNumber} to Shipday.`);
+          else alert(`Failed to send ${doNumber} to Shipday.`);
+      } catch (err) {
+          alert("Server connection error.");
+      }
+  };
+
+  const handleBulkShipday = async () => {
+      if (!confirm(`Are you sure you want to push ${selectedOrders.length} selected orders to Shipday?`)) return;
+      let successCount = 0;
+      
+      // We loop because the API might be designed to process single orders at a time
+      for (const doNumber of selectedOrders) {
+          try {
+              const res = await fetch('/api/shipday', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ doNumber })
+              });
+              if (res.ok) successCount++;
+          } catch (e) {
+              console.error(`Error sending ${doNumber}:`, e);
+          }
+      }
+      alert(`Completed Shipday push. Successful: ${successCount} / ${selectedOrders.length}`);
+  };
+
+  // 4. Bulk Edit Save
+  const handleBulkEditSave = async () => {
+      const updates = {};
+      if (bulkEditData.deliveryDate) updates["Delivery Date"] = bulkEditData.deliveryDate;
+      if (bulkEditData.deliveryMode) updates["Delivery Mode"] = bulkEditData.deliveryMode;
+      if (bulkEditData.status) updates["Status"] = bulkEditData.status;
+
+      if (Object.keys(updates).length === 0) {
+          alert("No fields to update.");
+          return;
+      }
+      
+      if (!confirm(`Apply changes to ${selectedOrders.length} orders?`)) return;
+
+      const { error } = await supabase.from('Orders').update(updates).in('DONumber', selectedOrders);
+      if (error) {
+          alert("Bulk Edit Error: " + error.message);
+      } else {
+          alert("Bulk update successful!");
+          setIsBulkEditOpen(false);
+          setSelectedOrders([]);
+          setBulkEditData({ deliveryDate: '', deliveryMode: '', status: '' });
+          fetchOrderHistory();
+      }
+  };
+
+  // ==========================================
+  // EDIT INDIVIDUAL ORDER MODAL
+  // ==========================================
   const openEditModal = (group) => {
       setEditingOrder({ ...group.info });
       setEditingItems([...group.items]);
@@ -451,7 +564,7 @@ export default function NewOrderPage() {
   if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse">FFD SYSTEM ENGINE BOOTING...</div>;
 
   return (
-    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50">
+    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32">
       
       {/* Header */}
       <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"> 
@@ -582,7 +695,7 @@ export default function NewOrderPage() {
 
       {/* TAB 2: ORDER HISTORY LIST */}
       {activeTab === 'list' && (
-      <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-180px)] flex flex-col">
+      <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-180px)] flex flex-col relative">
          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 flex-none">
              <div>
                 <h2 className="text-xl font-black text-gray-800 tracking-tight flex items-center gap-2 uppercase">
@@ -608,40 +721,152 @@ export default function NewOrderPage() {
          </div>
 
          <div className="flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
-             <table className="w-full text-left whitespace-nowrap min-w-[900px]">
+             <table className="w-full text-left whitespace-nowrap min-w-[1050px]">
                  <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
-                     <tr><th className="p-5">Delivery Date</th><th className="p-5">DO Number</th><th className="p-5">Customer Entity</th><th className="p-5 text-center">Items</th><th className="p-5 text-center">Live Status</th><th className="p-5 text-center pr-8">Actions</th></tr>
+                     <tr>
+                        <th className="p-5 w-10 text-center">
+                            <input 
+                                type="checkbox" 
+                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                checked={displayedHistory.length > 0 && selectedOrders.length === displayedHistory.length}
+                                onChange={toggleSelectAll}
+                            />
+                        </th>
+                        <th className="p-5 w-32">Delivery Date</th>
+                        <th className="p-5 w-32">DO Number</th>
+                        <th className="p-5 w-[350px]">Customer Entity</th>
+                        <th className="p-5 text-center w-16">Items</th>
+                        <th className="p-5 text-center w-28">Live Status</th>
+                        <th className="p-5 text-right pr-6 w-32">Actions</th>
+                     </tr>
                  </thead>
-                 <tbody className="divide-y divide-gray-50 text-xs font-bold text-gray-700">
+                 <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
                      {displayedHistory.map((group) => {
                          const rawStatus = getRawStatus(group.info);
+                         const isSelected = selectedOrders.includes(group.info.DONumber);
                          return (
-                         <tr key={group.info.DONumber} className="hover:bg-blue-50/40 transition-colors group/row">
-                             <td className="p-5 font-mono text-gray-500 text-[11px]">{new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                             <td className="p-5 font-black text-blue-600 font-mono text-xs">{group.info.DONumber}</td>
-                             <td className="p-5 font-black text-gray-800 uppercase max-w-xs truncate">{group.info["Customer Name"]}</td>
-                             <td className="p-5 text-center"><span className="bg-gray-100 px-3 py-1 rounded-full font-black">{group.items.length}</span></td>
-                             <td className="p-5 text-center"><span className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase border shadow-sm ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></td>
-                             <td className="p-5 text-center pr-8">
-                                 <div className="flex items-center justify-center gap-2 opacity-0 group-hover/row:opacity-100 transition-opacity">
-                                     <button onClick={() => openEditModal(group)} className="p-2.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition" title="Modify Order"><PencilSquareIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition" title="Purge Record"><TrashIcon className="w-5 h-5" /></button>
+                         <tr key={group.info.DONumber} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
+                             <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                                <input 
+                                    type="checkbox" 
+                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                                    checked={isSelected}
+                                    onChange={() => toggleOrderSelection(group.info.DONumber)}
+                                />
+                             </td>
+                             <td className="p-4 font-mono text-gray-500 text-xs">{new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                             <td className="p-4 font-black text-blue-600 font-mono text-sm">{group.info.DONumber}</td>
+                             <td className="p-4">
+                                 <div className="font-black text-gray-800 text-base md:text-lg uppercase max-w-[350px] whitespace-normal leading-tight" title={group.info["Customer Name"]}>{group.info["Customer Name"]}</div>
+                             </td>
+                             <td className="p-4 text-center"><span className="bg-white border border-gray-100 shadow-sm px-3 py-1 rounded-full font-black text-sm">{group.items.length}</span></td>
+                             <td className="p-4 text-center"><span className={`px-2.5 py-1.5 rounded-full text-[10px] font-black uppercase border shadow-sm whitespace-nowrap ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></td>
+                             <td className="p-4 text-right pr-6" onClick={(e) => e.stopPropagation()}>
+                                 <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity w-full">
+                                     <button onClick={() => openEditModal(group)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Modify Order"><PencilSquareIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Print DO"><PrinterIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-1.5 text-green-600 hover:bg-green-100 rounded-lg transition" title="Push to Shipday"><TruckIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-1.5 text-red-600 hover:bg-red-100 rounded-lg transition" title="Purge Record"><TrashIcon className="w-5 h-5" /></button>
                                  </div>
                              </td>
                          </tr>
                      )})}
                      {displayedHistory.length === 0 && (
-                         <tr><td colSpan="6" className="p-16 text-center text-gray-300 italic font-bold">No orders match your current filter.</td></tr>
+                         <tr><td colSpan="7" className="p-16 text-center text-gray-300 italic font-bold">No orders match your current filter.</td></tr>
                      )}
                  </tbody>
              </table>
          </div>
+
+         {/* STICKY FLOATING ACTION BAR FOR MULTI-SELECT */}
+         {selectedOrders.length > 0 && (
+             <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-900/95 backdrop-blur-md text-white px-6 py-4 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.3)] flex items-center gap-6 z-[100] animate-in slide-in-from-bottom-10 border border-gray-700 w-max">
+                 <div className="flex items-center gap-3">
+                     <span className="bg-blue-600 text-white w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shadow-inner">
+                         {selectedOrders.length}
+                     </span>
+                     <span className="font-bold text-[10px] uppercase tracking-widest text-gray-300 mr-2">Selected</span>
+                 </div>
+                 
+                 <div className="flex gap-2 border-l border-gray-700 pl-6 border-r pr-6">
+                     <button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                         <PencilSquareIcon className="w-4 h-4 text-blue-400" /> Multi-Edit
+                     </button>
+                     <button onClick={handleBulkPrint} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                         <PrinterIcon className="w-4 h-4 text-gray-300" /> Batch Print
+                     </button>
+                     <button onClick={handleBulkShipday} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                         <TruckIcon className="w-4 h-4 text-green-400" /> Push Shipday
+                     </button>
+                     <button onClick={handleBulkDelete} className="flex items-center gap-2 hover:bg-red-500/20 px-4 py-2 rounded-xl transition font-bold text-xs text-red-400 hover:text-red-300">
+                         <TrashIcon className="w-4 h-4" /> Batch Delete
+                     </button>
+                 </div>
+                 
+                 <button onClick={() => setSelectedOrders([])} className="text-gray-400 hover:text-white transition bg-gray-800 p-2 rounded-full hover:bg-gray-700" title="Clear Selection">
+                     <XMarkIcon className="w-5 h-5" />
+                 </button>
+             </div>
+         )}
       </div>
       )}
 
-      {/* EDIT ORDER MODAL */}
+      {/* ==========================================
+          BULK EDIT MODAL
+          ========================================== */}
+      {isBulkEditOpen && (
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
+             <div className="bg-white rounded-3xl w-full max-w-lg p-8 shadow-2xl flex flex-col animate-in zoom-in duration-200 border border-gray-100">
+                 <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+                     <div>
+                         <h2 className="text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit Orders</h2>
+                         <p className="text-xs text-gray-400 font-bold mt-1">Applying changes to <span className="text-blue-600">{selectedOrders.length}</span> orders.</p>
+                     </div>
+                     <button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                 </div>
+                 
+                 <div className="space-y-4 mb-8">
+                     <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+                         <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">New Delivery Date</label>
+                         <input type="date" className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryDate} onChange={e => setBulkEditData({...bulkEditData, deliveryDate: e.target.value})} />
+                         <p className="text-[9px] text-gray-400 mt-1 italic">*Leave blank to keep existing dates</p>
+                     </div>
+                     
+                     <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                         <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Delivery Mode Override</label>
+                         <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryMode} onChange={e => setBulkEditData({...bulkEditData, deliveryMode: e.target.value})}>
+                             <option value="">-- No Change --</option>
+                             <option value="Driver">Driver</option>
+                             <option value="Lalamove">Lalamove</option>
+                             <option value="Self Pick-up">Self Pick-up</option>
+                         </select>
+                     </div>
+
+                     <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                         <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Force Status Update</label>
+                         <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.status} onChange={e => setBulkEditData({...bulkEditData, status: e.target.value})}>
+                             <option value="">-- No Change --</option>
+                             <option value="PENDING">PENDING</option>
+                             <option value="ASSIGNED">ASSIGNED</option>
+                             <option value="IN TRANSIT">IN TRANSIT</option>
+                             <option value="DELIVERED">DELIVERED</option>
+                             <option value="FAILED">FAILED</option>
+                             <option value="CANCELLED">CANCELLED</option>
+                         </select>
+                     </div>
+                 </div>
+
+                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                    <button onClick={() => setIsBulkEditOpen(false)} className="px-6 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
+                    <button onClick={handleBulkEditSave} className="px-8 py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 hover:shadow-blue-500/30 transition-all active:scale-95 text-xs uppercase tracking-widest">Apply to {selectedOrders.length} Orders</button>
+                </div>
+             </div>
+          </div>
+      )}
+
+      {/* EDIT INDIVIDUAL ORDER MODAL */}
       {isEditModalOpen && editingOrder && (
-          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-[2.5rem] w-full max-w-5xl p-8 shadow-2xl flex flex-col max-h-[95vh] animate-in zoom-in duration-200 border border-gray-100">
                 <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-6 shrink-0">
                     <div>

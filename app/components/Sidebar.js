@@ -37,7 +37,6 @@ export default function Sidebar() {
     { name: 'New Order', path: '/orders/new', icon: PlusCircleIcon },
     { name: 'Quick Paste Order', path: '/orders/quick-paste', icon: ClipboardDocumentListIcon },
     { name: 'Log Purchase', path: '/purchase/new', icon: ShoppingBagIcon },
-    { name: 'Order List', path: '/orders/list', icon: ClipboardDocumentListIcon },
     { name: 'Delivery / Reports', path: '/delivery', icon: TruckIcon },
     { name: 'Price Trend', path: '/price-trend', icon: ChartBarIcon },
     { name: 'Products', path: '/products', icon: CubeIcon },
