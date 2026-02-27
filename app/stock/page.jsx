@@ -19,25 +19,45 @@ import {
     CubeIcon,
     XCircleIcon,
     ClockIcon,
-    CheckIcon
+    CheckIcon,
+    ChevronLeftIcon,
+    ShoppingCartIcon
 } from '@heroicons/react/24/outline';
+import {
+    LineChart,
+    Line,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip,
+    ResponsiveContainer,
+    ReferenceLine
+} from 'recharts';
+
+// Helper for local date string formatting (YYYY-MM-DD) across GMT+8
+const getLocalDateStr = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
 
 export default function StockBalancePage() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState('master'); // 'master' or 'log'
+    const [activeTab, setActiveTab] = useState('master'); 
     const [currentUser, setCurrentUser] = useState('');
 
     // --- DATA STATES ---
     const [inventory, setInventory] = useState([]);
-    const [deliveryStats, setDeliveryStats] = useState({ pending: 0, transit: 0, delivered: 0 });
+    const [isSyncingShipday, setIsSyncingShipday] = useState(false);
     
     // --- MASTER TAB STATES ---
     const [masterSearch, setMasterSearch] = useState('');
     const [statusFilter, setStatusFilter] = useState(null); 
 
     // --- LOG INVENTORY STATES ---
-    const [logDate, setLogDate] = useState(() => new Date().toISOString().split('T')[0]);
+    const [logDate, setLogDate] = useState(() => getLocalDateStr(new Date()));
     const [logSearch, setLogSearch] = useState('');
     const [logCart, setLogCart] = useState([]);
     const [productInputs, setProductInputs] = useState({});
@@ -62,48 +82,45 @@ export default function StockBalancePage() {
             }
         });
         fetchInventoryData();
-        fetchDeliveryStats();
+
+        // Bind Inventory to Realtime DB Changes
+        const channel = supabase
+            .channel('realtime_orders_sync')
+            .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'Orders' }, () => {
+                fetchInventoryData();
+            })
+            .subscribe();
+
+        return () => { supabase.removeChannel(channel); };
     }, [router]);
 
     // Format display status for consistent logic across pages
     const formatDisplayStatus = (rawStatus) => {
         if (!rawStatus) return 'PENDING';
         const s = String(rawStatus).toUpperCase().trim().replace(/_/g, ' ');
-        if (s.includes('DELIVERED') || s.includes('COMPLETED') || s.includes('DEPOSITED')) return 'DELIVERED';
-        if (s.includes('TRANSIT') || s.includes('STARTED') || s.includes('PICKED') || s.includes('WAY')) return 'IN TRANSIT';
+        if (s.includes('DELIVERED') || s.includes('COMPLETED') || s.includes('DEPOSITED') || s.includes('POD')) return 'DELIVERED';
+        if (s.includes('TRANSIT') || s.includes('STARTED') || s.includes('PICKED') || s.includes('WAY') || s.includes('READY')) return 'IN TRANSIT';
         if (s.includes('ASSIGNED') || s.includes('ACCEPTED')) return 'ASSIGNED';
+        if (s.includes('FAILED') || s.includes('CANCELLED') || s.includes('INCOMPLETE')) return 'FAILED';
         return 'PENDING';
     };
 
-    const fetchDeliveryStats = async () => {
-        const today = new Date().toISOString().split('T')[0];
-        const { data } = await supabase
-            .from('Orders')
-            .select('Status, status, delivery_status')
-            .eq('"Delivery Date"', today);
-
-        if (data) {
-            const counts = { pending: 0, transit: 0, delivered: 0 };
-            data.forEach(order => {
-                const raw = order.Status || order.status || order.delivery_status;
-                const mapped = formatDisplayStatus(raw);
-                if (mapped === 'DELIVERED') counts.delivered++;
-                else if (mapped === 'IN TRANSIT') counts.transit++;
-                else counts.pending++;
-            });
-            setDeliveryStats(counts);
+    const handleSyncShipday = async () => {
+        setIsSyncingShipday(true);
+        try {
+            const res = await fetch('/api/shipday/sync-status', { method: 'POST' });
+            if (res.ok) {
+                await fetchInventoryData();
+            }
+        } catch (err) {
+            console.error("Sync error:", err);
+        } finally {
+            setIsSyncingShipday(false);
         }
     };
 
     const fetchInventoryData = async () => {
         setLoading(true);
-
-        const getLocalDateStr = (date) => {
-            const year = date.getFullYear();
-            const month = String(date.getMonth() + 1).padStart(2, '0');
-            const day = String(date.getDate()).padStart(2, '0');
-            return `${year}-${month}-${day}`;
-        };
 
         const { data: prods, error: prodError } = await supabase
             .from('ProductMaster')
@@ -123,8 +140,8 @@ export default function StockBalancePage() {
         const { data: orders, error: orderError } = await supabase
             .from('Orders')
             .select('"Product Code", Quantity, "Delivery Date"')
-            .gte('"Delivery Date"', startStr)
-            .lte('"Delivery Date"', tomorrowStr);
+            .gte('Delivery Date', startStr)
+            .lte('Delivery Date', tomorrowStr);
             
         if (orderError) console.error("Error fetching orders:", orderError);
 
@@ -135,7 +152,9 @@ export default function StockBalancePage() {
             orders.forEach(o => {
                 const code = o["Product Code"];
                 const qty = Number(o.Quantity || 0);
-                const dDate = o["Delivery Date"];
+                // Defensively extract just the YYYY-MM-DD part in case of timestamp data
+                const rawDate = o["Delivery Date"] || '';
+                const dDate = rawDate.length >= 10 ? rawDate.substring(0, 10) : rawDate;
                 
                 if (dDate === tomorrowStr) {
                     tomorrowMap[code] = (tomorrowMap[code] || 0) + qty;
@@ -154,32 +173,39 @@ export default function StockBalancePage() {
             const currentStock = Number(p.StockBalance || 0);
 
             let status = 'Healthy';
-            if (predictedNeed > 0 && currentStock <= predictedNeed) status = 'Critical';
-            else if (currentStock <= 0) status = 'Out of Stock';
-            else if (currentStock < 20 && currentStock > 0) status = 'Low';
+            if (actualTomorrow > 0 && currentStock < actualTomorrow) {
+                // We have confirmed orders tomorrow but insufficient balance to fulfill them
+                status = 'Critical';
+            } else if (currentStock <= 0) {
+                // Zero or negative balance, but no immediate confirmed orders tomorrow
+                status = 'Out of Stock';
+            } else if (currentStock <= predictedNeed) {
+                // Stock is positive, but falls below our safe predictive buffer
+                status = 'Low';
+            }
 
             return {
                 ...p,
-                past7Days: past7.toFixed(1),
-                avgDaily: avgDaily.toFixed(1),
-                predictedNeed: predictedNeed,
-                actualTomorrow: actualTomorrow,
+                past7Days: past7.toFixed(2),
+                avgDaily: avgDaily.toFixed(2),
+                predictedNeed: Number(predictedNeed).toFixed(2),
+                actualTomorrow: Number(actualTomorrow).toFixed(2),
+                StockBalance: Number(p.StockBalance || 0).toFixed(2),
                 status: status,
                 displayUOM: p.SalesUOM || p.BaseUOM || 'KG'
             };
         });
 
+        // SORTING LOGIC: 1. Balance (Ascending), 2. Name (A-Z)
         enriched.sort((a, b) => {
-            const getPriority = (s) => {
-                if (s === 'Out of Stock') return 1;
-                if (s === 'Critical') return 2;
-                if (s === 'Low') return 3;
-                return 4;
-            };
-            const pA = getPriority(a.status);
-            const pB = getPriority(b.status);
-            if (pA !== pB) return pA - pB;
-            return (a.ProductName || '').localeCompare(b.ProductName || '');
+            const balA = Number(a.StockBalance || 0);
+            const balB = Number(b.StockBalance || 0);
+            
+            if (balA !== balB) return balA - balB; 
+            
+            const nameA = a.ProductName || '';
+            const nameB = b.ProductName || '';
+            return nameA.localeCompare(nameB);
         });
 
         setInventory(enriched);
@@ -193,11 +219,25 @@ export default function StockBalancePage() {
 
     const addToLogCart = (product) => {
         const inputs = productInputs[product.ProductCode] || {};
-        const qty = parseFloat(inputs.qty);
-        if (isNaN(qty) || qty < 0) return alert("Please enter valid quantity.");
-        if (logCart.find(item => item.ProductCode === product.ProductCode)) return alert("Already in list.");
-        setLogCart([...logCart, { ...product, cartId: `${product.ProductCode}-${Date.now()}`, qty, uom: inputs.uom || product.BaseUOM }]);
-        setProductInputs(prev => { const n = { ...prev }; delete n[product.ProductCode]; return n; });
+        const qty = parseFloat(inputs.qty); 
+        
+        if (isNaN(qty) || qty < 0) return alert("Please enter a valid balance quantity.");
+        const exists = logCart.find(item => item.ProductCode === product.ProductCode);
+        if (exists) return alert("Item is already in the list to be updated.");
+
+        const newItem = {
+            ...product,
+            cartId: `${product.ProductCode}-${Date.now()}`,
+            qty: qty,
+            uom: inputs.uom || product.BaseUOM
+        };
+
+        setLogCart([...logCart, newItem]);
+        setProductInputs(prev => {
+            const newState = { ...prev };
+            delete newState[product.ProductCode];
+            return newState;
+        });
     };
 
     const removeFromLogCart = (cartId) => setLogCart(logCart.filter(item => item.cartId !== cartId));
@@ -205,6 +245,7 @@ export default function StockBalancePage() {
     const handleSubmitLog = async () => {
         if (logCart.length === 0) return alert("No items to log.");
         setSubmittingLog(true);
+
         let successCount = 0;
 
         const adjustmentRows = logCart.map(item => ({
@@ -219,91 +260,173 @@ export default function StockBalancePage() {
         try { await supabase.from('StockAdjustments').insert(adjustmentRows); } catch (e) {}
 
         for (const item of logCart) {
-            const { error } = await supabase.from('ProductMaster').update({ StockBalance: item.qty, BaseUOM: item.uom }).eq('ProductCode', item.ProductCode);
+            const { error } = await supabase
+                .from('ProductMaster')
+                .update({ StockBalance: item.qty, BaseUOM: item.uom })
+                .eq('ProductCode', item.ProductCode);
+            
             if (!error) successCount++;
         }
 
-        alert(`Updated ${successCount} items.`);
-        setLogCart([]); fetchInventoryData(); setActiveTab('master'); setSubmittingLog(false);
+        alert(`Successfully updated golden balances for ${successCount} items.`);
+        setLogCart([]);
+        setLogSearch('');
+        setSubmittingLog(false);
+        fetchInventoryData();
+        setActiveTab('master');
     };
 
-    // --- DRILL-DOWN LEDGER ---
+    // --- INDIVIDUAL LEDGER / FIFO HANDLERS ---
     const handleOpenLedger = async (product) => {
         setLedgerProduct(product);
         setIsLedgerLoading(true);
+        setLedgerTransactions([]); 
         
-        const [adjRes, ordRes] = await Promise.all([
+        const [adjRes, ordRes, purRes] = await Promise.all([
             supabase.from('StockAdjustments').select('*').eq('ProductCode', product.ProductCode).order('Timestamp', { ascending: false }).limit(10),
-            supabase.from('Orders').select('*').eq('Product Code', product.ProductCode).order('Delivery Date', { ascending: false }).limit(15)
+            supabase.from('Orders').select('*').eq('Product Code', product.ProductCode).order('Delivery Date', { ascending: false }).limit(15),
+            supabase.from('Purchase').select('*').eq('ProductCode', product.ProductCode).order('Timestamp', { ascending: false }).limit(15)
         ]);
             
         const history = [];
+        let runningBalance = Number(product.StockBalance) || 0;
+        
         if (adjRes.data) {
             adjRes.data.forEach(a => {
                 const ts = a.Timestamp ? new Date(a.Timestamp) : new Date();
-                history.push({ id: `adj-${a.id || Math.random()}`, date: ts.toISOString().split('T')[0], type: 'RESET', qtyIn: 0, qtyOut: 0, balance: a.AdjustedQty, remarks: `Logged by ${a.LoggedBy || 'System'}` });
+                const dateStr = !isNaN(ts) ? ts.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+                history.push({
+                    id: `adj-${a.id || Math.random()}`,
+                    date: dateStr,
+                    type: 'RESET',
+                    qtyIn: 0,
+                    qtyOut: 0,
+                    balance: a.AdjustedQty,
+                    remarks: `Audit by ${a.LoggedBy || 'System'}`
+                });
             });
         }
+        
         if (ordRes.data) {
             ordRes.data.forEach(o => {
-                history.push({ id: `ord-${o.id || Math.random()}`, date: o["Delivery Date"] || new Date().toISOString().split('T')[0], type: 'OUT', qtyIn: 0, qtyOut: Number(o.Quantity || 0), balance: 0, remarks: 'Sales Order' });
+                history.push({
+                    id: `ord-${o.id || Math.random()}`,
+                    date: o["Delivery Date"] || new Date().toISOString().split('T')[0],
+                    type: 'OUT',
+                    qtyIn: 0,
+                    qtyOut: Number(o.Quantity || 0),
+                    balance: 0,
+                    remarks: `DO: ${o.DONumber}`
+                });
             });
         }
+
+        if (purRes.data) {
+            purRes.data.forEach(p => {
+                const ts = p.Timestamp ? new Date(p.Timestamp) : new Date();
+                const dateStr = !isNaN(ts) ? ts.toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+                history.push({
+                    id: `pur-${p.id || Math.random()}`,
+                    date: dateStr,
+                    type: 'IN',
+                    qtyIn: Number(p.PurchaseQty || 0),
+                    qtyOut: 0,
+                    balance: 0,
+                    remarks: `Supplier: ${p.Supplier || 'Unknown'}`
+                });
+            });
+        }
+
         history.sort((a, b) => new Date(b.date) - new Date(a.date));
         
-        let currentCalcBalance = Number(product.StockBalance) || 0;
+        let currentCalcBalance = runningBalance;
         for (let i = 0; i < history.length; i++) {
-            if (history[i].type === 'RESET') currentCalcBalance = history[i].balance;
-            else {
+            if (history[i].type === 'RESET') {
+                currentCalcBalance = history[i].balance;
+            } else {
                 history[i].balance = currentCalcBalance;
                 if (history[i].type === 'OUT') currentCalcBalance += history[i].qtyOut;
                 if (history[i].type === 'IN') currentCalcBalance -= history[i].qtyIn;
             }
         }
+
         setLedgerTransactions(history.slice(0, 20));
         setIsLedgerLoading(false);
     };
 
     const handleSaveSingleReset = async () => {
         if (!resetQuantity || !ledgerProduct) return;
-        const newBalance = parseFloat(resetQuantity);
+        
+        const newBalance = parseFloat(resetQuantity); 
+        if (isNaN(newBalance)) return alert("Please enter a valid number");
+        
         try {
-            await supabase.from('ProductMaster').update({ StockBalance: newBalance }).eq('ProductCode', ledgerProduct.ProductCode);
+            const { error: masterErr } = await supabase
+                .from('ProductMaster')
+                .update({ StockBalance: newBalance })
+                .eq('ProductCode', ledgerProduct.ProductCode);
+                
+            if (masterErr) throw masterErr;
+
             try {
-                await supabase.from('StockAdjustments').insert([{ Timestamp: new Date(), ProductCode: ledgerProduct.ProductCode, ProductName: ledgerProduct.ProductName, AdjustedQty: newBalance, UOM: ledgerProduct.displayUOM, LoggedBy: currentUser }]);
+                await supabase.from('StockAdjustments').insert([{
+                    Timestamp: new Date(),
+                    ProductCode: ledgerProduct.ProductCode,
+                    ProductName: ledgerProduct.ProductName,
+                    AdjustedQty: newBalance,
+                    UOM: ledgerProduct.displayUOM,
+                    LoggedBy: currentUser
+                }]);
             } catch (e) {}
-            setLedgerProduct({ ...ledgerProduct, StockBalance: newBalance });
+
+            const newTx = {
+                id: `tx-new-${Date.now()}`,
+                date: new Date().toISOString().split('T')[0],
+                type: 'RESET',
+                qtyIn: 0,
+                qtyOut: 0,
+                balance: newBalance,
+                remarks: resetRemarks
+            };
+
+            setLedgerTransactions([newTx, ...ledgerTransactions].sort((a, b) => new Date(b.date) - new Date(a.date)));
+            setLedgerProduct({ ...ledgerProduct, StockBalance: newBalance.toFixed(2) });
             setShowResetModal(false);
-            fetchInventoryData();
-        } catch (error) { alert('Error updating.'); }
+            setResetQuantity('');
+            fetchInventoryData(); 
+
+        } catch (error) {
+            alert('Error updating golden set balance.');
+        }
     };
 
+    // --- CHART GENERATION ---
     const chartData = useMemo(() => {
         const dailyMap = {};
         ledgerTransactions.forEach(t => { 
-            if (t.date) dailyMap[t.date] = Number(t.balance) || 0; 
+            // Since ledgerTransactions is sorted newest-first (descending),
+            // the first transaction we encounter for a specific date is the End Of Day balance.
+            if (t.date && dailyMap[t.date] === undefined) {
+                dailyMap[t.date] = Number(t.balance) || 0; 
+            }
         });
-        return Object.keys(dailyMap).map(date => ({ date: date.substring(5), balance: dailyMap[date] })).sort((a, b) => a.date.localeCompare(b.date));
+        
+        // Return sorted chronologically (ascending) for the chart
+        return Object.keys(dailyMap)
+            .sort((a, b) => new Date(a) - new Date(b))
+            .map(dateStr => ({
+                date: dateStr.substring(5), // "MM-DD"
+                balance: Number(Number(dailyMap[dateStr]).toFixed(2))
+            }));
     }, [ledgerTransactions]);
 
-    const generateChartPath = () => {
-        if (chartData.length < 2) return "";
-        const width = 800; const height = 200; const padding = 40;
-        const maxBalance = Math.max(...chartData.map(d => Number(d.balance) || 0), 0) * 1.2 || 10; 
-        const points = chartData.map((dataPoint, index) => {
-            const x = padding + (index * ((width - padding * 2) / (Math.max(chartData.length - 1, 1))));
-            const y = height - padding - ((Number(dataPoint.balance) || 0) / maxBalance) * (height - padding * 2);
-            return `${x},${y}`;
-        });
-        return `M ${points.join(' L ')}`;
-    };
-
+    // --- HELPERS ---
     const getStatusStyle = (status) => {
         switch (status) {
-            case 'Critical': return 'bg-red-100 text-red-700 border-red-200';
+            case 'Critical': return 'bg-red-50 text-red-600 border-red-200';
             case 'Out of Stock': return 'bg-gray-100 text-gray-500 border-gray-300';
-            case 'Low': return 'bg-orange-100 text-orange-700 border-orange-200';
-            default: return 'bg-green-100 text-green-700 border-green-200';
+            case 'Low': return 'bg-orange-50 text-orange-600 border-orange-200';
+            default: return 'bg-green-50 text-green-700 border-green-200';
         }
     };
 
@@ -330,280 +453,300 @@ export default function StockBalancePage() {
     const lowCount = inventory.filter(i => i.status === 'Low').length;
     const healthyCount = inventory.filter(i => i.status === 'Healthy').length;
 
-    if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black animate-pulse">ANALYZING INVENTORY...</div>;
+    if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse">ANALYZING INVENTORY...</div>;
 
     return (
-        <div className="p-3 md:p-8 max-w-7xl mx-auto min-h-screen bg-gray-50/50 pb-32 font-sans">
+        <div className="p-3 md:p-8 w-full max-w-[1600px] mx-auto min-h-screen bg-gray-50 pb-32 md:pb-8 font-sans overflow-x-hidden">
             
             {/* Header */}
-            <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div className="mb-4 md:mb-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
-                    <h1 className="text-2xl md:text-3xl font-black text-gray-800 tracking-tight">Stock Adjust Dashboard</h1>
-                    <p className="text-[10px] md:text-sm text-gray-400 font-bold uppercase mt-1 tracking-widest">
+                    <h1 className="text-xl md:text-3xl font-black text-gray-800 tracking-tight">Stock Dashboard</h1>
+                    <p className="text-[10px] md:text-xs text-gray-500 font-bold uppercase mt-1 tracking-widest">
                         Predictive Analysis & Live Ledger
                     </p>
                 </div>
-            </div>
-
-            {/* LIVE DELIVERY STATUS SUMMARY */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-                <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm flex items-center gap-4">
-                    <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl"><ClockIcon className="w-6 h-6" /></div>
-                    <div>
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none">Today's Pending</p>
-                        <h4 className="text-xl font-black text-indigo-900 mt-1">{deliveryStats.pending} <span className="text-xs text-gray-400">Orders</span></h4>
-                    </div>
-                </div>
-                <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm flex items-center gap-4">
-                    <div className="p-3 bg-purple-50 text-purple-600 rounded-2xl"><TruckIcon className="w-6 h-6" /></div>
-                    <div>
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none">In Transit Now</p>
-                        <h4 className="text-xl font-black text-purple-900 mt-1">{deliveryStats.transit} <span className="text-xs text-gray-400">On Way</span></h4>
-                    </div>
-                </div>
-                <div className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm flex items-center gap-4">
-                    <div className="p-3 bg-emerald-50 text-emerald-600 rounded-2xl"><CheckIcon className="w-6 h-6 stroke-[3px]" /></div>
-                    <div>
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none">Delivered Today</p>
-                        <h4 className="text-xl font-black text-emerald-900 mt-1">{deliveryStats.delivered} <span className="text-xs text-gray-400">Success</span></h4>
-                    </div>
-                </div>
-            </div>
-
-            {/* Navigation Tabs */}
-            <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200 scrollbar-hide">
-                <button onClick={() => setActiveTab('master')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'master' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
-                    <ClipboardDocumentListIcon className="w-5 h-5" /> Master Inventory
-                </button>
-                <button onClick={() => setActiveTab('log')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'log' ? 'bg-orange-500 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
-                    <PencilSquareIcon className="w-5 h-5" /> Batch Adjust
-                </button>
-            </div>
-
-            {/* TAB 1: MASTER INVENTORY (SPLIT VIEW) */}
-            {activeTab === 'master' && (
-            <div className="animate-in fade-in duration-500">
                 
-                {/* 4 Box Inventory Health (INTERACTIVE FILTERS) */}
+                {/* Navigation Tabs (Mobile optimized scrolling) */}
+                <div className="flex w-full md:w-auto gap-2 bg-white p-1.5 md:p-1.5 rounded-2xl shadow-sm border border-gray-100 overflow-x-auto snap-x custom-scrollbar">
+                    <button onClick={() => setActiveTab('master')} className={`snap-center shrink-0 px-5 md:px-6 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2 ${activeTab === 'master' ? 'bg-blue-600 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}>
+                        <ClipboardDocumentListIcon className="w-4 h-4" /> Master Inventory
+                    </button>
+                    <button onClick={() => setActiveTab('log')} className={`snap-center shrink-0 px-5 md:px-6 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center gap-2 ${activeTab === 'log' ? 'bg-orange-500 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}>
+                        <PencilSquareIcon className="w-4 h-4" /> Batch Adjust
+                    </button>
+                </div>
+            </div>
+
+            {/* TAB 1: MASTER INVENTORY */}
+            {activeTab === 'master' && (
+            <div className="animate-in fade-in duration-300">
+                
+                {/* Health Matrix */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
                     <div 
                         onClick={() => handleStatusFilterToggle('Out of Stock')}
-                        className={`cursor-pointer transition-all duration-300 p-5 rounded-[2.5rem] border shadow-sm text-center ${statusFilter === 'Out of Stock' ? 'bg-slate-100 border-slate-400 ring-2 ring-slate-400 scale-105 shadow-lg' : 'bg-white border-gray-100 hover:shadow-md hover:-translate-y-1'}`}
+                        className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Out of Stock' ? 'bg-gray-100 border-gray-400 ring-1 ring-gray-400' : 'bg-white border-gray-100 hover:border-gray-300'}`}
                     >
-                        <div className="flex justify-center items-center gap-1.5 mb-1 text-gray-400">
-                            <XCircleIcon className="w-4 h-4" />
-                            <p className="text-[9px] uppercase font-black tracking-[0.2em]">OOS</p>
+                        <div>
+                            <p className="text-[9px] text-gray-500 uppercase font-black tracking-widest">OOS</p>
+                            <h3 className="text-3xl font-black text-gray-800 mt-0.5 leading-none">{oosCount}</h3>
                         </div>
-                        <h3 className="text-3xl font-black text-slate-700">{oosCount}</h3>
+                        <XCircleIcon className="w-8 h-8 text-gray-200" />
                     </div>
 
                     <div 
                         onClick={() => handleStatusFilterToggle('Critical')}
-                        className={`cursor-pointer transition-all duration-300 p-5 rounded-[2.5rem] border shadow-sm text-center ${statusFilter === 'Critical' ? 'bg-red-100 border-red-400 ring-2 ring-red-400 scale-105 shadow-lg' : 'bg-white border-gray-100 hover:shadow-md hover:-translate-y-1'}`}
+                        className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Critical' ? 'bg-red-50 border-red-400 ring-1 ring-red-400' : 'bg-white border-gray-100 hover:border-red-200'}`}
                     >
-                        <div className="flex justify-center items-center gap-1.5 mb-1 text-red-500">
-                            <ExclamationTriangleIcon className="w-4 h-4" />
-                            <p className="text-[9px] uppercase font-black tracking-[0.2em]">Critical</p>
+                        <div>
+                            <p className="text-[9px] text-red-500 uppercase font-black tracking-widest">Critical</p>
+                            <h3 className="text-3xl font-black text-red-700 mt-0.5 leading-none">{criticalCount}</h3>
                         </div>
-                        <h3 className="text-3xl font-black text-red-700">{criticalCount}</h3>
+                        <ExclamationTriangleIcon className="w-8 h-8 text-red-100" />
                     </div>
 
                     <div 
                         onClick={() => handleStatusFilterToggle('Low')}
-                        className={`cursor-pointer transition-all duration-300 p-5 rounded-[2.5rem] border shadow-sm text-center ${statusFilter === 'Low' ? 'bg-orange-100 border-orange-400 ring-2 ring-orange-400 scale-105 shadow-lg' : 'bg-white border-gray-100 hover:shadow-md hover:-translate-y-1'}`}
+                        className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Low' ? 'bg-orange-50 border-orange-400 ring-1 ring-orange-400' : 'bg-white border-gray-100 hover:border-orange-200'}`}
                     >
-                        <div className="flex justify-center items-center gap-1.5 mb-1 text-orange-500">
-                            <ArrowTrendingUpIcon className="w-4 h-4" />
-                            <p className="text-[9px] uppercase font-black tracking-[0.2em]">Low</p>
+                        <div>
+                            <p className="text-[9px] text-orange-500 uppercase font-black tracking-widest">Low</p>
+                            <h3 className="text-3xl font-black text-orange-700 mt-0.5 leading-none">{lowCount}</h3>
                         </div>
-                        <h3 className="text-3xl font-black text-orange-700">{lowCount}</h3>
+                        <ArrowTrendingUpIcon className="w-8 h-8 text-orange-100" />
                     </div>
 
                     <div 
                         onClick={() => handleStatusFilterToggle('Healthy')}
-                        className={`cursor-pointer transition-all duration-300 p-5 rounded-[2.5rem] border shadow-sm text-center ${statusFilter === 'Healthy' ? 'bg-green-100 border-green-400 ring-2 ring-green-400 scale-105 shadow-lg' : 'bg-white border-gray-100 hover:shadow-md hover:-translate-y-1'}`}
+                        className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Healthy' ? 'bg-green-50 border-green-400 ring-1 ring-green-400' : 'bg-white border-gray-100 hover:border-green-200'}`}
                     >
-                        <div className="flex justify-center items-center gap-1.5 mb-1 text-green-600">
-                            <CheckCircleIcon className="w-4 h-4" />
-                            <p className="text-[9px] uppercase font-black tracking-[0.2em]">Healthy</p>
+                        <div>
+                            <p className="text-[9px] text-green-600 uppercase font-black tracking-widest">Healthy</p>
+                            <h3 className="text-3xl font-black text-green-700 mt-0.5 leading-none">{healthyCount}</h3>
                         </div>
-                        <h3 className="text-3xl font-black text-green-700">{healthyCount}</h3>
+                        <CheckCircleIcon className="w-8 h-8 text-green-100" />
                     </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                {/* Main View: List & Detail (Native mobile slide-over pattern) */}
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start xl:h-[calc(100vh-250px)] xl:min-h-[600px] relative overflow-hidden">
                     
                     {/* LEFT COLUMN: Product Selector */}
-                    <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 flex flex-col h-[500px] lg:h-[calc(100vh-280px)] lg:col-span-1">
-                        <div className="p-5 border-b border-gray-100 bg-gray-50/50 rounded-t-[2.5rem]">
+                    <div className="xl:col-span-4 bg-white rounded-[2rem] shadow-sm border border-gray-200 flex flex-col h-[calc(100vh-280px)] xl:h-full overflow-hidden">
+                        <div className="p-3 md:p-4 border-b border-gray-100 bg-gray-50/50">
                             <div className="relative">
-                                <span className="absolute left-3.5 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4" /></span>
+                                <span className="absolute left-3.5 top-2.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4" /></span>
                                 <input 
                                     type="text"
                                     placeholder="Search inventory..."
-                                    className="w-full pl-10 p-2.5 border border-gray-200 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white"
+                                    className="w-full pl-10 p-2 border border-gray-200 rounded-xl text-xs font-bold focus:ring-2 focus:ring-blue-500 outline-none transition-all bg-white"
                                     value={masterSearch}
                                     onChange={e => setMasterSearch(e.target.value)}
                                 />
                             </div>
                         </div>
-                        <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+                        <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
                             {filteredMaster.map(item => {
                                 const isSelected = ledgerProduct?.ProductCode === item.ProductCode;
                                 return (
                                     <div 
                                         key={item.ProductCode} 
                                         onClick={() => handleOpenLedger(item)}
-                                        className={`p-4 rounded-3xl cursor-pointer border transition-all duration-200 group ${
+                                        className={`p-3.5 rounded-2xl cursor-pointer border transition-all duration-100 group ${
                                             isSelected 
-                                            ? 'bg-blue-600 border-blue-600 shadow-xl scale-[0.98]' 
-                                            : 'bg-white border-gray-100 hover:border-blue-200 hover:shadow-md'
+                                            ? 'bg-blue-50 border-blue-300 shadow-sm' 
+                                            : 'bg-white border-transparent hover:border-gray-200 hover:bg-gray-50 active:bg-gray-100'
                                         }`}
                                     >
-                                        <div className="flex justify-between items-start mb-3">
+                                        <div className="flex justify-between items-start mb-2">
                                             <div className="pr-2">
-                                                <div className={`font-black text-xs uppercase leading-tight ${isSelected ? 'text-white' : 'text-slate-800'}`}>
+                                                <div className={`font-black text-xs uppercase leading-tight ${isSelected ? 'text-blue-900' : 'text-gray-800'}`}>
                                                     {item.ProductName}
                                                 </div>
-                                                <div className={`text-[9px] font-bold font-mono mt-1 ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>{item.ProductCode}</div>
+                                                <div className={`text-[9px] font-bold font-mono mt-0.5 ${isSelected ? 'text-blue-500' : 'text-gray-400'}`}>{item.ProductCode}</div>
                                             </div>
-                                            <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase shrink-0 border ${isSelected ? 'bg-white/20 border-white/30 text-white' : (getStatusStyle(item.status))}`}>
+                                            <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase shrink-0 border ${getStatusStyle(item.status)}`}>
                                                 {item.status}
                                             </span>
                                         </div>
-                                        <div className="flex justify-between items-end">
-                                            <div className={`text-[10px] ${isSelected ? 'text-blue-100' : 'text-gray-500'} font-medium`}>
-                                                <span className="block italic">Target Needs: <strong className={isSelected ? 'text-white' : 'text-blue-600'}>{item.predictedNeed}</strong> {item.displayUOM}</span>
+                                        <div className="flex justify-between items-end mt-1">
+                                            <div className={`text-gray-500 font-medium ${isSelected ? 'text-blue-800' : ''}`}>
+                                                <span className="block text-xs mb-1">Need Tmw: <strong className={`text-lg md:text-xl font-black ${isSelected ? 'text-blue-700' : 'text-blue-600'}`}>{item.predictedNeed}</strong> <span className="text-[10px] font-bold">{item.displayUOM}</span></span>
+                                                <span className="block text-[10px]">7 Days: <strong className={`font-black ${isSelected ? 'text-blue-900' : 'text-gray-700'}`}>{item.past7Days}</strong> {item.displayUOM}</span>
                                             </div>
                                             <div className="text-right">
-                                                <span className={`block text-[8px] uppercase font-black tracking-widest ${isSelected ? 'text-blue-200' : 'text-gray-400'}`}>In Stock</span>
-                                                <span className={`font-black text-base ${isSelected ? 'text-white' : 'text-slate-900'}`}>{item.StockBalance} <span className="text-[9px] font-bold opacity-60">{item.displayUOM}</span></span>
+                                                <span className={`block text-[9px] uppercase font-bold tracking-widest ${isSelected ? 'text-blue-400' : 'text-gray-400'} mb-0.5`}>Balance</span>
+                                                <span className={`font-black text-xl md:text-2xl ${isSelected ? 'text-blue-900' : 'text-slate-900'}`}>{item.StockBalance} <span className="text-[10px] font-bold opacity-60">{item.displayUOM}</span></span>
                                             </div>
                                         </div>
                                     </div>
                                 );
                             })}
+                            {filteredMaster.length === 0 && (
+                                <div className="p-8 text-center text-gray-400 font-bold italic text-xs">
+                                    {statusFilter ? `No products found with status "${statusFilter}".` : "No products found."}
+                                </div>
+                            )}
                         </div>
                     </div>
 
-                    {/* RIGHT COLUMN: Ledger Details */}
-                    <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 flex flex-col h-[600px] lg:h-[calc(100vh-280px)] overflow-y-auto custom-scrollbar lg:col-span-2">
+                    {/* RIGHT COLUMN: Ledger Details (Full screen slide-in on mobile, static on desktop) */}
+                    <div className={`
+                        xl:col-span-8 bg-white rounded-t-[2rem] xl:rounded-[2rem] shadow-2xl xl:shadow-sm border border-gray-200 
+                        flex-col h-full xl:h-full overflow-hidden 
+                        fixed inset-0 z-50 mt-14 xl:static xl:z-auto xl:mt-0 
+                        transition-transform duration-300 ease-in-out
+                        ${ledgerProduct ? 'translate-x-0 flex' : 'translate-x-full xl:translate-x-0 hidden xl:flex'}
+                    `}>
                         {ledgerProduct ? (
-                            <div className="p-5 md:p-8 space-y-8 animate-in slide-in-from-right-4">
-                                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-gray-50 pb-6">
-                                    <div>
-                                        <h2 className="text-2xl font-black text-slate-800 tracking-tight uppercase leading-none">{ledgerProduct.ProductName}</h2>
-                                        <div className="flex items-center gap-3 mt-2">
-                                            <span className="bg-slate-100 text-slate-500 text-[10px] font-black px-2 py-1 rounded-lg uppercase tracking-widest">ID: {ledgerProduct.ProductCode}</span>
-                                            <span className="text-[10px] text-blue-500 font-black uppercase tracking-widest">{ledgerProduct.Category}</span>
-                                        </div>
-                                    </div>
-                                    <button 
-                                        onClick={() => setShowResetModal(true)}
-                                        className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl shadow-xl font-black transition-all flex items-center gap-2 active:scale-95 text-[10px] uppercase tracking-widest"
-                                    >
-                                        <CheckCircleIcon className="w-5 h-5 stroke-[2.5]" />
-                                        Manual Audit (Golden Set)
+                            <div className="flex flex-col h-full bg-white relative">
+                                {/* Mobile Header with Back Button */}
+                                <div className="xl:hidden flex items-center justify-between p-4 border-b border-gray-100 bg-white sticky top-0 z-10 shrink-0">
+                                    <button onClick={() => setLedgerProduct(null)} className="flex items-center gap-1 text-blue-600 font-bold text-xs p-2 -ml-2 rounded-lg active:bg-blue-50">
+                                        <ChevronLeftIcon className="w-5 h-5" /> Back
                                     </button>
+                                    <div className="text-xs font-black uppercase text-gray-800 truncate px-4">{ledgerProduct.ProductName}</div>
                                 </div>
 
-                                {isLedgerLoading ? (
-                                    <div className="h-full flex items-center justify-center py-20 text-gray-400 font-black animate-pulse uppercase tracking-[0.2em] text-xs">Loading Ledger...</div>
-                                ) : (
-                                    <>
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                            <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100 flex items-center gap-3">
-                                                <div className="p-3 bg-white text-blue-600 rounded-2xl shadow-sm"><CubeIcon className="w-7 h-7" /></div>
-                                                <div>
-                                                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Calculated Bal</p>
-                                                    <h3 className="text-2xl font-black text-slate-800 leading-none mt-1">{ledgerTransactions[0]?.balance || 0} <span className="text-[10px] text-gray-400">{ledgerProduct.displayUOM}</span></h3>
-                                                </div>
-                                            </div>
-                                            <div className="bg-emerald-50 p-5 rounded-3xl border border-emerald-100 flex items-center gap-3">
-                                                <div className="p-3 bg-white text-emerald-600 rounded-2xl shadow-sm"><ArrowTrendingUpIcon className="w-7 h-7" /></div>
-                                                <div>
-                                                    <p className="text-[9px] font-black text-emerald-400 uppercase tracking-widest">Incoming Volume</p>
-                                                    <h3 className="text-2xl font-black text-emerald-800 leading-none mt-1">{ledgerTransactions.filter(t => t.type === 'IN').reduce((s, t) => s + t.qtyIn, 0)} <span className="text-[10px] text-emerald-400">{ledgerProduct.displayUOM}</span></h3>
-                                                </div>
-                                            </div>
-                                            <div className="bg-indigo-50 p-5 rounded-3xl border border-indigo-100 flex items-center gap-3">
-                                                <div className="p-3 bg-white text-indigo-600 rounded-2xl shadow-sm"><ClipboardDocumentListIcon className="w-7 h-7" /></div>
-                                                <div>
-                                                    <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Recent Logs</p>
-                                                    <h3 className="text-sm font-black text-indigo-800 leading-none mt-2">{[...ledgerTransactions].find(t => t.type === 'RESET')?.date || 'No Recent Audit'}</h3>
-                                                </div>
+                                <div className="p-4 md:p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1 pb-24 xl:pb-8">
+                                    {/* Desktop Detail Header */}
+                                    <div className="hidden xl:flex justify-between items-start md:items-center gap-4 border-b border-gray-50 pb-6 shrink-0">
+                                        <div>
+                                            <h2 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight uppercase leading-none">{ledgerProduct.ProductName}</h2>
+                                            <div className="flex items-center gap-3 mt-2">
+                                                <span className="text-[10px] text-gray-400 font-black font-mono uppercase tracking-widest">CODE: {ledgerProduct.ProductCode}</span>
                                             </div>
                                         </div>
+                                        <button 
+                                            onClick={() => setShowResetModal(true)}
+                                            className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl shadow-sm font-bold transition-all flex items-center gap-2 active:scale-95 text-[10px] uppercase tracking-widest"
+                                        >
+                                            <CheckCircleIcon className="w-4 h-4 stroke-[2]" />
+                                            Manual Audit
+                                        </button>
+                                    </div>
 
-                                        <div className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-inner bg-gray-50/20">
-                                            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6 ml-1">EOD Closing Balance History</h3>
-                                            <div className="h-[200px] w-full">
-                                                <svg viewBox="0 0 800 200" className="w-full h-full text-blue-500 overflow-visible">
-                                                    <line x1="40" y1="20" x2="760" y2="20" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="6 6"/>
-                                                    <line x1="40" y1="100" x2="760" y2="100" stroke="#f1f5f9" strokeWidth="1" strokeDasharray="6 6"/>
-                                                    <line x1="40" y1="180" x2="760" y2="180" stroke="#e2e8f0" strokeWidth="2"/>
-                                                    {chartData.length > 1 && <path d={generateChartPath()} fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" className="drop-shadow-lg" />}
-                                                    {chartData.map((dp, i) => {
-                                                        const w = 800; const h = 200; const p = 40; 
-                                                        const m = Math.max(...chartData.map(d => Number(d.balance) || 0), 0) * 1.2 || 10;
-                                                        const x = p + (i * ((w - p * 2) / (Math.max(chartData.length - 1, 1))));
-                                                        const yValue = Number(dp.balance) || 0;
-                                                        const y = h - p - (yValue / m) * (h - p * 2);
-                                                        
-                                                        // Prevent rendering NaN or Infinity attributes
-                                                        if (isNaN(x) || isNaN(y)) return null;
+                                    {/* Mobile Audit Button (Floating bottom or inline) */}
+                                    <div className="xl:hidden shrink-0">
+                                        <button 
+                                            onClick={() => setShowResetModal(true)}
+                                            className="w-full bg-blue-600 text-white p-3 rounded-xl shadow-md font-bold flex items-center justify-center gap-2 active:scale-95 text-xs uppercase tracking-widest"
+                                        >
+                                            <CheckCircleIcon className="w-4 h-4" /> Perform Manual Audit
+                                        </button>
+                                    </div>
 
-                                                        return (
-                                                            <g key={i}>
-                                                                <circle cx={x} cy={y} r="6" fill="white" stroke="currentColor" strokeWidth="3" className="shadow-sm" />
-                                                                <text x={x} y={y - 15} fontSize="11" fill="#1e293b" textAnchor="middle" fontWeight="900">{dp.balance}</text>
-                                                                <text x={x} y={h - 10} fontSize="10" fill="#94a3b8" textAnchor="middle" fontWeight="bold" className="uppercase tracking-tighter">{dp.date}</text>
-                                                            </g>
-                                                        );
-                                                    })}
-                                                </svg>
+                                    {isLedgerLoading ? (
+                                        <div className="flex-1 flex items-center justify-center py-20 text-gray-300 font-black animate-pulse uppercase tracking-[0.2em] text-xs">Loading Ledger...</div>
+                                    ) : (
+                                        <>
+                                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                                <div className="bg-blue-50/50 p-3 md:p-4 rounded-2xl border border-blue-100 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-3">
+                                                <div className="p-2 bg-white text-blue-600 rounded-xl shadow-sm mb-2 sm:mb-0"><CubeIcon className="w-5 h-5 sm:w-6 sm:h-6" /></div>
+                                                <div>
+                                                    <p className="text-[8px] md:text-[9px] font-black text-blue-400 uppercase tracking-widest">Current Bal</p>
+                                                    <h3 className="text-xl font-black text-blue-900 leading-none mt-1">{Number(ledgerTransactions[0]?.balance || 0).toFixed(2)} <span className="text-[9px] md:text-[10px] font-bold text-gray-500">{ledgerProduct.displayUOM}</span></h3>
+                                                </div>
                                             </div>
-                                        </div>
-
-                                        <div className="border border-gray-100 rounded-[2rem] overflow-hidden shadow-sm">
-                                            <div className="bg-slate-50 p-4 border-b border-gray-100 flex justify-between items-center">
-                                                <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">FIFO Transaction Stream</h3>
-                                                <span className="text-[9px] font-bold text-slate-400">Showing Last 20 Entries</span>
+                                            <div className="bg-emerald-50/50 p-3 md:p-4 rounded-2xl border border-emerald-100 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-3">
+                                                <div className="p-2 bg-white text-emerald-600 rounded-xl shadow-sm mb-2 sm:mb-0"><ArrowTrendingUpIcon className="w-5 h-5 sm:w-6 sm:h-6" /></div>
+                                                <div>
+                                                    <p className="text-[8px] md:text-[9px] font-black text-emerald-500 uppercase tracking-widest">Incoming</p>
+                                                    <h3 className="text-xl font-black text-emerald-900 leading-none mt-1">{Number(ledgerTransactions.filter(t => t.type === 'IN').reduce((s, t) => s + (Number(t.qtyIn) || 0), 0)).toFixed(2)} <span className="text-[9px] md:text-[10px] font-bold text-gray-500">{ledgerProduct.displayUOM}</span></h3>
+                                                </div>
                                             </div>
-                                            <table className="w-full text-left">
-                                                <thead className="bg-white text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-gray-50">
-                                                    <tr><th className="p-4 pl-6">Date</th><th className="p-4">Type</th><th className="p-4 text-center">In</th><th className="p-4 text-center">Out</th><th className="p-4 text-center text-blue-600">EOD Bal</th><th className="p-4 pr-6">Activity</th></tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-gray-50 text-xs font-bold text-slate-600">
-                                                    {ledgerTransactions.map((tx) => (
-                                                        <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
-                                                            <td className="p-4 pl-6 font-mono text-[10px] text-slate-400">{tx.date}</td>
-                                                            <td className="p-4">
-                                                                <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase border tracking-widest ${
-                                                                    tx.type === 'IN' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                                                                    tx.type === 'OUT' ? 'bg-orange-50 text-orange-700 border-orange-100' :
-                                                                    'bg-blue-50 text-blue-700 border-blue-100'
-                                                                }`}>{tx.type}</span>
-                                                            </td>
-                                                            <td className="p-4 text-center text-emerald-600">{tx.qtyIn > 0 ? `+${tx.qtyIn}` : '—'}</td>
-                                                            <td className="p-4 text-center text-orange-500">{tx.qtyOut > 0 ? `-${tx.qtyOut}` : '—'}</td>
-                                                            <td className="p-4 text-center font-black text-slate-900 bg-slate-50/50">{tx.balance}</td>
-                                                            <td className="p-4 pr-6 text-[10px] text-slate-400 truncate max-w-[120px]">{tx.remarks}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </>
-                                )}
+                                            <div className="col-span-2 sm:col-span-1 bg-slate-50 p-3 md:p-4 rounded-2xl border border-slate-200 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-3">
+                                                    <div className="p-2 bg-white text-slate-500 rounded-xl shadow-sm mb-2 sm:mb-0 hidden sm:block"><ClipboardDocumentListIcon className="w-5 h-5 sm:w-6 sm:h-6" /></div>
+                                                    <div>
+                                                        <p className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">Recent Audit</p>
+                                                        <h3 className="text-xs font-black text-slate-700 leading-none mt-2">{[...ledgerTransactions].find(t => t.type === 'RESET')?.date || 'N/A'}</h3>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-white p-4 md:p-5 rounded-2xl border border-gray-100 shadow-sm">
+                                                <h3 className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-4">Stock Trend</h3>
+                                                <div className="h-[200px] w-full">
+                                                    {chartData.length > 0 ? (
+                                                        <ResponsiveContainer width="100%" height="100%">
+                                                            <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                                                <CartesianGrid stroke="#f3f4f6" strokeDasharray="3 3" vertical={false} />
+                                                                <ReferenceLine y={0} stroke="#ef4444" strokeWidth={2} strokeDasharray="4 4" label={{ position: 'insideTopLeft', value: '0 Balance', fill: '#ef4444', fontSize: 10, fontWeight: 'bold' }} />
+                                                                <XAxis 
+                                                                    dataKey="date" 
+                                                                    tick={{fontSize: 10, fill: '#9ca3af', fontWeight: 'bold'}} 
+                                                                    axisLine={false} 
+                                                                    tickLine={false} 
+                                                                    dy={10}
+                                                                    minTickGap={30}
+                                                                />
+                                                                <YAxis 
+                                                                    tick={{fontSize: 10, fill: '#9ca3af', fontWeight: 'bold'}} 
+                                                                    axisLine={false} 
+                                                                    tickLine={false} 
+                                                                />
+                                                                <Tooltip 
+                                                                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', padding: '12px'}}
+                                                                    labelStyle={{fontWeight: 'bold', color: '#1f2937', marginBottom: '8px', fontSize: '12px'}}
+                                                                    itemStyle={{fontSize: '12px', fontWeight: '500'}}
+                                                                />
+                                                                <Line 
+                                                                    type="monotone" 
+                                                                    dataKey="balance" 
+                                                                    name="Balance" 
+                                                                    stroke="#3b82f6" 
+                                                                    strokeWidth={3} 
+                                                                    dot={{r: 0}} 
+                                                                    activeDot={{r: 6, strokeWidth: 0}} 
+                                                                    connectNulls 
+                                                                />
+                                                            </LineChart>
+                                                        </ResponsiveContainer>
+                                                    ) : (
+                                                        <div className="h-full flex flex-col items-center justify-center text-gray-300">
+                                                            <span className="text-4xl mb-3 opacity-50">📉</span>
+                                                            <p className="font-bold text-sm">No trend data available</p>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                                                <table className="w-full text-left">
+                                                    <thead className="bg-gray-50 text-[8px] md:text-[9px] font-black text-gray-400 uppercase border-b border-gray-100 tracking-widest">
+                                                        <tr><th className="p-3 pl-4">Date</th><th className="p-3">Type</th><th className="p-3 text-center">In</th><th className="p-3 text-center">Out</th><th className="p-3 text-center text-blue-600">Bal</th></tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-gray-50 text-[10px] md:text-xs font-bold text-gray-600">
+                                                        {ledgerTransactions.map((tx) => (
+                                                            <tr key={tx.id} className="hover:bg-gray-50/50 transition-colors">
+                                                                <td className="p-3 pl-4 font-mono text-gray-400">{tx.date.substring(5)}</td>
+                                                                <td className="p-3">
+                                                                    <span className={`px-1.5 py-0.5 rounded text-[7px] md:text-[8px] font-black uppercase border tracking-widest ${
+                                                                        tx.type === 'IN' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                                                                        tx.type === 'OUT' ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                                                                        'bg-blue-50 text-blue-700 border-blue-100'
+                                                                    }`}>{tx.type}</span>
+                                                                </td>
+                                                                <td className="p-3 text-center text-emerald-600">{tx.qtyIn > 0 ? `+${Number(tx.qtyIn).toFixed(2)}` : '—'}</td>
+                                                                <td className="p-3 text-center text-orange-500">{tx.qtyOut > 0 ? `-${Number(tx.qtyOut).toFixed(2)}` : '—'}</td>
+                                                                <td className="p-3 text-center font-black text-gray-800 bg-gray-50/50">{Number(tx.balance).toFixed(2)}</td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                             </div>
                         ) : (
-                            <div className="flex-1 flex flex-col items-center justify-center text-slate-300 p-12 text-center min-h-[500px]">
-                                <div className="bg-slate-50 p-10 rounded-full mb-6 border border-slate-100 shadow-inner">
-                                    <ChartBarIcon className="w-16 h-16 text-slate-200" />
+                            <div className="flex-1 flex flex-col items-center justify-start pt-32 text-slate-400 p-8 text-center h-full">
+                                <div className="bg-slate-50 p-6 rounded-full mb-6 border border-slate-100 shadow-sm hidden md:block">
+                                    <ChartBarIcon className="w-10 h-10 text-slate-300" />
                                 </div>
-                                <h3 className="text-xl font-black text-slate-400 uppercase tracking-[0.3em] mb-3">Unit Selection Required</h3>
-                                <p className="text-sm max-w-xs mx-auto font-bold text-slate-400 leading-relaxed uppercase tracking-tighter">Please choose a product from the master catalog on the left to initialize the analytics engine and ledger history.</p>
+                                <h3 className="text-sm font-black uppercase tracking-widest mb-2 text-slate-600">Select Product</h3>
+                                <p className="text-xs max-w-xs mx-auto font-medium text-slate-400 leading-relaxed">Choose an item from the list to view its ledger.</p>
                             </div>
                         )}
                     </div>
@@ -613,84 +756,117 @@ export default function StockBalancePage() {
 
             {/* TAB 2: LOG INVENTORY (Batch Update) */}
             {activeTab === 'log' && (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
-                <div className="lg:col-span-2 space-y-6">
-                    <div className="bg-white p-6 rounded-[2.5rem] shadow-sm border border-gray-100"> 
-                        <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4 border-b border-gray-50 pb-2">Batch Inventory Log</h2>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4"> 
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-300">
+                <div className="lg:col-span-8 space-y-4 md:space-y-6">
+                    <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100"> 
+                        <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-50 pb-2">Record Actual Balance</h2>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"> 
                             <div>
-                                <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Actual Physical Count Date</label>
-                                <input type="date" className="w-full border border-gray-100 rounded-2xl p-4 text-xs font-black bg-orange-50/30 text-orange-900 outline-none focus:ring-2 focus:ring-orange-500" value={logDate} onChange={e => setLogDate(e.target.value)} />
+                                <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1.5 ml-1">Count Date</label>
+                                <input type="date" className="w-full border border-gray-200 rounded-xl p-3 text-xs font-black bg-orange-50/30 text-orange-900 outline-none focus:ring-2 focus:ring-orange-500" value={logDate} onChange={e => setLogDate(e.target.value)} />
+                            </div>
+                            <div className="relative flex items-end">
+                                <div className="w-full relative">
+                                    <input type="text" placeholder="Search catalog..." className="w-full pl-10 p-3 border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-orange-500 text-xs font-bold bg-white outline-none" value={logSearch} onChange={e => setLogSearch(e.target.value)} />
+                                    <span className="absolute left-3.5 top-3 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4" /></span>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <div className="space-y-4">
-                        <div className="relative">
-                            <input type="text" placeholder="Search product to adjust..." className="w-full pl-12 p-4 border border-gray-200 rounded-[2rem] shadow-sm focus:ring-2 focus:ring-orange-500 text-sm font-bold bg-white outline-none" value={logSearch} onChange={e => setLogSearch(e.target.value)} />
-                            <span className="absolute left-4 top-4 text-gray-400 text-xl"><MagnifyingGlassIcon className="w-6 h-6" /></span>
-                        </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            {filteredLogProducts.slice(0, 10).map(p => {
-                                const inputs = productInputs[p.ProductCode] || {};
-                                const availableUOMs = Array.from(new Set([p.BaseUOM, ...(p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [])]));
-                                return (
-                                    <div key={p.ProductCode} className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-sm relative group hover:shadow-md transition-all">
-                                        <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-2xl text-[8px] font-black uppercase ${getStatusStyle(p.status)}`}>CUR: {p.StockBalance} {p.displayUOM}</div>
-                                        <h3 className="font-black text-slate-800 text-sm uppercase mb-3 pr-20">{p.ProductName}</h3>
-                                        <div className="flex items-center gap-2">
-                                            <input type="number" step="0.1" placeholder="New" className="flex-1 border border-gray-100 rounded-xl text-sm p-3 font-black text-center outline-none focus:ring-2 focus:ring-orange-500 bg-slate-50" value={inputs.qty || ''} onChange={(e) => handleLogProductChange(p.ProductCode, 'qty', e.target.value)} />
-                                            <select className="bg-slate-50 border border-gray-100 rounded-xl text-[10px] p-3 font-black uppercase outline-none" value={inputs.uom || p.displayUOM} onChange={(e) => handleLogProductChange(p.ProductCode, 'uom', e.target.value)}>{availableUOMs.map(u => <option key={u} value={u}>{u}</option>)}</select>
-                                            <button onClick={() => addToLogCart(p)} className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl w-12 h-11 flex items-center justify-center font-black text-xl shadow-lg transform transition active:scale-90">+</button>
-                                        </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 lg:h-[calc(100vh-300px)] lg:overflow-y-auto custom-scrollbar pb-32 lg:pb-0">
+                        {filteredLogProducts.slice(0, 15).map(p => {
+                            const inputs = productInputs[p.ProductCode] || {};
+                            const availableUOMs = Array.from(new Set([p.BaseUOM, ...(p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [])]));
+                            return (
+                                <div key={p.ProductCode} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm relative group hover:border-orange-200 transition-all flex flex-col justify-between">
+                                    <div className={`absolute top-0 right-0 px-2.5 py-1 rounded-bl-xl text-[8px] font-black uppercase ${getStatusStyle(p.status)}`}>CUR: {p.StockBalance} {p.displayUOM}</div>
+                                    <h3 className="font-black text-gray-800 text-xs uppercase mb-3 pr-20 leading-tight">{p.ProductName}</h3>
+                                    <div className="flex items-center gap-2 mt-auto">
+                                        <input type="number" step="0.1" placeholder="New Bal" className="flex-1 border border-gray-200 rounded-xl text-xs p-2.5 font-black text-center outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50 min-w-[70px]" value={inputs.qty || ''} onChange={(e) => handleLogProductChange(p.ProductCode, 'qty', e.target.value)} />
+                                        <select className="bg-gray-50 border border-gray-200 rounded-xl text-[10px] p-2.5 font-black uppercase outline-none focus:ring-2 focus:ring-orange-500" value={inputs.uom || p.displayUOM} onChange={(e) => handleLogProductChange(p.ProductCode, 'uom', e.target.value)}>{availableUOMs.map(u => <option key={u} value={u}>{u}</option>)}</select>
+                                        <button onClick={() => addToLogCart(p)} className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl w-10 h-10 flex items-center justify-center font-black text-lg shadow-sm transform transition active:scale-95 shrink-0">+</button>
                                     </div>
-                                );
-                            })}
-                        </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
 
-                <div className="lg:col-span-1">
-                    <div className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-gray-100 sticky top-4 flex flex-col h-[calc(100vh-6rem)] min-h-[500px]">
-                        <div className="flex justify-between items-center mb-6"><h2 className="text-lg font-black text-slate-800 tracking-tight uppercase">Batch Review</h2><span className="bg-orange-100 text-orange-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{logCart.length} Items</span></div>
-                        <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-1">
-                            {logCart.length === 0 ? (
-                                <div className="h-48 flex flex-col items-center justify-center text-slate-300 italic text-sm border-2 border-dashed border-slate-100 rounded-[2rem]">Empty</div>
-                            ) : logCart.map((item) => (
-                                <div key={item.cartId} className="p-4 rounded-2xl bg-slate-50/50 border border-slate-100 relative group hover:bg-white transition-all">
-                                    <div className="flex justify-between items-start mb-2"><div className="pr-6"><div className="text-[11px] font-black uppercase text-slate-800 leading-tight">{item.ProductName}</div><div className="text-[9px] text-slate-400 font-mono">{item.ProductCode}</div></div><button onClick={() => removeFromLogCart(item.cartId)} className="text-slate-300 hover:text-red-500 transition-colors"><XMarkIcon className="w-5 h-5" /></button></div>
-                                    <div className="flex items-center gap-2 mt-2"><span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">New Balance:</span><div className="text-xs font-black text-orange-700 bg-orange-50 px-2 py-1 rounded-lg border border-orange-100">{item.qty} {item.uom}</div></div>
-                                </div>
-                            ))}
-                        </div>
-                        <button onClick={handleSubmitLog} disabled={submittingLog || logCart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submittingLog || logCart.length === 0 ? 'bg-slate-200 cursor-not-allowed text-slate-400' : 'bg-orange-500 hover:bg-orange-600 active:scale-95 shadow-orange-500/30'}`}>{submittingLog ? 'PROCESS...' : 'COMMIT BATCH ADJUSTMENT'}</button>
+                {/* Desktop Cart Column (Hidden on Mobile) */}
+                <div className="hidden lg:flex lg:col-span-4 bg-white p-5 rounded-[2rem] shadow-xl border border-gray-100 sticky top-4 flex-col h-[calc(100vh-6rem)] min-h-[500px]">
+                    <div className="flex justify-between items-center mb-6"><h2 className="text-base font-black text-gray-800 tracking-tight uppercase">Update List</h2><span className="bg-orange-100 text-orange-700 text-[10px] font-black px-2.5 py-1 rounded-full uppercase">{logCart.length} Items</span></div>
+                    <div className="flex-1 overflow-y-auto space-y-2 mb-6 custom-scrollbar pr-1">
+                        {logCart.length === 0 ? (
+                            <div className="h-32 flex flex-col items-center justify-center text-gray-300 italic text-xs border-2 border-dashed border-gray-100 rounded-2xl">List empty</div>
+                        ) : logCart.map((item) => (
+                            <div key={item.cartId} className="p-3 rounded-xl bg-gray-50 border border-gray-100 relative group">
+                                <div className="flex justify-between items-start mb-1"><div className="pr-6"><div className="text-[10px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div><div className="text-[8px] text-gray-400 font-mono mt-0.5">{item.ProductCode}</div></div><button onClick={() => removeFromLogCart(item.cartId)} className="text-gray-300 hover:text-red-500 absolute top-2 right-2"><XMarkIcon className="w-4 h-4" /></button></div>
+                                <div className="flex items-center gap-2 mt-1"><span className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Set to:</span><div className="text-[11px] font-black text-orange-700 bg-orange-50 px-2 py-0.5 rounded border border-orange-100">{item.qty} <span className="text-[8px]">{item.uom}</span></div></div>
+                            </div>
+                        ))}
+                    </div>
+                    <div className="mt-auto pt-4 border-t border-gray-100 space-y-3">
+                        <button 
+                            onClick={handleSubmitLog} 
+                            disabled={submittingLog || logCart.length === 0} 
+                            className={`w-full py-3.5 rounded-xl text-white font-black text-xs shadow-md transition-all flex items-center justify-center gap-2 ${submittingLog || logCart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-orange-500 hover:bg-orange-600 active:scale-95'}`}
+                        >
+                            {submittingLog ? 'PROCESS...' : 'COMMIT ADJUSTMENT'}
+                        </button>
                     </div>
                 </div>
+
+                {/* Mobile Floating Cart Action Bar */}
+                {logCart.length > 0 && (
+                    <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 pb-6 shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-40">
+                        <div className="flex items-center justify-between gap-4 max-w-lg mx-auto">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-orange-100 p-3 rounded-full text-orange-600 relative">
+                                    <ClipboardDocumentListIcon className="w-6 h-6" />
+                                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border-2 border-white">{logCart.length}</span>
+                                </div>
+                            </div>
+                            <button 
+                                onClick={handleSubmitLog}
+                                disabled={submittingLog}
+                                className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-black py-3.5 px-6 rounded-xl shadow-lg transition active:scale-95 text-xs tracking-widest"
+                            >
+                                {submittingLog ? 'UPDATING...' : 'COMMIT BATCH'}
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
             )}
 
             {/* AUDIT MODAL */}
             {showResetModal && ledgerProduct && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md animate-in fade-in">
-                    <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border-2 border-slate-50">
-                        <div className="p-8 border-b border-slate-50 bg-slate-50/30 text-center">
-                            <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600"><CheckCircleIcon className="w-10 h-10" /></div>
-                            <h3 className="text-2xl font-black text-slate-800 uppercase tracking-tight leading-none">Manual Inventory Audit</h3>
-                            <p className="text-[10px] font-bold text-slate-400 mt-3 uppercase tracking-widest leading-relaxed px-4">Overriding current system balance for <span className="text-blue-600 block text-xs mt-1">{ledgerProduct.ProductName}</span></p>
+                <div className="fixed inset-0 z-[110] flex items-end md:items-center justify-center bg-gray-900/60 backdrop-blur-sm animate-in fade-in">
+                    <div className="bg-white rounded-t-3xl md:rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden animate-in slide-in-from-bottom-10 md:zoom-in-95 duration-200 border border-gray-100">
+                        <div className="p-6 border-b border-gray-100 bg-gray-50/50 text-center relative">
+                            <button onClick={() => setShowResetModal(false)} className="absolute right-4 top-4 text-gray-400 p-2"><XMarkIcon className="w-5 h-5"/></button>
+                            <h3 className="text-base font-black text-gray-900 flex items-center justify-center gap-2 uppercase tracking-tight mt-2">
+                                <CheckCircleIcon className="w-5 h-5 text-blue-600" />
+                                Manual Audit
+                            </h3>
+                            <p className="text-[10px] font-bold text-gray-500 mt-2 uppercase tracking-widest leading-relaxed">
+                                Set balance for <br/><span className="text-blue-600 block mt-0.5">{ledgerProduct.ProductName}</span>
+                            </p>
                         </div>
-                        <div className="p-8 space-y-6">
+                        <div className="p-6 space-y-4">
                             <div>
-                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Verified Physical Count ({ledgerProduct.displayUOM})</label>
-                                <input type="number" step="0.1" value={resetQuantity} onChange={(e) => setResetQuantity(e.target.value)} className="w-full p-5 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none text-3xl font-black text-slate-800 transition-all shadow-inner bg-slate-50/50" placeholder="0.0" autoFocus />
+                                <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Physical Count ({ledgerProduct.displayUOM})</label>
+                                <input type="number" step="0.1" value={resetQuantity} onChange={(e) => setResetQuantity(e.target.value)} className="w-full p-4 border border-gray-200 rounded-2xl focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-xl font-black text-gray-800 transition-all text-center bg-gray-50" placeholder="0.0" autoFocus />
                             </div>
                             <div>
-                                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 ml-1">Audit Remarks</label>
-                                <input type="text" value={resetRemarks} onChange={(e) => setResetRemarks(e.target.value)} className="w-full p-4 border-2 border-slate-100 rounded-2xl focus:border-blue-500 outline-none text-xs font-bold text-slate-600 transition-all shadow-inner bg-slate-50/50" />
+                                <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 ml-1">Remarks</label>
+                                <input type="text" value={resetRemarks} onChange={(e) => setResetRemarks(e.target.value)} className="w-full p-3 border border-gray-200 rounded-xl focus:border-blue-500 outline-none text-xs font-bold text-gray-600 transition-all" />
                             </div>
                         </div>
-                        <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex gap-3">
-                            <button onClick={() => setShowResetModal(false)} className="flex-1 py-4 text-[10px] font-black text-slate-400 hover:bg-white hover:text-slate-600 rounded-2xl transition-all uppercase tracking-widest border border-transparent hover:border-slate-200">Cancel</button>
-                            <button onClick={handleSaveSingleReset} disabled={!resetQuantity} className="flex-[2] py-4 text-[10px] font-black text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-2xl shadow-xl transition-all uppercase tracking-widest active:scale-95 shadow-blue-500/30">Confirm Audit Result</button>
+                        <div className="p-4 md:p-5 bg-gray-50 border-t border-gray-100 flex gap-2 pb-8 md:pb-5">
+                            <button onClick={() => setShowResetModal(false)} className="flex-1 py-3.5 text-[10px] font-black text-gray-500 hover:bg-gray-200 rounded-xl transition-all uppercase tracking-widest">Cancel</button>
+                            <button onClick={handleSaveSingleReset} disabled={!resetQuantity} className="flex-[2] py-3.5 text-[10px] font-black text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-xl shadow-sm transition-all uppercase tracking-widest active:scale-95">Confirm Result</button>
                         </div>
                     </div>
                 </div>
