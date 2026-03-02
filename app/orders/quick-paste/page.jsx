@@ -10,7 +10,8 @@ import {
   PlusIcon,
   CurrencyDollarIcon,
   MagnifyingGlassIcon,
-  ScaleIcon
+  ScaleIcon,
+  DocumentTextIcon
 } from '@heroicons/react/24/outline';
 
 const KNOWN_UOMS = ['KG', 'CTN', 'PCS', 'PKT', 'BKL', 'BOX', 'G', 'TRAY', 'BUNCH', 'BAG', 'ROLL', 'SISIR', 'PACK', 'BTL', 'TIN'];
@@ -424,11 +425,12 @@ export default function QuickPastePage() {
 
       const uomPattern = KNOWN_UOMS.join('|');
       
-      // Regex 1: Matches Qty & UOM at the END (e.g. "Apple - 2 box x 65")
-      const endQtyUomPriceRegex = new RegExp(`(?:[- \\t@xX]+)([\\d.]+)\\s*(${uomPattern})(?:[- \\t@xX]*(?:RM|rm)?\\s*([\\d.]+))?\\s*$`, 'i');
+      // Regex 1: Matches Qty & UOM at the END (e.g. "Apple - 2 box x 65" or "Bitter gourd-1kg")
+      // Refined to safely extract numbers attached directly to hyphens or UOMs
+      const endQtyUomPriceRegex = new RegExp(`(?:[\\s\\-@xX,]+|^)([\\d.]+)\\s*(${uomPattern})(?:[\\s\\-@xX]*(?:RM|rm)?\\s*([\\d.]+))?\\s*$`, 'i');
       
       // Regex 2: Matches Qty & UOM at the START (e.g. "2 CTN Apple")
-      const startQtyUomRegex = new RegExp(`^([\\d.]+)\\s*(${uomPattern})\\b(?:[- \\t@xX]*(.*))?$`, 'i');
+      const startQtyUomRegex = new RegExp(`^([\\d.]+)\\s*(${uomPattern})\\b(?:[\\s\\-@xX,]+(.*))?$`, 'i');
 
       let extractedPhone = '';
       let extractedAddress = '';
@@ -515,7 +517,7 @@ export default function QuickPastePage() {
                       rawName = rawName.substring(0, pMatch.index).trim();
                   }
               } else {
-                  const qtyMatch = rawName.match(/(?:[- \t@xX]+)([\d.]+)\s*$/i);
+                  const qtyMatch = rawName.match(/(?:[\s\-@xX,]+|^)([\d.]+)\s*$/i);
                   if (qtyMatch) {
                       qty = parseFloat(qtyMatch[1]);
                       rawName = rawName.substring(0, qtyMatch.index).trim();
@@ -554,7 +556,8 @@ export default function QuickPastePage() {
               uom: finalUom,
               price: price, 
               productCode: bestProduct ? bestProduct.ProductCode : '',
-              notes: '' // Initialize empty notes field
+              notes: '',
+              showNotes: false // UI toggle state
           });
       }
 
@@ -681,8 +684,8 @@ export default function QuickPastePage() {
 
       const orderRows = validItems.map(item => {
           const prod = products.find(p => p.ProductCode === item.productCode);
-          // Combine user notes with original pasted line
-          const finalNotes = item.notes ? `${item.notes} | Pasted: ${item.rawLine}` : `Pasted: ${item.rawLine}`;
+          // Only save the user-entered notes. Remove the "Pasted: " raw line part.
+          const finalNotes = item.notes ? item.notes.trim() : '';
           
           return {
               "Timestamp": new Date(),
@@ -756,7 +759,7 @@ export default function QuickPastePage() {
       }
   };
   const removeOrderItem = (id) => setParsedOrderItems(prev => prev.filter(item => item.id !== id));
-  const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: 'Manual Entry', qty: 1, uom: 'KG', price: 0, productCode: '', notes: '' }]);
+  const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: 'Manual Entry', qty: 1, uom: 'KG', price: 0, productCode: '', notes: '', showNotes: false }]);
   
   const updatePriceItem = (id, field, value) => {
       setParsedPriceItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
@@ -903,7 +906,7 @@ export default function QuickPastePage() {
                               <div className="w-16 text-center">Qty</div>
                               <div className="w-20 text-center">UOM</div>
                               <div className="w-20 text-center">Price</div>
-                              <div className="w-8 text-right"></div>
+                              <div className="w-16 text-right"></div>
                           </div>
 
                           {/* ITEMS LIST */}
@@ -924,7 +927,7 @@ export default function QuickPastePage() {
                                           />
                                       </div>
 
-                                      {/* Qty, UOM, Price, Delete (Side-by-side on mobile) */}
+                                      {/* Qty, UOM, Price, Actions */}
                                       <div className="flex w-full lg:w-auto gap-2 items-end lg:items-center mt-1 lg:mt-0">
                                           <div className="flex-1 lg:w-16">
                                               <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">QTY</span>
@@ -948,21 +951,38 @@ export default function QuickPastePage() {
                                               <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">PRICE</span>
                                               <input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-lg text-[10px] md:text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.price} onChange={e => updateOrderItem(item.id, 'price', e.target.value)} />
                                           </div>
-                                          <div className="w-8 flex justify-end pb-1.5 lg:pb-0">
-                                              <button onClick={() => removeOrderItem(item.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><TrashIcon className="w-5 h-5 inline" /></button>
+                                          <div className="w-auto flex justify-end gap-1 pb-1.5 lg:pb-0">
+                                              <button 
+                                                  onClick={() => updateOrderItem(item.id, 'showNotes', !item.showNotes)} 
+                                                  className={`p-1.5 rounded-lg transition ${item.showNotes || item.notes ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'}`}
+                                                  title="Toggle Notes"
+                                              >
+                                                  <DocumentTextIcon className="w-4 h-4 md:w-5 md:h-5 inline" />
+                                              </button>
+                                              <button 
+                                                  onClick={() => removeOrderItem(item.id)} 
+                                                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                                                  title="Remove Item"
+                                              >
+                                                  <TrashIcon className="w-4 h-4 md:w-5 md:h-5 inline" />
+                                              </button>
                                           </div>
                                       </div>
                                   </div>
-                                  {/* NOTES INPUT */}
-                                  <div className="mt-2 pl-0 lg:pl-[20%] lg:pr-[240px]">
-                                      <input 
-                                          type="text" 
-                                          placeholder="Add special notes for this item (e.g. masak sikit)..." 
-                                          className="w-full bg-gray-50 border border-gray-200 text-[10px] md:text-xs font-medium text-gray-600 focus:ring-1 focus:ring-blue-400 outline-none p-2 rounded-lg italic"
-                                          value={item.notes || ''}
-                                          onChange={e => updateOrderItem(item.id, 'notes', e.target.value)}
-                                      />
-                                  </div>
+                                  
+                                  {/* CONDITIONAL NOTES INPUT */}
+                                  {item.showNotes && (
+                                      <div className="mt-2 pl-0 lg:pl-[20%] lg:pr-[240px] animate-in fade-in slide-in-from-top-2">
+                                          <input 
+                                              type="text" 
+                                              placeholder="Add special notes for this item (e.g. masak sikit)..." 
+                                              className="w-full bg-blue-50/50 border border-blue-200 text-[10px] md:text-xs font-medium text-blue-800 focus:ring-1 focus:ring-blue-400 outline-none p-2.5 rounded-lg placeholder-blue-300"
+                                              value={item.notes || ''}
+                                              onChange={e => updateOrderItem(item.id, 'notes', e.target.value)}
+                                              autoFocus
+                                          />
+                                      </div>
+                                  )}
                               </div>
                           ))}
                           <button onClick={addBlankOrderItem} className="w-full py-3 border-2 border-dashed border-gray-200 text-gray-400 font-bold rounded-xl hover:border-blue-400 hover:text-blue-500 transition flex items-center justify-center gap-2 text-xs mt-2">
