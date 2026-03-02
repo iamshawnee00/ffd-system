@@ -13,7 +13,15 @@ import {
   ScaleIcon
 } from '@heroicons/react/24/outline';
 
-const KNOWN_UOMS = ['KG', 'CTN', 'PCS', 'PKT', 'BKL', 'BOX', 'G', 'TRAY', 'BUNCH', 'BAG', 'ROLL'];
+const KNOWN_UOMS = ['KG', 'CTN', 'PCS', 'PKT', 'BKL', 'BOX', 'G', 'TRAY', 'BUNCH', 'BAG', 'ROLL', 'SISIR', 'PACK', 'BTL', 'TIN'];
+
+// Helper to get local date string (YYYY-MM-DD) avoiding UTC timezone shift issues
+const getLocalDateString = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
 
 // Custom Searchable Customer Dropdown Component
 function SearchableCustomerSelect({ selectedCustomerId, customers, onSelect }) {
@@ -244,7 +252,7 @@ export default function QuickPastePage() {
       setLoading(false);
       
       setDeliveryDate(calculateDefaultDate());
-      setPriceDate(new Date().toISOString().split('T')[0]); 
+      setPriceDate(getLocalDateString(new Date())); 
     }
     loadData();
   }, [router]);
@@ -254,13 +262,12 @@ export default function QuickPastePage() {
       const hour = now.getHours();
       const targetDate = new Date(now);
       
-      if (hour >= 10 && hour < 18) {
+      // Default to today if morning (before 12pm). Default to tomorrow if after 12pm.
+      if (hour >= 12) {
           targetDate.setDate(targetDate.getDate() + 1);
-      } else if (hour >= 18) {
-          targetDate.setDate(targetDate.getDate() + 1); 
       }
       
-      return targetDate.toISOString().split('T')[0];
+      return getLocalDateString(targetDate);
   };
 
   const findBestCustomerMatch = (firstLine, customersList) => {
@@ -425,7 +432,7 @@ export default function QuickPastePage() {
 
       let extractedPhone = '';
       let extractedAddress = '';
-      let checkingHeaders = true;
+      let inHeader = true; // Track if we are still reading header metadata
 
       const newItems = [];
       for (let i = startIndex; i < lines.length; i++) {
@@ -443,36 +450,35 @@ export default function QuickPastePage() {
               
               const parsedDate = new Date(`${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`);
               if (!isNaN(parsedDate)) {
-                  setDeliveryDate(parsedDate.toISOString().split('T')[0]);
+                  setDeliveryDate(getLocalDateString(parsedDate));
                   continue; 
               }
           }
 
           // --- HEADER METADATA EXTRACTION (Phone & Address) ---
-          if (checkingHeaders) {
-              // Extract phone number
-              if (line.match(/^(?:\+?6?0)[1-9][0-9\-\s]{6,12}$/)) {
+          if (inHeader) {
+              // Extract phone number (Relaxed to catch standard MSIA formats like 0162687648)
+              const phoneMatch = line.match(/^(?:\+?6?0)[1-9][0-9\-\s]{5,12}$/);
+              if (phoneMatch) {
                   if (!extractedPhone) extractedPhone = line.trim();
                   continue;
               }
 
-              // Address Extraction Logic (Checks if line is NOT a product)
-              const hasUom = new RegExp(`(?:\\b\\d+\\.?\\d*\\s*(?:${uomPattern})\\b)`, 'i').test(line);
-              const hasBullet = /^[-*•]/.test(line);
-              const startsWithNumber = /^\d+/.test(line);
+              // Check if this line looks like a product. If so, exit Header Mode.
+              const hasEndUom = endQtyUomPriceRegex.test(line);
+              const hasStartUom = startQtyUomRegex.test(line);
+              const hasUomKeyword = new RegExp(`\\b(?:${uomPattern})\\b`, 'i').test(line);
+              const isBulletStart = /^[-*•]\s/.test(line); // Strict bullet with a space
 
-              if (!hasUom && !hasBullet && !startsWithNumber && line.length > 3) {
-                  // Valid address or subtitle line
-                  if (!extractedAddress) {
-                      extractedAddress = line.trim();
-                  } else {
-                      extractedAddress += ', ' + line.trim();
+              if (hasEndUom || hasStartUom || isBulletStart || (hasUomKeyword && !line.toLowerCase().includes('jalan'))) {
+                  inHeader = false; // We found the first product, break out of header check
+              } else {
+                  // If it's not a product, date, or phone, accumulate it as the address
+                  if (line.length > 2) {
+                      extractedAddress += (extractedAddress ? ', ' : '') + line;
                   }
-                  continue;
+                  continue; // Skip product extraction for this line
               }
-
-              // If it hits a product line, stop checking headers
-              checkingHeaders = false;
           }
           
           // --- PRODUCT ITEM EXTRACTION ---
@@ -528,9 +534,18 @@ export default function QuickPastePage() {
 
           const bestProduct = findBestProductMatch(rawName, customerHistoryCodes);
 
-          let finalUom = uom;
-          if (!finalUom && bestProduct) finalUom = bestProduct.BaseUOM;
-          if (!finalUom) finalUom = 'KG'; 
+          let finalUom = uom || 'KG'; 
+          
+          // Force UOM to match Product Master's Allowed UOMs / Base UOM
+          if (bestProduct) {
+              const allowedUoms = bestProduct.AllowedUOMs 
+                  ? bestProduct.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean)
+                  : [bestProduct.BaseUOM?.toUpperCase() || 'KG'];
+              
+              if (!allowedUoms.includes(finalUom)) {
+                  finalUom = bestProduct.BaseUOM || allowedUoms[0] || 'KG';
+              }
+          }
 
           newItems.push({
               id: Date.now() + i,
@@ -539,6 +554,7 @@ export default function QuickPastePage() {
               uom: finalUom,
               price: price, 
               productCode: bestProduct ? bestProduct.ProductCode : '',
+              notes: '' // Initialize empty notes field
           });
       }
 
@@ -575,13 +591,26 @@ export default function QuickPastePage() {
                   const cleanName = namePart.replace(/[^\w\s\u4e00-\u9fa5]/g, '').trim();
                   const bestProduct = findBestProductMatch(cleanName);
 
+                  let finalUom = uomStr.toUpperCase();
+                  
+                  // Force UOM to match Product Master's Allowed UOMs / Base UOM
+                  if (bestProduct) {
+                      const allowedUoms = bestProduct.AllowedUOMs 
+                          ? bestProduct.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean)
+                          : [bestProduct.BaseUOM?.toUpperCase() || 'KG'];
+                      
+                      if (!allowedUoms.includes(finalUom)) {
+                          finalUom = bestProduct.BaseUOM || allowedUoms[0] || 'KG';
+                      }
+                  }
+
                   if (bestProduct && price > 0) {
                       newItems.push({
                           id: Date.now() + i,
                           rawLine: line,
                           productCode: bestProduct.ProductCode,
                           productName: bestProduct.ProductName, 
-                          uom: uomStr,
+                          uom: finalUom,
                           price: price
                       });
                   }
@@ -652,6 +681,9 @@ export default function QuickPastePage() {
 
       const orderRows = validItems.map(item => {
           const prod = products.find(p => p.ProductCode === item.productCode);
+          // Combine user notes with original pasted line
+          const finalNotes = item.notes ? `${item.notes} | Pasted: ${item.rawLine}` : `Pasted: ${item.rawLine}`;
+          
           return {
               "Timestamp": new Date(),
               "Status": "Pending",
@@ -668,7 +700,7 @@ export default function QuickPastePage() {
               "UOM": item.uom,
               "Price": item.price || 0,
               "LoggedBy": currentUser,
-              "SpecialNotes": `Pasted: ${item.rawLine}`
+              "SpecialNotes": finalNotes
           };
       });
 
@@ -724,7 +756,7 @@ export default function QuickPastePage() {
       }
   };
   const removeOrderItem = (id) => setParsedOrderItems(prev => prev.filter(item => item.id !== id));
-  const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: 'Manual Entry', qty: 1, uom: 'KG', price: 0, productCode: '' }]);
+  const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: 'Manual Entry', qty: 1, uom: 'KG', price: 0, productCode: '', notes: '' }]);
   
   const updatePriceItem = (id, field, value) => {
       setParsedPriceItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
@@ -876,40 +908,60 @@ export default function QuickPastePage() {
 
                           {/* ITEMS LIST */}
                           {parsedOrderItems.map((item) => (
-                              <div key={item.id} className="flex flex-col lg:flex-row gap-3 lg:gap-2 items-start lg:items-center bg-white p-3 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 transition">
-                                  {/* Original Text */}
-                                  <div className="w-full lg:w-1/5 text-[10px] text-gray-500 italic truncate" title={item.rawLine}>
-                                      "{item.rawLine}"
-                                  </div>
-                                  
-                                  {/* Product Select (Flex-1 makes it stretch) */}
-                                  <div className="w-full lg:flex-1">
-                                      <SearchableProductSelect 
-                                          item={item} 
-                                          products={products} 
-                                          onUpdate={(code) => updateOrderItem(item.id, 'productCode', code)} 
-                                      />
-                                  </div>
+                              <div key={item.id} className="flex flex-col bg-white p-3 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 transition">
+                                  <div className="flex flex-col lg:flex-row gap-3 lg:gap-2 items-start lg:items-center w-full">
+                                      {/* Original Text */}
+                                      <div className="w-full lg:w-1/5 text-[10px] text-gray-500 italic truncate" title={item.rawLine}>
+                                          "{item.rawLine}"
+                                      </div>
+                                      
+                                      {/* Product Select (Flex-1 makes it stretch) */}
+                                      <div className="w-full lg:flex-1">
+                                          <SearchableProductSelect 
+                                              item={item} 
+                                              products={products} 
+                                              onUpdate={(code) => updateOrderItem(item.id, 'productCode', code)} 
+                                          />
+                                      </div>
 
-                                  {/* Qty, UOM, Price, Delete (Side-by-side on mobile) */}
-                                  <div className="flex w-full lg:w-auto gap-2 items-end lg:items-center mt-1 lg:mt-0">
-                                      <div className="flex-1 lg:w-16">
-                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">QTY</span>
-                                          <input type="number" step="0.1" className="w-full p-2.5 border border-gray-200 rounded-lg text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.qty} onChange={e => updateOrderItem(item.id, 'qty', e.target.value)} />
+                                      {/* Qty, UOM, Price, Delete (Side-by-side on mobile) */}
+                                      <div className="flex w-full lg:w-auto gap-2 items-end lg:items-center mt-1 lg:mt-0">
+                                          <div className="flex-1 lg:w-16">
+                                              <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">QTY</span>
+                                              <input type="number" step="0.1" className="w-full p-2.5 border border-gray-200 rounded-lg text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.qty} onChange={e => updateOrderItem(item.id, 'qty', e.target.value)} />
+                                          </div>
+                                          <div className="flex-[1.5] lg:w-20">
+                                              <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">UOM</span>
+                                              <select className="w-full p-2.5 border border-gray-200 rounded-lg text-xs font-bold uppercase focus:ring-2 focus:ring-blue-500" value={item.uom} onChange={e => updateOrderItem(item.id, 'uom', e.target.value)}>
+                                                  {(() => {
+                                                      const matchedProd = products.find(p => p.ProductCode === item.productCode);
+                                                      const validUoms = matchedProd && matchedProd.AllowedUOMs 
+                                                          ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean)
+                                                          : KNOWN_UOMS;
+                                                      // Ensure the current selected UOM is always in the dropdown
+                                                      const options = Array.from(new Set([item.uom, ...validUoms])).filter(Boolean);
+                                                      return options.map(u => <option key={u} value={u}>{u}</option>);
+                                                  })()}
+                                              </select>
+                                          </div>
+                                          <div className="flex-1 lg:w-20">
+                                              <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">PRICE</span>
+                                              <input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-lg text-[10px] md:text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.price} onChange={e => updateOrderItem(item.id, 'price', e.target.value)} />
+                                          </div>
+                                          <div className="w-8 flex justify-end pb-1.5 lg:pb-0">
+                                              <button onClick={() => removeOrderItem(item.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><TrashIcon className="w-5 h-5 inline" /></button>
+                                          </div>
                                       </div>
-                                      <div className="flex-[1.5] lg:w-20">
-                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">UOM</span>
-                                          <select className="w-full p-2.5 border border-gray-200 rounded-lg text-xs font-bold uppercase focus:ring-2 focus:ring-blue-500" value={item.uom} onChange={e => updateOrderItem(item.id, 'uom', e.target.value)}>
-                                              {KNOWN_UOMS.map(u => <option key={u} value={u}>{u}</option>)}
-                                          </select>
-                                      </div>
-                                      <div className="flex-1 lg:w-20">
-                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">PRICE</span>
-                                          <input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-lg text-[10px] md:text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.price} onChange={e => updateOrderItem(item.id, 'price', e.target.value)} />
-                                      </div>
-                                      <div className="w-8 flex justify-end pb-1.5 lg:pb-0">
-                                          <button onClick={() => removeOrderItem(item.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><TrashIcon className="w-5 h-5 inline" /></button>
-                                      </div>
+                                  </div>
+                                  {/* NOTES INPUT */}
+                                  <div className="mt-2 pl-0 lg:pl-[20%] lg:pr-[240px]">
+                                      <input 
+                                          type="text" 
+                                          placeholder="Add special notes for this item (e.g. masak sikit)..." 
+                                          className="w-full bg-gray-50 border border-gray-200 text-[10px] md:text-xs font-medium text-gray-600 focus:ring-1 focus:ring-blue-400 outline-none p-2 rounded-lg italic"
+                                          value={item.notes || ''}
+                                          onChange={e => updateOrderItem(item.id, 'notes', e.target.value)}
+                                      />
                                   </div>
                               </div>
                           ))}
