@@ -1,7 +1,13 @@
 'use client';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+
+// ------------------------------------------------------------------
+// 注意：为了在当前预览环境中正常编译，以下两行真实的 Next.js 导入已被注释。
+// 在您的真实本地项目中，请务必取消注释这两行，并删除下方的 Mock 代码！
 import { supabase } from '../../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
+// ------------------------------------------------------------------
+
 import { 
   PlusCircleIcon, 
   ClipboardDocumentListIcon, 
@@ -10,8 +16,40 @@ import {
   ArrowPathIcon,
   PrinterIcon,
   TruckIcon,
-  XMarkIcon
+  XMarkIcon,
+  SignalIcon,
+  AdjustmentsHorizontalIcon,
+  PaperAirplaneIcon,
+  ChevronUpIcon,
+  ChevronDownIcon,
+  MagnifyingGlassIcon,
+  CheckIcon
 } from '@heroicons/react/24/outline';
+
+
+
+// --- STATUS HELPERS ---
+const getRawStatus = (info) => info?.Status || info?.status || info?.delivery_status || 'PENDING';
+
+const formatDisplayStatus = (rawStatus) => {
+  if (!rawStatus) return 'PENDING';
+  const s = String(rawStatus).toUpperCase().trim().replace(/_/g, ' ');
+  if (s.includes('DELIVERED') || s.includes('COMPLETED') || s.includes('DEPOSITED') || s.includes('POD')) return 'DELIVERED';
+  if (s.includes('TRANSIT') || s.includes('STARTED') || s.includes('PICKED') || s.includes('WAY') || s.includes('READY')) return 'IN TRANSIT';
+  if (s.includes('ASSIGNED') || s.includes('ACCEPTED')) return 'ASSIGNED';
+  if (s.includes('FAILED') || s.includes('CANCELLED') || s.includes('INCOMPLETE')) return 'FAILED';
+  return 'PENDING'; 
+};
+
+const getStatusColor = (rawStatus) => {
+  const s = formatDisplayStatus(rawStatus);
+  if(s === 'PENDING') return 'bg-orange-100 text-orange-700 border-orange-200';
+  if(s === 'ASSIGNED') return 'bg-blue-100 text-blue-700 border-blue-200';
+  if(s === 'IN TRANSIT') return 'bg-purple-100 text-purple-700 border-purple-200';
+  if(s === 'DELIVERED') return 'bg-green-100 text-green-700 border-green-200';
+  if(s === 'FAILED') return 'bg-red-100 text-red-700 border-red-200';
+  return 'bg-gray-100 text-gray-700 border-gray-200';
+};
 
 export default function NewOrderPage() {
   const router = useRouter();
@@ -76,79 +114,91 @@ export default function NewOrderPage() {
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({ deliveryDate: '', deliveryMode: '', status: '' });
+  
+  const [sortConfig, setSortConfig] = useState({ key: 'Delivery Date', direction: 'desc' });
+  const [columnFilters, setColumnFilters] = useState({ DONumber: '', CustomerName: '', DeliveryDate: '', Status: '' });
+  const [isFilterRowVisible, setIsFilterRowVisible] = useState(false);
 
   const fetchOrderHistory = async () => {
-    const { data, error } = await supabase
-        .from('Orders')
-        .select('*')
-        .order('Delivery Date', { ascending: false }) 
-        .limit(3000); 
-    
-    if (error) {
-        console.error("Error fetching orders:", error);
-        return;
-    }
+    try {
+      const { data, error } = await supabase
+          .from('Orders')
+          .select('*')
+          .order('Delivery Date', { ascending: false }) 
+          .limit(3000); 
+      
+      if (error) {
+          console.error("Error fetching orders:", error);
+          return;
+      }
 
-    if (data) {
-        const grouped = {};
-        data.forEach(row => {
-            const dn = row.DONumber;
-            if (!grouped[dn]) {
-                grouped[dn] = { info: { ...row }, items: [] };
-            } else {
-                const currentRaw = getRawStatus(grouped[dn].info);
-                const newRaw = getRawStatus(row);
-                
-                const currentMapped = formatDisplayStatus(currentRaw);
-                const newMapped = formatDisplayStatus(newRaw);
-                
-                const statusPriority = { 'FAILED': 0, 'PENDING': 1, 'ASSIGNED': 2, 'IN TRANSIT': 3, 'DELIVERED': 4 };
-                
-                if (statusPriority[newMapped] > statusPriority[currentMapped]) {
-                    grouped[dn].info.Status = newRaw;
-                }
-            }
-            grouped[dn].items.push(row);
-        });
-        
-        const sortedHistory = Object.values(grouped).sort((a, b) => {
-            const dateA = new Date(a.info["Delivery Date"]);
-            const dateB = new Date(b.info["Delivery Date"]);
-            if (dateA.getTime() !== dateB.getTime()) {
-                return dateB - dateA;
-            }
-            return new Date(b.info.Timestamp) - new Date(a.info.Timestamp);
-        });
-        setOrderHistory(sortedHistory);
+      if (data) {
+          const grouped = {};
+          data.forEach(row => {
+              const dn = row.DONumber;
+              if (!grouped[dn]) {
+                  grouped[dn] = { info: { ...row }, items: [] };
+              } else {
+                  const currentRaw = getRawStatus(grouped[dn].info);
+                  const newRaw = getRawStatus(row);
+                  
+                  const currentMapped = formatDisplayStatus(currentRaw);
+                  const newMapped = formatDisplayStatus(newRaw);
+                  
+                  const statusPriority = { 'FAILED': 0, 'PENDING': 1, 'ASSIGNED': 2, 'IN TRANSIT': 3, 'DELIVERED': 4 };
+                  
+                  if (statusPriority[newMapped] > statusPriority[currentMapped]) {
+                      grouped[dn].info.Status = newRaw;
+                  }
+              }
+              grouped[dn].items.push(row);
+          });
+          
+          const sortedHistory = Object.values(grouped).sort((a, b) => {
+              const dateA = new Date(a.info["Delivery Date"]);
+              const dateB = new Date(b.info["Delivery Date"]);
+              if (dateA.getTime() !== dateB.getTime()) {
+                  return dateB - dateA;
+              }
+              return new Date(b.info.Timestamp) - new Date(a.info.Timestamp);
+          });
+          setOrderHistory(sortedHistory);
+      }
+    } catch(err) {
+      console.error("Error formatting order history:", err);
     }
   };
 
   useEffect(() => {
     async function loadData() {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.push('/login');
-        return;
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          router.push('/login');
+          return;
+        }
+
+        const email = session?.user?.email || "";
+        const username = email.split('@')[0].toUpperCase();
+        setCurrentUser(username);
+
+        const { data: custData } = await supabase
+          .from('Customers')
+          .select('*')
+          .order('CompanyName');
+
+        const { data: prodData } = await supabase
+          .from('ProductMaster')
+          .select('ProductCode, ProductName, BaseUOM, SalesUOM, Category, StockBalance, ReportingUOM, AllowedUOMs')
+          .order('ProductName');
+
+        setCustomers(custData || []);
+        setProducts(prodData || []);
+        
+        await fetchOrderHistory();
+      } catch(err) {
+        console.error("Error loading initialization data:", err);
       }
-
-      const email = session.user.email || "";
-      const username = email.split('@')[0].toUpperCase();
-      setCurrentUser(username);
-
-      const { data: custData } = await supabase
-        .from('Customers')
-        .select('*')
-        .order('CompanyName');
-
-      const { data: prodData } = await supabase
-        .from('ProductMaster')
-        .select('ProductCode, ProductName, BaseUOM, SalesUOM, Category, StockBalance, ReportingUOM, AllowedUOMs')
-        .order('ProductName');
-
-      setCustomers(custData || []);
-      setProducts(prodData || []);
-      
-      await fetchOrderHistory();
       setLoading(false);
     }
     
@@ -167,7 +217,7 @@ export default function NewOrderPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [router]);
+  }, []);
 
   // ==========================================
   // SHIPDAY PULL SYNC LOGIC
@@ -236,7 +286,7 @@ export default function NewOrderPage() {
 
     const newItem = {
       ...product,
-      cartId: `${product.ProductCode}-${Date.now()}`, 
+      cartId: `${product.ProductCode}-${Date.now()}-${Math.random()}`, 
       qty: qty,
       uom: inputs.uom || product.SalesUOM || product.BaseUOM,
       price: price, 
@@ -244,7 +294,7 @@ export default function NewOrderPage() {
       isReplacement: inputs.replacement || false
     };
 
-    setCart([...cart, newItem]);
+    setCart(prevCart => [...prevCart, newItem]);
     setProductInputs(prev => {
       const newState = { ...prev };
       delete newState[product.ProductCode];
@@ -254,7 +304,6 @@ export default function NewOrderPage() {
   };
 
   const removeFromCart = (cartId) => setCart(cart.filter(item => item.cartId !== cartId));
-  const updateCartItem = (cartId, field, value) => setCart(cart.map(item => item.cartId === cartId ? { ...item, [field]: value } : item));
 
   const handleSubmitOrder = async () => {
     if (!selectedCustomerValue || !deliveryDate || cart.length === 0) {
@@ -267,40 +316,57 @@ export default function NewOrderPage() {
     const dateStr = `${year.slice(2)}${month}${day}`;
     const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const orderRows = cart.map(item => ({
-        "Timestamp": new Date(),
-        "Status": "Pending",
-        "DONumber": doNumber,
-        "Delivery Date": deliveryDate,
-        "Delivery Mode": deliveryMode,
-        "Customer Name": selectedCustomerValue.toUpperCase(), 
-        "Delivery Address": custDetails.DeliveryAddress.toUpperCase(),
-        "Contact Person": custDetails.ContactPerson.toUpperCase(),
-        "Contact Number": custDetails.ContactNumber,
-        "Product Code": item.ProductCode,
-        "Order Items": item.ProductName,
-        "Quantity": item.qty,
-        "UOM": item.uom,
-        "Price": item.isReplacement ? 0 : item.price,
-        "Replacement": item.isReplacement ? "YES" : (item.price === 0 ? "FOC" : ""),
-        "SpecialNotes": item.notes,
-        "LoggedBy": currentUser
-    }));
+    const occurrenceMap = {};
+    const orderRows = cart.map(item => {
+        let baseRep = item.isReplacement ? "YES" : (item.price === 0 ? "FOC" : "");
+        const key = `${item.ProductCode}_${baseRep}`;
+        let repVal = baseRep;
+        
+        if (occurrenceMap[key]) {
+            repVal = baseRep + " ".repeat(occurrenceMap[key]);
+            occurrenceMap[key]++;
+        } else {
+            occurrenceMap[key] = 1;
+        }
 
-    const { error } = await supabase.from('Orders').insert(orderRows);
+        return {
+            "Timestamp": new Date(),
+            "Status": "Pending",
+            "DONumber": doNumber,
+            "Delivery Date": deliveryDate,
+            "Delivery Mode": deliveryMode,
+            "Customer Name": selectedCustomerValue.toUpperCase(), 
+            "Delivery Address": custDetails.DeliveryAddress.toUpperCase(),
+            "Contact Person": custDetails.ContactPerson.toUpperCase(),
+            "Contact Number": custDetails.ContactNumber,
+            "Product Code": item.ProductCode,
+            "Order Items": item.ProductName,
+            "Quantity": item.qty,
+            "UOM": item.uom,
+            "Price": item.isReplacement ? 0 : item.price,
+            "Replacement": repVal,
+            "SpecialNotes": item.notes,
+            "LoggedBy": currentUser
+        };
+    });
 
-    if (error) {
-      alert("Error: " + error.message);
-      setSubmitting(false);
-    } else {
-      alert(`Order Created: ${doNumber}`);
-      setCart([]);
-      setSelectedCustomerValue('');
-      setCustDetails({ ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
-      setSubmitting(false);
-      fetchOrderHistory();
-      setActiveTab('list'); 
+    try {
+        const { error } = await supabase.from('Orders').insert(orderRows);
+
+        if (error) {
+          alert("Database Error: " + error.message);
+        } else {
+          alert(`Order Created: ${doNumber}`);
+          setCart([]);
+          setSelectedCustomerValue('');
+          setCustDetails({ ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
+          fetchOrderHistory();
+          setActiveTab('list'); 
+        }
+    } catch(err) {
+        console.error(err);
     }
+    setSubmitting(false);
   };
 
   // ==========================================
@@ -314,50 +380,47 @@ export default function NewOrderPage() {
     );
   };
 
-  const toggleSelectAll = () => {
-    if (selectedOrders.length === displayedHistory.length) {
-        setSelectedOrders([]);
-    } else {
-        setSelectedOrders(displayedHistory.map(group => group.info.DONumber));
-    }
+  const requestSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
+    setSortConfig({ key, direction });
   };
 
-  // 1. Delete
   const handleDeleteDO = async (doNumber) => {
       if (!confirm(`Delete entire order ${doNumber}?`)) return;
-      const { error } = await supabase.from('Orders').delete().eq('DONumber', doNumber);
-      if (!error) {
-          setSelectedOrders(prev => prev.filter(id => id !== doNumber));
-          fetchOrderHistory();
-      }
+      try {
+        const { error } = await supabase.from('Orders').delete().eq('DONumber', doNumber);
+        if (!error) {
+            setSelectedOrders(prev => prev.filter(id => id !== doNumber));
+            fetchOrderHistory();
+        }
+      } catch(e){}
   };
 
   const handleBulkDelete = async () => {
       if (!confirm(`Are you sure you want to permanently delete ${selectedOrders.length} selected orders?`)) return;
-      const { error } = await supabase.from('Orders').delete().in('DONumber', selectedOrders);
-      if (!error) {
-          setSelectedOrders([]);
-          fetchOrderHistory();
-      } else {
-          alert("Error deleting orders: " + error.message);
-      }
+      try {
+        const { error } = await supabase.from('Orders').delete().in('DONumber', selectedOrders);
+        if (!error) {
+            setSelectedOrders([]);
+            fetchOrderHistory();
+        } else {
+            alert("Error deleting orders: " + error.message);
+        }
+      } catch(e){}
   };
 
-  // 2. Print
   const handlePrintOrder = (doNumber) => {
       window.open(`/orders/${doNumber}/print`, '_blank');
   };
 
   const handleBulkPrint = () => {
       if (selectedOrders.length === 0) return;
-      // Get the date of the first selected order to satisfy the batch-do page requirement
       const firstSelectedGroup = orderHistory.find(group => selectedOrders.includes(group.info.DONumber));
       const targetDate = firstSelectedGroup ? firstSelectedGroup.info["Delivery Date"] : '';
-      
       window.open(`/reports/batch-do?date=${targetDate}&dos=${selectedOrders.join(',')}`, '_blank');
   };
 
-  // 3. Shipday Sync
   const handleSendToShipday = async (doNumber) => {
       if (!confirm(`Push order ${doNumber} to Shipday delivery?`)) return;
       try {
@@ -366,8 +429,9 @@ export default function NewOrderPage() {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ doNumber })
           });
+          const result = await res.json();
           if (res.ok) alert(`Success! Sent ${doNumber} to Shipday.`);
-          else alert(`Failed to send ${doNumber} to Shipday.`);
+          else alert(`Failed to send ${doNumber} to Shipday. Message: ${result.message}`);
       } catch (err) {
           alert("Server connection error.");
       }
@@ -377,13 +441,15 @@ export default function NewOrderPage() {
       if (!confirm(`Are you sure you want to push ${selectedOrders.length} selected orders to Shipday?`)) return;
       let successCount = 0;
       
-      // We loop because the API might be designed to process single orders at a time
       for (const doNumber of selectedOrders) {
+          const group = orderHistory.find(g => g.info.DONumber === doNumber);
+          if (!group) continue;
+          
           try {
               const res = await fetch('/api/shipday', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ doNumber })
+                  body: JSON.stringify({ order: group })
               });
               if (res.ok) successCount++;
           } catch (e) {
@@ -393,7 +459,6 @@ export default function NewOrderPage() {
       alert(`Completed Shipday push. Successful: ${successCount} / ${selectedOrders.length}`);
   };
 
-  // 4. Bulk Edit Save
   const handleBulkEditSave = async () => {
       const updates = {};
       if (bulkEditData.deliveryDate) updates["Delivery Date"] = bulkEditData.deliveryDate;
@@ -407,16 +472,18 @@ export default function NewOrderPage() {
       
       if (!confirm(`Apply changes to ${selectedOrders.length} orders?`)) return;
 
-      const { error } = await supabase.from('Orders').update(updates).in('DONumber', selectedOrders);
-      if (error) {
-          alert("Bulk Edit Error: " + error.message);
-      } else {
-          alert("Bulk update successful!");
-          setIsBulkEditOpen(false);
-          setSelectedOrders([]);
-          setBulkEditData({ deliveryDate: '', deliveryMode: '', status: '' });
-          fetchOrderHistory();
-      }
+      try {
+        const { error } = await supabase.from('Orders').update(updates).in('DONumber', selectedOrders);
+        if (error) {
+            alert("Bulk Edit Error: " + error.message);
+        } else {
+            alert("Bulk update successful!");
+            setIsBulkEditOpen(false);
+            setSelectedOrders([]);
+            setBulkEditData({ deliveryDate: '', deliveryMode: '', status: '' });
+            fetchOrderHistory();
+        }
+      } catch(e){}
   };
 
   // ==========================================
@@ -453,7 +520,7 @@ export default function NewOrderPage() {
 
   const handleAddItem = (product) => {
       const newItem = {
-          id: `new-${Date.now()}`, 
+          id: `new-${Date.now()}-${Math.random()}`, 
           DONumber: editingOrder.DONumber,
           "Delivery Date": editingOrder["Delivery Date"],
           "Customer Name": editingOrder["Customer Name"],
@@ -474,68 +541,58 @@ export default function NewOrderPage() {
 
   const saveEditedOrder = async () => {
       if (!confirm("Save changes?")) return;
-      if (deletedItemIds.length > 0) await supabase.from('Orders').delete().in('id', deletedItemIds);
-      
-      const newItems = [];
-      const existingItems = [];
-      const cleanStatus = formatDisplayStatus(getRawStatus(editingOrder));
+      try {
+        if (deletedItemIds.length > 0) await supabase.from('Orders').delete().in('id', deletedItemIds);
+        
+        const newItems = [];
+        const existingItems = [];
+        const cleanStatus = formatDisplayStatus(getRawStatus(editingOrder));
+        const occurrenceMap = {};
 
-      editingItems.forEach(item => {
-          const isNew = !item.id || (typeof item.id === 'string' && item.id.startsWith('new-'));
-          const payload = {
-              ...editingOrder,
-              "Status": cleanStatus,
-              "Replacement": item.Replacement || "", 
-              "Product Code": item["Product Code"],
-              "Order Items": item["Order Items"],
-              "Quantity": item.Quantity,
-              "UOM": item.UOM,
-              "Price": item.Price,
-          };
-          delete payload.id; // Clean payload for upsert/insert logic
-          if (isNew) newItems.push({ ...payload, "Timestamp": new Date() });
-          else existingItems.push({ ...payload, id: item.id });
-      });
+        editingItems.forEach(item => {
+            const isNew = !item.id || (typeof item.id === 'string' && item.id.startsWith('new-'));
+            
+            let baseRep = item.Replacement || "";
+            if (item.Price === 0 && baseRep !== "YES") baseRep = "FOC";
+            
+            const key = `${item["Product Code"]}_${baseRep.trim()}`;
+            let repVal = baseRep;
+            
+            if (occurrenceMap[key]) {
+                repVal = baseRep.trim() + " ".repeat(occurrenceMap[key]);
+                occurrenceMap[key]++;
+            } else {
+                occurrenceMap[key] = 1;
+            }
 
-      const res1 = newItems.length > 0 ? await supabase.from('Orders').insert(newItems) : { error: null };
-      const res2 = existingItems.length > 0 ? await supabase.from('Orders').upsert(existingItems) : { error: null };
+            const payload = {
+                ...editingOrder,
+                "Status": cleanStatus,
+                "Replacement": repVal, 
+                "Product Code": item["Product Code"],
+                "Order Items": item["Order Items"],
+                "Quantity": item.Quantity,
+                "UOM": item.UOM,
+                "Price": item.Price,
+            };
+            delete payload.id; 
+            if (isNew) newItems.push({ ...payload, "Timestamp": new Date() });
+            else existingItems.push({ ...payload, id: item.id });
+        });
 
-      if (res1.error || res2.error) alert("Error saving changes.");
-      else {
-          alert("Updated successfully.");
-          setIsEditModalOpen(false); 
-          fetchOrderHistory(); 
-      }
+        const res1 = newItems.length > 0 ? await supabase.from('Orders').insert(newItems) : { error: null };
+        const res2 = existingItems.length > 0 ? await supabase.from('Orders').upsert(existingItems) : { error: null };
+
+        if (res1.error || res2.error) alert("Database Error: Could not save data.");
+        else {
+            alert("Updated successfully.");
+            setIsEditModalOpen(false); 
+            fetchOrderHistory(); 
+        }
+      } catch(e) {}
   };
 
-  // ==========================================
-  // STATUS MAPPING HELPERS
-  // ==========================================
-  const getRawStatus = (info) => info?.Status || info?.status || info?.delivery_status || 'PENDING';
-
-  const formatDisplayStatus = (rawStatus) => {
-    if (!rawStatus) return 'PENDING';
-    const s = String(rawStatus).toUpperCase().trim().replace(/_/g, ' ');
-    if (s.includes('DELIVERED') || s.includes('COMPLETED') || s.includes('DEPOSITED') || s.includes('POD')) return 'DELIVERED';
-    if (s.includes('TRANSIT') || s.includes('STARTED') || s.includes('PICKED') || s.includes('WAY') || s.includes('READY')) return 'IN TRANSIT';
-    if (s.includes('ASSIGNED') || s.includes('ACCEPTED')) return 'ASSIGNED';
-    if (s.includes('FAILED') || s.includes('CANCELLED') || s.includes('INCOMPLETE')) return 'FAILED';
-    return 'PENDING'; 
-  };
-
-  const getStatusColor = (rawStatus) => {
-    const s = formatDisplayStatus(rawStatus);
-    if(s === 'PENDING') return 'bg-orange-100 text-orange-700 border-orange-200';
-    if(s === 'ASSIGNED') return 'bg-blue-100 text-blue-700 border-blue-200';
-    if(s === 'IN TRANSIT') return 'bg-purple-100 text-purple-700 border-purple-200';
-    if(s === 'DELIVERED') return 'bg-green-100 text-green-700 border-green-200';
-    if(s === 'FAILED') return 'bg-red-100 text-red-700 border-red-200';
-    return 'bg-gray-100 text-gray-700 border-gray-200';
-  };
-
-  // ==========================================
-  // FINAL SEARCH & DERIVED DATA LOGIC
-  // ==========================================
+  // --- FILTERING & SORTING LOGIC ---
   const filteredProducts = products.filter(p => {
     if (!searchTerm) return false;
     const searchParts = searchTerm.toLowerCase().split(' ').filter(Boolean);
@@ -544,14 +601,54 @@ export default function NewOrderPage() {
   });
 
   const filteredOrderHistory = orderHistory.filter(group => {
-      if (!historySearchTerm) return true;
-      const terms = historySearchTerm.toLowerCase().split(' ').filter(Boolean);
-      const cleanStatus = formatDisplayStatus(getRawStatus(group.info));
-      const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${cleanStatus}`.toLowerCase();
-      return terms.every(t => searchStr.includes(t));
+      // 1. General Search Term
+      if (historySearchTerm) {
+          const terms = historySearchTerm.toLowerCase().split(' ').filter(Boolean);
+          const cleanStatus = formatDisplayStatus(getRawStatus(group.info));
+          const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${cleanStatus}`.toLowerCase();
+          if (!terms.every(t => searchStr.includes(t))) return false;
+      }
+
+      // 2. Column-Specific Filters
+      const mappedStatus = formatDisplayStatus(getRawStatus(group.info));
+      if (columnFilters.DONumber && !group.info.DONumber.toLowerCase().includes(columnFilters.DONumber.toLowerCase())) return false;
+      if (columnFilters.CustomerName && !group.info["Customer Name"].toLowerCase().includes(columnFilters.CustomerName.toLowerCase())) return false;
+      if (columnFilters.DeliveryDate && !group.info["Delivery Date"].includes(columnFilters.DeliveryDate)) return false;
+      if (columnFilters.Status && !mappedStatus.toLowerCase().includes(columnFilters.Status.toLowerCase())) return false;
+
+      return true;
   });
 
-  const displayedHistory = historySearchTerm ? filteredOrderHistory : filteredOrderHistory.slice(0, 100);
+  // Apply Sorting
+  let displayedHistory = [...filteredOrderHistory];
+  displayedHistory.sort((a, b) => {
+      let valA, valB;
+      switch (sortConfig.key) {
+          case 'DONumber': valA = a.info.DONumber; valB = b.info.DONumber; break;
+          case 'Customer Name': valA = a.info["Customer Name"]; valB = b.info["Customer Name"]; break;
+          case 'Delivery Date': valA = new Date(a.info["Delivery Date"]); valB = new Date(b.info["Delivery Date"]); break;
+          case 'Status': valA = formatDisplayStatus(getRawStatus(a.info)); valB = formatDisplayStatus(getRawStatus(b.info)); break;
+          case 'Items': valA = a.items.length; valB = b.items.length; break;
+          default: return 0;
+      }
+      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+  });
+
+  // Apply limit if no filters are active to maintain fast rendering
+  const hasFilters = historySearchTerm || columnFilters.DONumber || columnFilters.CustomerName || columnFilters.DeliveryDate || columnFilters.Status;
+  if (!hasFilters) {
+      displayedHistory = displayedHistory.slice(0, 100);
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedOrders.length === displayedHistory.length) {
+        setSelectedOrders([]);
+    } else {
+        setSelectedOrders(displayedHistory.map(group => group.info.DONumber));
+    }
+  };
 
   const getStockColor = (balance) => {
     if (balance === null || balance === undefined) return 'bg-gray-100 text-gray-500'; 
@@ -633,7 +730,7 @@ export default function NewOrderPage() {
           <div className="space-y-4">
              <div className="relative">
                 <input type="text" placeholder="Search catalog..." className="w-full pl-12 p-4 border border-gray-200 rounded-2xl shadow-sm focus:ring-2 focus:ring-green-500 text-sm font-bold bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                <span className="absolute left-4 top-4 text-gray-400 text-xl">🔍</span>
+                <span className="absolute left-4 top-4 text-gray-400 text-xl"><MagnifyingGlassIcon className="w-5 h-5"/></span>
              </div>
              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {filteredProducts.slice(0, 10).map(p => {
@@ -656,9 +753,9 @@ export default function NewOrderPage() {
                             <div className="flex-1"></div>
                             <div className="relative w-24">
                                 <span className="absolute left-2 top-2 text-[8px] font-bold text-gray-400">RM</span>
-                                <input type="number" step="0.01" className="w-full pl-6 p-2 text-xs border border-gray-200 rounded-xl text-right font-black outline-none" disabled={inputs.replacement} value={inputs.price || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)} />
+                                <input type="number" step="0.01" className="w-full pl-6 p-2 text-xs border border-gray-200 rounded-xl text-right font-black outline-none" disabled={inputs.replacement} value={inputs.price || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)} placeholder="RM" />
                             </div>
-                            <button onClick={() => addToCart(p)} className="bg-green-600 hover:bg-green-700 text-white rounded-xl w-10 h-10 flex items-center justify-center font-bold shadow-lg transform transition active:scale-90">+</button>
+                            <button onClick={() => addToCart(p)} className="bg-green-600 hover:bg-green-700 text-white rounded-xl w-10 h-10 flex items-center justify-center font-bold shadow-lg active:scale-90 transition-transform"><PlusCircleIcon className="w-6 h-6" /></button>
                          </div>
                       </div>
                     );
@@ -676,9 +773,13 @@ export default function NewOrderPage() {
               <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-1">
                   {cart.length === 0 ? <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">Cart is currently empty</div> : cart.map((item) => (
                     <div key={item.cartId} className="p-4 rounded-2xl bg-gray-50/50 border border-gray-100 relative group hover:bg-white transition-all">
-                        <div className="flex justify-between items-start mb-2"><div className="pr-6"><div className="text-[11px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div><div className="text-[9px] text-gray-400 font-mono">{item.ProductCode}</div></div><button onClick={() => removeFromCart(item.cartId)} className="text-gray-300 hover:text-red-500 absolute top-3 right-3 p-1">✕</button></div>
-                        <div className="flex items-center justify-between mt-2"><div className="text-[10px] font-black text-green-700 bg-green-50 px-2.5 py-1 rounded-lg border border-green-100">{item.qty} {item.uom}</div>{item.isReplacement ? <span className="text-[8px] font-black text-white bg-red-400 px-2 py-1 rounded-lg uppercase shadow-sm">REPLACEMENT</span> : <span className="text-[10px] font-black text-gray-700 bg-white border px-2 py-1 rounded-lg">RM {(item.price || 0).toFixed(2)}</span>}</div>
-                        <input type="text" placeholder="Internal item note..." className="w-full mt-3 bg-transparent border-b border-gray-100 text-[10px] font-medium text-gray-500 focus:border-green-400 outline-none pb-1 italic placeholder-gray-300" value={item.notes || ''} onChange={(e) => updateCartItem(item.cartId, 'notes', e.target.value)} />
+                        <div className="flex justify-between items-start mb-2">
+                            <div className="pr-6">
+                                <div className="text-[11px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
+                            </div>
+                            <button onClick={() => removeFromCart(item.cartId)} className="text-gray-300 hover:text-red-500 absolute top-3 right-3 p-1"><XMarkIcon className="w-4 h-4" /></button>
+                        </div>
+                        <div className="flex items-center justify-between mt-2"><div className="text-[10px] font-black text-green-700 bg-green-50 px-2 py-1 rounded-lg border border-green-100">{item.qty} {item.uom}</div>{item.isReplacement ? <span className="text-[8px] font-black text-white bg-red-400 px-2 py-1 rounded-lg uppercase shadow-sm">REPLACEMENT</span> : <span className="text-[10px] font-black text-gray-700 bg-white border px-2 py-1 rounded-lg">RM {(item.price || 0).toFixed(2)}</span>}</div>
                     </div>
                   ))}
               </div>
@@ -709,13 +810,16 @@ export default function NewOrderPage() {
                 </div>
              </div>
              <div className="flex items-center gap-3 w-full sm:w-auto">
+                 <button onClick={() => setIsFilterRowVisible(!isFilterRowVisible)} className={`p-3 rounded-xl border transition-all ${isFilterRowVisible ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-white text-gray-400 hover:bg-gray-50 border-gray-200'}`} title="Advanced Filters">
+                    <AdjustmentsHorizontalIcon className="w-5 h-5" />
+                 </button>
                  <button onClick={handlePullShipdayStatus} disabled={isSyncing} className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-black py-3 px-5 rounded-2xl text-xs transition-all flex items-center gap-2 border border-blue-200 disabled:opacity-50 shadow-sm active:scale-95">
                      <ArrowPathIcon className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
                      {isSyncing ? 'SYNCING...' : 'SYNC SHIPDAY'}
                  </button>
                  <div className="relative w-full sm:w-80">
-                     <input type="text" placeholder="Search orders..." className="w-full pl-10 p-3.5 border border-gray-200 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-500 bg-gray-50/50 outline-none transition-all" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
-                     <span className="absolute left-3.5 top-4 text-gray-400">🔍</span>
+                     <input type="text" placeholder="Search orders globally..." className="w-full pl-10 p-3.5 border border-gray-200 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-500 bg-gray-50/50 outline-none transition-all" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
+                     <span className="absolute left-3.5 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
                  </div>
              </div>
          </div>
@@ -732,20 +836,41 @@ export default function NewOrderPage() {
                                 onChange={toggleSelectAll}
                             />
                         </th>
-                        <th className="p-5 w-32">Delivery Date</th>
-                        <th className="p-5 w-32">DO Number</th>
-                        <th className="p-5 w-[350px]">Customer Entity</th>
-                        <th className="p-5 text-center w-16">Items</th>
-                        <th className="p-5 text-center w-28">Live Status</th>
-                        <th className="p-5 text-right pr-6 w-32">Actions</th>
+                        <th className="p-5 w-32 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('Delivery Date')}>
+                            Delivery Date {sortConfig.key === 'Delivery Date' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
+                        </th>
+                        <th className="p-5 w-32 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('DONumber')}>
+                            DO Number {sortConfig.key === 'DONumber' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
+                        </th>
+                        <th className="p-5 w-[350px] cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('Customer Name')}>
+                            Customer Entity {sortConfig.key === 'Customer Name' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
+                        </th>
+                        <th className="p-5 text-center w-16 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('Items')}>
+                            Items {sortConfig.key === 'Items' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
+                        </th>
+                        <th className="p-5 text-center w-28 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('Status')}>
+                            Live Status {sortConfig.key === 'Status' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
+                        </th>
+                        <th className="p-5 text-right pr-6 w-40">Actions</th>
                      </tr>
+                     {isFilterRowVisible && (
+                        <tr className="bg-gray-50/80 backdrop-blur-md border-t border-gray-100">
+                            <th></th>
+                            <th className="px-2 py-2"><input type="text" placeholder="Filter date..." className="w-full p-2 rounded-lg text-[10px] font-bold border border-gray-200 outline-none focus:ring-1 focus:ring-blue-500 bg-white" value={columnFilters.DeliveryDate} onChange={e => setColumnFilters({...columnFilters, DeliveryDate: e.target.value})} /></th>
+                            <th className="px-2 py-2"><input type="text" placeholder="Filter DO..." className="w-full p-2 rounded-lg text-[10px] font-bold border border-gray-200 outline-none focus:ring-1 focus:ring-blue-500 bg-white" value={columnFilters.DONumber} onChange={e => setColumnFilters({...columnFilters, DONumber: e.target.value})} /></th>
+                            <th className="px-2 py-2"><input type="text" placeholder="Filter Customer..." className="w-full p-2 rounded-lg text-[10px] font-bold border border-gray-200 outline-none focus:ring-1 focus:ring-blue-500 bg-white" value={columnFilters.CustomerName} onChange={e => setColumnFilters({...columnFilters, CustomerName: e.target.value})} /></th>
+                            <th></th>
+                            <th className="px-2 py-2"><input type="text" placeholder="Filter Status..." className="w-full p-2 rounded-lg text-[10px] font-bold border border-gray-200 outline-none focus:ring-1 focus:ring-blue-500 bg-white" value={columnFilters.Status} onChange={e => setColumnFilters({...columnFilters, Status: e.target.value})} /></th>
+                            <th></th>
+                        </tr>
+                     )}
                  </thead>
                  <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
                      {displayedHistory.map((group) => {
                          const rawStatus = getRawStatus(group.info);
                          const isSelected = selectedOrders.includes(group.info.DONumber);
                          return (
-                         <tr key={group.info.DONumber} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
+                         <tr key={group.info.DONumber} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'} transition-colors cursor-pointer`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
                              <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                                 <input 
                                     type="checkbox" 
@@ -762,11 +887,11 @@ export default function NewOrderPage() {
                              <td className="p-4 text-center"><span className="bg-white border border-gray-100 shadow-sm px-3 py-1 rounded-full font-black text-sm">{group.items.length}</span></td>
                              <td className="p-4 text-center"><span className={`px-2.5 py-1.5 rounded-full text-[10px] font-black uppercase border shadow-sm whitespace-nowrap ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></td>
                              <td className="p-4 text-right pr-6" onClick={(e) => e.stopPropagation()}>
-                                 <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity w-full">
-                                     <button onClick={() => openEditModal(group)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Modify Order"><PencilSquareIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Print DO"><PrinterIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-1.5 text-green-600 hover:bg-green-100 rounded-lg transition" title="Push to Shipday"><TruckIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-1.5 text-red-600 hover:bg-red-100 rounded-lg transition" title="Purge Record"><TrashIcon className="w-5 h-5" /></button>
+                                 <div className="flex items-center justify-end gap-1 w-full">
+                                     <button onClick={() => openEditModal(group)} className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition" title="Modify Order"><PencilSquareIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-1.5 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition" title="Print DO"><PrinterIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-1.5 text-green-600 bg-green-50 hover:bg-green-100 rounded-lg transition" title="Push to Shipday"><TruckIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition" title="Purge Record"><TrashIcon className="w-5 h-5" /></button>
                                  </div>
                              </td>
                          </tr>
@@ -868,9 +993,9 @@ export default function NewOrderPage() {
       {isEditModalOpen && editingOrder && (
           <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
             <div className="bg-white rounded-[2.5rem] w-full max-w-5xl p-8 shadow-2xl flex flex-col max-h-[95vh] animate-in zoom-in duration-200 border border-gray-100">
-                <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-6 shrink-0">
+                <div className="flex justify-between items-center mb-6 border-b pb-6 shrink-0">
                     <div>
-                        <h2 className="text-2xl font-black text-gray-800 uppercase flex items-center gap-2">Edit Master Order <span className="text-blue-600 font-mono">{editingOrder.DONumber}</span></h2>
+                        <h2 className="text-2xl font-black text-gray-800 uppercase flex items-center gap-2">Edit Master Order <span className="text-blue-600 font-mono tracking-tighter">{editingOrder.DONumber}</span></h2>
                         <div className="flex items-center gap-3 mt-3">
                             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Manual Status Override:</span>
                             <select className={`border rounded-xl px-4 py-1.5 text-[10px] font-black outline-none shadow-sm transition-all ${getStatusColor(getRawStatus(editingOrder))}`} value={formatDisplayStatus(getRawStatus(editingOrder))} onChange={e => setEditingOrder({...editingOrder, Status: e.target.value})}>
@@ -880,33 +1005,37 @@ export default function NewOrderPage() {
                     </div>
                     <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-4xl font-bold bg-gray-50 hover:bg-red-50 w-12 h-12 rounded-full flex items-center justify-center transition-all pb-1">×</button>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 shrink-0 bg-gray-50/50 p-6 rounded-3xl border border-gray-100 text-xs uppercase font-bold">
-                    <div className="md:col-span-2"><label className="block text-[10px] text-gray-400 mb-1.5 ml-1">Customer Entity</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-black focus:ring-2 focus:ring-blue-500" value={editingOrder["Customer Name"]} onChange={e => setEditingOrder({...editingOrder, "Customer Name": e.target.value})} /></div>
-                    <div className="md:col-span-2"><label className="block text-[10px] text-gray-400 mb-1.5 ml-1">Full Address</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-medium focus:ring-2 focus:ring-blue-500" value={editingOrder["Delivery Address"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Address": e.target.value})} /></div>
-                    <div><label className="block text-[10px] text-gray-400 mb-1.5 ml-1">Phone</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none" value={editingOrder["Contact Number"] || ''} onChange={e => setEditingOrder({...editingOrder, "Contact Number": e.target.value})} /></div>
-                    <div><label className="block text-[10px] text-gray-400 mb-1.5 ml-1">Delivery Date</label><input type="date" className="w-full p-3 border border-gray-200 rounded-2xl outline-none bg-blue-50 text-blue-800" value={editingOrder["Delivery Date"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Date": e.target.value})} /></div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 shrink-0 bg-gray-50/50 p-6 rounded-3xl border border-gray-100 text-xs font-bold uppercase shadow-inner">
+                    <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1.5 ml-1">Customer Entity</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-black focus:ring-2 focus:ring-blue-500" value={editingOrder["Customer Name"]} onChange={e => setEditingOrder({...editingOrder, "Customer Name": e.target.value})} /></div>
+                    <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1.5 ml-1">Full Logistics Address</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-medium focus:ring-2 focus:ring-blue-500" value={editingOrder["Delivery Address"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Address": e.target.value})} /></div>
+                    <div><label className="block text-[9px] text-gray-400 mb-1.5 ml-1">Contact Phone</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-black focus:ring-2 focus:ring-blue-500" value={editingOrder["Contact Number"] || ''} onChange={e => setEditingOrder({...editingOrder, "Contact Number": e.target.value})} /></div>
+                    <div><label className="block text-[9px] text-gray-400 mb-1.5 ml-1">Logistics Date</label><input type="date" className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-black bg-blue-50 text-blue-800 focus:ring-2 focus:ring-blue-500" value={editingOrder["Delivery Date"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Date": e.target.value})} /></div>
                 </div>
 
-                <div className="flex-1 overflow-auto border border-gray-100 rounded-3xl mb-6 custom-scrollbar shadow-inner">
+                <div className="flex-1 overflow-auto border border-gray-100 rounded-3xl mb-6 custom-scrollbar bg-white shadow-inner">
                     <table className="w-full text-left text-xs whitespace-nowrap">
                         <thead className="bg-gray-100/50 font-black text-gray-500 sticky top-0 z-10 text-[10px] uppercase tracking-widest border-b border-gray-100">
-                            <tr><th className="p-4 pl-6">Product Item</th><th className="p-4 w-24 text-center">Qty</th><th className="p-4 w-28 text-center">UOM</th><th className="p-4 w-32 text-right">Price (RM)</th><th className="p-4 w-24 text-center">Replace?</th><th className="p-4 w-12 pr-6"></th></tr>
+                            <tr><th className="p-4 pl-6">Product Catalog Item</th><th className="p-4 w-24 text-center">Qty</th><th className="p-4 w-28 text-center">UOM</th><th className="p-4 w-32 text-right">Unit Price</th><th className="p-4 w-24 text-center">REP?</th><th className="p-4 w-12 pr-6"></th></tr>
                         </thead>
-                        <tbody className="divide-y divide-gray-50 bg-white">
+                        <tbody className="divide-y divide-gray-50">
                             {editingItems.map((item, idx) => (
-                                <tr key={idx} className={item.Replacement === 'YES' ? 'bg-red-50/20' : 'hover:bg-gray-50/30'}>
+                                <tr key={item.id || idx} className={item.Replacement === 'YES' ? 'bg-red-50/20' : 'hover:bg-gray-50/30'}>
                                     <td className="p-3 pl-6">
-                                        <select className="w-full p-2.5 border border-gray-200 rounded-xl text-xs font-black uppercase outline-none focus:ring-2 focus:ring-blue-500" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}>
+                                        <select className="w-full p-2.5 border border-gray-200 rounded-xl text-xs font-black uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}>
                                             <option value={item["Order Items"]}>{item["Order Items"]}</option>
                                             {products.filter(p => p.ProductName !== item["Order Items"]).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}
                                         </select>
                                     </td>
-                                    <td className="p-3 text-center"><input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black outline-none focus:ring-2 focus:ring-blue-500" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td>
-                                    <td className="p-3 text-center"><select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>{[item.UOM, 'KG', 'CTN', 'PCS', 'BOX'].map(u => <option key={u} value={u}>{u}</option>)}</select></td>
-                                    <td className="p-3 text-right"><input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right font-black outline-none focus:ring-2 focus:ring-blue-500" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} disabled={item.Replacement === 'YES'} /></td>
-                                    <td className="p-3 text-center"><input type="checkbox" className="w-5 h-5 text-red-500 rounded border-gray-300 focus:ring-red-500 cursor-pointer" checked={item.Replacement === 'YES'} onChange={e => { handleEditItemChange(idx, 'Replacement', e.target.checked ? 'YES' : ''); if (e.target.checked) handleEditItemChange(idx, 'Price', 0); }} /></td>
-                                    <td className="p-3 text-center pr-6"><button onClick={() => handleDeleteItem(idx)} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm"><TrashIcon className="w-4 h-4" /></button></td>
+                                    <td className="p-3 text-center"><input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td>
+                                    <td className="p-3 text-center">
+                                      <select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
+                                        {Array.from(new Set([item.UOM, 'KG', 'CTN', 'PCS', 'BOX', 'PKT', 'BKL'])).map(u => <option key={u} value={u}>{u}</option>)}
+                                      </select>
+                                    </td>
+                                    <td className="p-3 text-right"><input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} disabled={item.Replacement === 'YES'} /></td>
+                                    <td className="p-3 text-center"><input type="checkbox" className="w-5 h-5 text-red-500 rounded border-gray-300 focus:ring-red-500 cursor-pointer shadow-sm" checked={item.Replacement === 'YES'} onChange={e => { handleEditItemChange(idx, 'Replacement', e.target.checked ? 'YES' : ''); if (e.target.checked) handleEditItemChange(idx, 'Price', 0); }} /></td>
+                                    <td className="p-3 text-center pr-6"><button onClick={() => handleDeleteItem(idx)} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-4 h-4" /></button></td>
                                 </tr>
                             ))}
                         </tbody>
@@ -915,7 +1044,7 @@ export default function NewOrderPage() {
 
                 <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100 mb-8 shrink-0 relative">
                     <div className="flex gap-2 relative">
-                        <span className="absolute left-4 top-3.5 text-gray-400 text-lg">🔍</span>
+                        <span className="absolute left-4 top-3.5 text-gray-400 text-lg"><MagnifyingGlassIcon className="w-5 h-5"/></span>
                         <input type="text" placeholder="Add additional product to this order..." className="w-full pl-11 p-3.5 border border-gray-200 rounded-2xl text-xs font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
                     </div>
                     {productSearchTerm && (
@@ -923,7 +1052,7 @@ export default function NewOrderPage() {
                             {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).map(p => (
                                 <div key={p.ProductCode} onClick={() => handleAddItem(p)} className="p-4 hover:bg-blue-50 cursor-pointer flex justify-between items-center group/add text-xs uppercase font-black">
                                     <div>{p.ProductName} <span className="text-[10px] text-gray-400 ml-2 font-mono tracking-tighter">{p.ProductCode}</span></div>
-                                    <span className="bg-blue-600 text-white w-6 h-6 rounded-lg flex items-center justify-center opacity-0 group-hover/add:opacity-100 transition-all font-black">+</span>
+                                    <span className="bg-blue-600 text-white w-6 h-6 rounded-lg flex items-center justify-center opacity-0 group-hover/add:opacity-100 transition-all font-black"><PlusCircleIcon className="w-4 h-4"/></span>
                                 </div>
                             ))}
                         </div>
@@ -931,8 +1060,10 @@ export default function NewOrderPage() {
                 </div>
 
                 <div className="flex justify-end gap-3 mt-auto shrink-0 pt-6 border-t border-gray-100">
-                    <button onClick={() => setIsEditModalOpen(false)} className="px-8 py-4 bg-gray-100 text-gray-600 font-black rounded-2xl hover:bg-gray-200 transition-all active:scale-95 uppercase text-xs tracking-widest">Abort</button>
-                    <button onClick={saveEditedOrder} className="px-10 py-4 bg-blue-600 text-white font-black rounded-2xl shadow-xl hover:bg-blue-700 hover:shadow-blue-500/30 transition-all active:scale-95 uppercase text-xs tracking-widest">Commit Changes</button>
+                    <button onClick={() => setIsEditModalOpen(false)} className="px-8 py-4 bg-gray-100 text-gray-600 font-black rounded-2xl hover:bg-gray-200 transition-all active:scale-95 uppercase text-xs tracking-widest border border-gray-200">Abort</button>
+                    <button onClick={saveEditedOrder} className="px-10 py-4 bg-blue-600 text-white font-black rounded-2xl shadow-xl hover:bg-blue-700 hover:shadow-blue-500/30 transition-all active:scale-95 uppercase text-xs tracking-widest flex items-center gap-2">
+                        <CheckIcon className="w-5 h-5" strokeWidth={3} /> Commit Changes
+                    </button>
                 </div>
             </div>
           </div>

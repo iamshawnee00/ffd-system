@@ -173,14 +173,14 @@ export default function StockBalancePage() {
             const currentStock = Number(p.StockBalance || 0);
 
             let status = 'Healthy';
-            if (actualTomorrow > 0 && currentStock < actualTomorrow) {
-                // We have confirmed orders tomorrow but insufficient balance to fulfill them
+            if (predictedNeed > 0 && currentStock < predictedNeed) {
+                // If we need it tomorrow (either actual or predicted) and stock is insufficient
                 status = 'Critical';
             } else if (currentStock <= 0) {
-                // Zero or negative balance, but no immediate confirmed orders tomorrow
+                // If stock is 0 or negative but we don't need it immediately tomorrow
                 status = 'Out of Stock';
-            } else if (currentStock <= predictedNeed) {
-                // Stock is positive, but falls below our safe predictive buffer
+            } else if (currentStock < 20) {
+                // Safe buffer threshold
                 status = 'Low';
             }
 

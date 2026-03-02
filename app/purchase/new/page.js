@@ -171,14 +171,10 @@ export default function NewPurchasePage() {
     
     if (!qty || qty <= 0) return;
 
-    const exists = cart.find(item => item.ProductCode === product.ProductCode);
-    if (exists) {
-      alert("Item already in list!");
-      return;
-    }
-
+    // Added a unique ID using Date.now() to allow multiple instances of the same product
     const newItem = {
       ...product,
+      cartId: `${product.ProductCode}-${Date.now()}-${Math.random()}`, 
       qty: qty,
       uom: inputs.uom || product.BaseUOM,
       cost: cost,
@@ -195,8 +191,8 @@ export default function NewPurchasePage() {
     setSearchTerm('');
   };
 
-  const removeFromCart = (code) => {
-    setCart(cart.filter(item => item.ProductCode !== code));
+  const removeFromCart = (cartId) => {
+    setCart(cart.filter(item => item.cartId !== cartId));
   };
 
   const handleSubmit = async () => {
@@ -207,17 +203,26 @@ export default function NewPurchasePage() {
 
     setSubmitting(true);
 
-    const purchaseRows = cart.map(item => ({
-      "Timestamp": new Date(`${purchaseDate}T12:00:00`), // Use selected date
-      "ProductCode": item.ProductCode,
-      "ProductName": item.ProductName,
-      "Supplier": selectedSupplier,
-      "PurchaseQty": item.qty,
-      "PurchaseUOM": item.uom,
-      "CostPrice": item.cost,
-      "InvoiceNumber": invoiceNumber || "",
-      "LoggedBy": currentUser 
-    }));
+    const now = new Date();
+    const [year, month, day] = purchaseDate.split('-');
+
+    const purchaseRows = cart.map((item, index) => {
+      // Create a truly unique timestamp dynamically to completely bypass constraint errors
+      // even if the exact same product is purchased on the same date.
+      const rowDate = new Date(year, month - 1, day, now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds() + index);
+
+      return {
+        "Timestamp": rowDate.toISOString(), 
+        "ProductCode": item.ProductCode,
+        "ProductName": item.ProductName,
+        "Supplier": selectedSupplier,
+        "PurchaseQty": item.qty,
+        "PurchaseUOM": item.uom,
+        "CostPrice": item.cost,
+        "InvoiceNumber": invoiceNumber || "",
+        "LoggedBy": currentUser 
+      };
+    });
 
     const { error } = await supabase.from('Purchase').insert(purchaseRows);
 
@@ -510,14 +515,14 @@ export default function NewPurchasePage() {
                       </div>
                   ) : (
                       cart.map((item, idx) => (
-                         <div key={`${item.ProductCode}-${idx}`} className="p-3 md:p-4 rounded-2xl bg-gray-50/80 border border-gray-100 relative group transition-all hover:bg-white hover:shadow-md">
+                         <div key={item.cartId} className="p-3 md:p-4 rounded-2xl bg-gray-50/80 border border-gray-100 relative group transition-all hover:bg-white hover:shadow-md">
                              <div className="flex justify-between items-start mb-1 md:mb-2">
                                  <div className="pr-6">
                                      <div className="text-[11px] md:text-xs font-black text-gray-800 line-clamp-2 leading-tight uppercase">{item.ProductName}</div>
                                      <div className="text-[9px] md:text-[10px] text-gray-400 font-mono mt-0.5">{item.ProductCode}</div>
                                  </div>
                                  <button 
-                                   onClick={() => removeFromCart(item.ProductCode)}
+                                   onClick={() => removeFromCart(item.cartId)}
                                    className="text-gray-300 hover:text-red-500 font-bold p-1 transition-colors absolute top-2 right-2 md:top-3 md:right-3"
                                  >
                                    ✕
