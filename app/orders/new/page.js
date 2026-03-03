@@ -24,9 +24,11 @@ import {
   ChevronDownIcon,
   MagnifyingGlassIcon,
   CheckIcon,
-  PlayCircleIcon
+  PlayCircleIcon,
+  MinusIcon,
+  PlusIcon,
+  ShoppingCartIcon
 } from '@heroicons/react/24/outline';
-
 
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -73,6 +75,7 @@ export default function NewOrderPage() {
   const [currentUser, setCurrentUser] = useState('');
 
   // --- NEW ORDER STATES ---
+  const [isCustomerBoxOpen, setIsCustomerBoxOpen] = useState(true); // State for collapsible box
   const [selectedCustomerValue, setSelectedCustomerValue] = useState('');
   const [custDetails, setCustDetails] = useState({ 
     ContactPerson: '', 
@@ -130,10 +133,9 @@ export default function NewOrderPage() {
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({ deliveryDate: '', deliveryMode: '', status: '' });
-  
-  const [sortConfig, setSortConfig] = useState({ key: 'Delivery Date', direction: 'desc' });
-  const [columnFilters, setColumnFilters] = useState({ DONumber: '', CustomerName: '', DeliveryDate: '', Status: '', Logistics: '' });
-  const [isFilterRowVisible, setIsFilterRowVisible] = useState(false);
+
+  // Add state for mobile cart modal
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
 
   const fetchOrderHistory = async () => {
     try {
@@ -266,6 +268,10 @@ export default function NewOrderPage() {
         ContactNumber: details.ContactNumber || '',
         DeliveryAddress: details.DeliveryAddress || ''
       });
+      // Auto-collapse customer box to save space on mobile
+      if (window.innerWidth < 1024) {
+          setIsCustomerBoxOpen(false);
+      }
     }
   };
 
@@ -284,28 +290,48 @@ export default function NewOrderPage() {
 
   const addToCart = (product) => {
     const inputs = productInputs[product.ProductCode] || {};
-    const qty = parseFloat(inputs.qty);
+    const qty = parseFloat(inputs.qty) || 1; // Default to 1 if no qty entered
     const price = inputs.price === '' || inputs.price === undefined ? 0 : parseFloat(inputs.price); 
     
-    if (!qty || qty <= 0) return;
+    if (qty <= 0) return;
 
-    const newItem = {
-      ...product,
-      cartId: `${product.ProductCode}-${Date.now()}-${Math.random()}`, 
-      qty: qty,
-      uom: inputs.uom || product.SalesUOM || product.BaseUOM,
-      price: price, 
-      notes: '',
-      isReplacement: inputs.replacement || false
-    };
+    setCart(prevCart => {
+      const existingItemIndex = prevCart.findIndex(item => item.ProductCode === product.ProductCode && item.uom === (inputs.uom || product.SalesUOM || product.BaseUOM) && item.isReplacement === (inputs.replacement || false));
+      
+      if (existingItemIndex > -1) {
+        const newCart = [...prevCart];
+        newCart[existingItemIndex].qty += qty;
+        return newCart;
+      }
 
-    setCart(prevCart => [...prevCart, newItem]);
+      const newItem = {
+        ...product,
+        cartId: `${product.ProductCode}-${Date.now()}-${Math.random()}`, 
+        qty: qty,
+        uom: inputs.uom || product.SalesUOM || product.BaseUOM,
+        price: price, 
+        notes: '',
+        isReplacement: inputs.replacement || false
+      };
+      return [...prevCart, newItem];
+    });
+
     setProductInputs(prev => {
       const newState = { ...prev };
       delete newState[product.ProductCode];
       return newState;
     });
     setSearchTerm(''); 
+  };
+
+  const updateCartQty = (cartId, delta) => {
+    setCart(prevCart => prevCart.map(item => {
+      if (item.cartId === cartId) {
+        const newQty = Math.max(0, item.qty + delta);
+        return { ...item, qty: newQty };
+      }
+      return item;
+    }).filter(item => item.qty > 0));
   };
 
   const removeFromCart = (cartId) => setCart(cart.filter(item => item.cartId !== cartId));
@@ -397,6 +423,8 @@ export default function NewOrderPage() {
         setSelectedCustomerValue('');
         setCustDetails({ ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
         setIsRecurring(false);
+        setIsMobileCartOpen(false); // Close mobile cart
+        setIsCustomerBoxOpen(true); // Re-open customer box for next order
         fetchOrderHistory();
         setActiveTab('list'); 
         
@@ -724,18 +752,24 @@ export default function NewOrderPage() {
   const getStockColor = (balance) => {
     if (balance === null || balance === undefined) return 'bg-gray-100 text-gray-500'; 
     const qty = Number(balance);
-    if (qty < 20) return 'bg-red-100 text-red-600';
-    if (qty <= 50) return 'bg-orange-100 text-orange-600';
+    if (qty <= 0) return 'bg-red-100 text-red-600'; // Mobile specific change: OOS is red
+    if (qty < 20) return 'bg-orange-100 text-orange-600';
+    if (qty <= 50) return 'bg-yellow-100 text-yellow-600';
     return 'bg-green-100 text-green-600';
+  };
+
+  // Add function to format currency for mobile
+  const formatCurrency = (val) => {
+      return Number(val || 0).toLocaleString('en-MY', { style: 'currency', currency: 'MYR', minimumFractionDigits: 2 });
   };
 
   if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse">FFD SYSTEM ENGINE BOOTING...</div>;
 
   return (
-    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32">
+    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-40 md:pb-32">
       
-      {/* Header */}
-      <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"> 
+      {/* Header - Hidden on small mobile to save space, visible on sm+ */}
+      <div className="hidden sm:flex mb-6 flex-col sm:flex-row justify-between items-start sm:items-center gap-3"> 
          <div>
              <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Order Management</h1> 
              <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Manage single-session and historical orders</p> 
@@ -745,131 +779,197 @@ export default function NewOrderPage() {
          </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200">
-          <button onClick={() => setActiveTab('new')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'new' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
-              <PlusCircleIcon className="w-5 h-5" /> New Order
+      {/* Navigation Tabs - Scrollable on Mobile */}
+      <div className="flex gap-2 mb-4 md:mb-6 overflow-x-auto pb-2 border-b border-gray-200 snap-x custom-scrollbar -mx-3 px-3 sm:mx-0 sm:px-0">
+          <button onClick={() => setActiveTab('new')} className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'new' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
+              <PlusCircleIcon className="w-4 h-4 md:w-5 md:h-5" /> New Order
           </button>
-          <button onClick={() => setActiveTab('list')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
-              <ClipboardDocumentListIcon className="w-5 h-5" /> Order History
+          <button onClick={() => setActiveTab('list')} className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
+              <ClipboardDocumentListIcon className="w-4 h-4 md:w-5 md:h-5" /> Order History
           </button>
-          <button onClick={() => setActiveTab('recurring')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'recurring' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
-              <ArrowPathIcon className="w-5 h-5" /> Weekly Autos
+          <button onClick={() => setActiveTab('recurring')} className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'recurring' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
+              <ArrowPathIcon className="w-4 h-4 md:w-5 md:h-5" /> Weekly Autos
           </button>
       </div>
 
       {/* TAB 1: CREATE NEW ORDER */}
       {activeTab === 'new' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white p-5 rounded-3xl shadow-sm border border-gray-100"> 
-            <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4 border-b border-gray-50 pb-2">Customer & Logistics</h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4"> 
-               <div className="col-span-1">
-                   <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Sales Channel</label>
-                   <select className="w-full bg-green-50 border border-green-200 text-green-800 text-xs font-black rounded-xl p-3 focus:ring-2 focus:ring-green-500 outline-none" value={salesChannel} onChange={(e) => setSalesChannel(e.target.value)}>
-                      <option>Online / FnB</option><option>Wholesale</option><option>Outlet</option>
-                   </select>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in duration-300">
+        
+        {/* Main Content Area (Customer Details & Product Search) */}
+        <div className="lg:col-span-2 space-y-4 md:space-y-6">
+          
+          {/* Customer & Logistics Card (Collapsible on Mobile) */}
+          <div className="bg-white rounded-2xl md:rounded-3xl shadow-sm border border-gray-100 overflow-hidden"> 
+            
+            {/* Header / Toggle */}
+            <div 
+               className="p-4 md:p-5 flex justify-between items-center cursor-pointer bg-gray-50/50 hover:bg-gray-50 transition-colors"
+               onClick={() => setIsCustomerBoxOpen(!isCustomerBoxOpen)}
+            >
+               <div>
+                   <h2 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Customer & Logistics</h2>
+                   {!isCustomerBoxOpen && selectedCustomerValue && (
+                       <p className="text-sm font-bold text-gray-800 mt-1 truncate">{selectedCustomerValue}</p>
+                   )}
                </div>
-               <div className="col-span-1 md:col-span-2">
-                  <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Customer Search</label>
-                  <input list="customer-list" type="text" className="w-full border border-gray-200 rounded-xl p-3 text-xs font-black focus:ring-2 focus:ring-green-500 uppercase bg-gray-50/50 outline-none" value={selectedCustomerValue} onChange={handleCustomerChange} placeholder="TYPE TO FIND CUSTOMER..." />
-                  <datalist id="customer-list">{customers.map(c => <option key={c.id} value={c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName} />)}</datalist>
-               </div>
-               <div className="col-span-1">
-                  <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Contact Details</label>
-                  <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-xs font-bold uppercase" value={custDetails.ContactPerson} onChange={(e) => handleDetailChange('ContactPerson', e.target.value)} placeholder="PERSON" />
-               </div>
-               <div className="col-span-1">
-                  <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">&nbsp;</label>
-                  <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-xs font-bold" value={custDetails.ContactNumber} onChange={(e) => handleDetailChange('ContactNumber', e.target.value)} placeholder="NUMBER" />
-               </div>
-               <div className="col-span-1">
-                  <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Delivery Date</label>
-                  <input type="date" className="w-full border border-gray-200 rounded-xl p-3 text-xs font-black bg-blue-50 text-blue-800 outline-none" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
-               </div>
-               <div className="col-span-1">
-                  <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Mode</label>
-                  <select className="w-full border border-gray-200 rounded-xl p-3 text-xs font-black outline-none" value={deliveryMode} onChange={e => setDeliveryMode(e.target.value)}>
-                    <option value="Driver">Driver</option><option value="Lalamove">Lalamove</option><option value="Self Pick-up">Self Pick-up</option>
-                  </select>
-               </div>
-               <div className="col-span-1 md:col-span-2">
-                  <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Delivery Address</label>
-                  <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-xs font-medium uppercase bg-gray-50/50 outline-none" value={custDetails.DeliveryAddress} onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)} placeholder="FULL ADDRESS..." />
-               </div>
+               <button className="p-1.5 bg-white border border-gray-200 rounded-full text-gray-500 shadow-sm">
+                   {isCustomerBoxOpen ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
+               </button>
             </div>
+
+            {/* Expandable Body */}
+            {isCustomerBoxOpen && (
+                <div className="p-4 md:p-5 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 animate-in slide-in-from-top-2 duration-200"> 
+                   <div className="col-span-1">
+                       <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Sales Channel</label>
+                       <select className="w-full bg-green-50 border border-green-200 text-green-800 text-base md:text-sm font-black rounded-xl p-3 focus:ring-2 focus:ring-green-500 outline-none" value={salesChannel} onChange={(e) => setSalesChannel(e.target.value)}>
+                          <option>Online / FnB</option><option>Wholesale</option><option>Outlet</option>
+                       </select>
+                   </div>
+                   <div className="col-span-1 sm:col-span-2 md:col-span-2">
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Customer Search</label>
+                      <input list="customer-list" type="text" className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-black focus:ring-2 focus:ring-green-500 uppercase bg-gray-50/50 outline-none" value={selectedCustomerValue} onChange={handleCustomerChange} placeholder="TYPE TO FIND CUSTOMER..." />
+                      <datalist id="customer-list">{customers.map(c => <option key={c.id} value={c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName} />)}</datalist>
+                   </div>
+                   
+                   <div className="col-span-1">
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Contact Person</label>
+                      <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-green-500" value={custDetails.ContactPerson} onChange={(e) => handleDetailChange('ContactPerson', e.target.value)} placeholder="NAME" />
+                   </div>
+                   <div className="col-span-1">
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Contact Number</label>
+                      <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-bold outline-none focus:ring-2 focus:ring-green-500" value={custDetails.ContactNumber} onChange={(e) => handleDetailChange('ContactNumber', e.target.value)} placeholder="PHONE" />
+                   </div>
+                   <div className="col-span-1 sm:col-span-2 md:col-span-1">
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Delivery Date</label>
+                      <input type="date" className="w-full border border-blue-200 rounded-xl p-3 text-base md:text-sm font-black bg-blue-50 text-blue-800 outline-none focus:ring-2 focus:ring-blue-500" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
+                   </div>
+                   <div className="col-span-1">
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Mode</label>
+                      <select className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-black outline-none focus:ring-2 focus:ring-green-500" value={deliveryMode} onChange={e => setDeliveryMode(e.target.value)}>
+                        <option value="Driver">Driver</option><option value="Lalamove">Lalamove</option><option value="Self Pick-up">Self Pick-up</option>
+                      </select>
+                   </div>
+                   <div className="col-span-1 sm:col-span-2 md:col-span-2">
+                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Delivery Address</label>
+                      <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-medium uppercase bg-gray-50/50 outline-none focus:ring-2 focus:ring-green-500" value={custDetails.DeliveryAddress} onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)} placeholder="FULL ADDRESS..." />
+                   </div>
+                </div>
+            )}
           </div>
 
-          <div className="space-y-4">
-             <div className="relative">
-                <input type="text" placeholder="Search catalog..." className="w-full pl-12 p-4 border border-gray-200 rounded-2xl shadow-sm focus:ring-2 focus:ring-green-500 text-sm font-bold bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                <span className="absolute left-4 top-4 text-gray-400 text-xl"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+          {/* Product Search & List */}
+          <div className="space-y-3 md:space-y-4 relative">
+             {/* Sticky Search Bar for Mobile */}
+             <div className="sticky top-[72px] md:top-0 z-20 bg-gray-50/90 backdrop-blur-md pb-2 md:pb-0 md:bg-transparent pt-1 md:pt-0">
+                <div className="relative shadow-sm rounded-xl md:rounded-2xl">
+                    <input 
+                      type="text" 
+                      placeholder="Search catalog..." 
+                      className="w-full pl-10 md:pl-12 p-3 md:p-4 border border-gray-200 rounded-xl md:rounded-2xl focus:ring-2 focus:ring-green-500 text-base md:text-sm font-bold bg-white outline-none" 
+                      value={searchTerm} 
+                      onChange={e => setSearchTerm(e.target.value)} 
+                    />
+                    <span className="absolute left-3.5 md:left-4 top-3.5 md:top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+                </div>
              </div>
-             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {filteredProducts.slice(0, 10).map(p => {
+             
+             {/* Mobile-Optimized Product Grid */}
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 pb-24 md:pb-0">
+                {filteredProducts.slice(0, 15).map(p => {
                     const inputs = productInputs[p.ProductCode] || {};
                     const uomOptions = p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u) : [p.BaseUOM];
                     const uniqueUoms = Array.from(new Set(uomOptions));
                     
                     return (
-                      <div key={p.ProductCode} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
-                         <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-2xl text-[8px] font-black uppercase ${getStockColor(p.StockBalance)}`}>
-                            STOCK: {p.StockBalance ? Number(p.StockBalance).toFixed(1) : '0.0'} {p.BaseUOM}
+                      <div key={p.ProductCode} className="bg-white p-3 md:p-4 rounded-xl md:rounded-3xl border border-gray-100 shadow-sm relative group hover:shadow-md transition-all flex flex-col justify-between">
+                         <div className={`absolute top-0 right-0 px-2 py-1 md:px-3 rounded-bl-xl text-[8px] md:text-[9px] font-black uppercase ${getStockColor(p.StockBalance)}`}>
+                            {p.StockBalance ? Number(p.StockBalance).toFixed(1) : '0'} {p.BaseUOM}
                          </div>
-                         <h3 className="font-black text-gray-800 text-sm uppercase leading-tight mb-3 pr-10">{p.ProductName}</h3>
-                         <div className="flex gap-2 mb-3">
-                            <select className="bg-gray-50 border border-gray-200 rounded-xl text-[10px] p-2 flex-1 font-black uppercase outline-none" value={inputs.uom || p.SalesUOM || p.BaseUOM} onChange={(e) => handleProductInputChange(p.ProductCode, 'uom', e.target.value)}>
+                         
+                         <div className="pr-12 md:pr-16 mb-2 md:mb-3">
+                            <h3 className="font-black text-gray-800 text-xs md:text-sm uppercase leading-tight line-clamp-2">{p.ProductName}</h3>
+                            <p className="text-[9px] text-gray-400 font-mono mt-0.5">{p.ProductCode}</p>
+                         </div>
+                         
+                         {/* Controls Row 1: UOM & Qty */}
+                         <div className="flex gap-2 mb-2">
+                            <select className="bg-gray-50 border border-gray-200 rounded-lg text-base md:text-xs p-2 flex-1 font-black uppercase outline-none focus:ring-2 focus:ring-green-500" value={inputs.uom || p.SalesUOM || p.BaseUOM} onChange={(e) => handleProductInputChange(p.ProductCode, 'uom', e.target.value)}>
                               {uniqueUoms.map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
-                            <input type="number" placeholder="Qty" className="w-20 border border-gray-200 rounded-xl text-xs p-2 font-black text-center outline-none" value={inputs.qty || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'qty', e.target.value)} />
+                            <input type="number" placeholder="Qty" className="w-16 md:w-20 border border-gray-200 rounded-lg text-base md:text-sm p-2 font-black text-center outline-none focus:ring-2 focus:ring-green-500" value={inputs.qty || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'qty', e.target.value)} />
                          </div>
-                         <div className="flex items-center gap-2">
-                            <label className="flex items-center gap-1.5 cursor-pointer"><input type="checkbox" className="w-4 h-4 text-red-500 rounded border-gray-300" checked={inputs.replacement || false} onChange={(e) => handleProductInputChange(p.ProductCode, 'replacement', e.target.checked)} /> <span className="text-[8px] font-black text-red-400 uppercase tracking-widest">REPLACEMENT</span></label>
-                            <div className="flex-1"></div>
-                            <div className="relative w-24">
-                                <span className="absolute left-2 top-2 text-[8px] font-bold text-gray-400">RM</span>
-                                <input type="number" step="0.01" className="w-full pl-6 p-2 text-xs border border-gray-200 rounded-xl text-right font-black outline-none" disabled={inputs.replacement} value={inputs.price || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)} placeholder="RM" />
+                         
+                         {/* Controls Row 2: Price & Add */}
+                         <div className="flex items-center gap-2 mt-auto">
+                            <label className="flex items-center gap-1 cursor-pointer p-1.5 bg-gray-50 rounded-lg border border-gray-100">
+                               <input type="checkbox" className="w-4 h-4 md:w-4 md:h-4 text-red-500 rounded border-gray-300" checked={inputs.replacement || false} onChange={(e) => handleProductInputChange(p.ProductCode, 'replacement', e.target.checked)} /> 
+                               <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">REP</span>
+                            </label>
+                            
+                            <div className="flex-1 relative">
+                                <span className="absolute left-2.5 top-2.5 md:top-2.5 text-[10px] md:text-[10px] font-bold text-gray-400">RM</span>
+                                <input type="number" step="0.01" className="w-full pl-8 pr-2 py-2 text-base md:text-xs border border-gray-200 rounded-lg text-right font-black outline-none disabled:bg-gray-100 focus:ring-2 focus:ring-green-500" disabled={inputs.replacement} value={inputs.price || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)} placeholder="0.00" />
                             </div>
-                            <button onClick={() => addToCart(p)} className="bg-green-600 hover:bg-green-700 text-white rounded-xl w-10 h-10 flex items-center justify-center font-bold shadow-lg active:scale-90 transition-transform"><PlusCircleIcon className="w-6 h-6" /></button>
+                            
+                            <button onClick={() => addToCart(p)} className="bg-green-600 hover:bg-green-700 text-white rounded-lg w-10 h-10 md:w-10 md:h-10 flex items-center justify-center font-bold shadow-md active:scale-95 transition-transform shrink-0">
+                                <PlusIcon className="w-5 h-5 md:w-5 md:h-5" strokeWidth={3} />
+                            </button>
                          </div>
                       </div>
                     );
                 })}
+                {searchTerm && filteredProducts.length === 0 && (
+                    <div className="col-span-full p-6 text-center text-gray-400 italic text-sm border-2 border-dashed border-gray-200 rounded-xl">No products found.</div>
+                )}
              </div>
           </div>
         </div>
 
-        <div className="lg:col-span-1">
+        {/* --- RIGHT COLUMN (Cart - Desktop) --- */}
+        <div className="hidden lg:block lg:col-span-1">
            <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 sticky top-4 flex flex-col h-[calc(100vh-6rem)] min-h-[500px]">
               <div className="flex justify-between items-center mb-6">
                  <h2 className="text-lg font-black text-gray-800 tracking-tight uppercase">Cart Summary</h2>
                  <span className="bg-green-100 text-green-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{cart.length} items</span>
               </div>
               <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-1">
-                  {cart.length === 0 ? <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">Cart is currently empty</div> : cart.map((item) => (
-                    <div key={item.cartId} className="p-4 rounded-2xl bg-gray-50/50 border border-gray-100 relative group hover:bg-white transition-all">
-                        <div className="flex justify-between items-start mb-2">
-                            <div className="pr-6">
-                                <div className="text-[11px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
-                            </div>
-                            <button onClick={() => removeFromCart(item.cartId)} className="text-gray-300 hover:text-red-500 absolute top-3 right-3 p-1"><XMarkIcon className="w-4 h-4" /></button>
+                  {cart.length === 0 ? <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">Cart is empty</div> : cart.map((item) => (
+                    <div key={item.cartId} className="p-3 bg-gray-50/80 border border-gray-100 rounded-xl relative group">
+                        <div className="flex justify-between items-start mb-1">
+                            <div className="pr-6 text-[10px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
+                            <button onClick={() => removeFromCart(item.cartId)} className="text-gray-400 hover:text-red-500 absolute top-2 right-2"><XMarkIcon className="w-4 h-4" /></button>
                         </div>
-                        <div className="flex items-center justify-between mt-2"><div className="text-[10px] font-black text-green-700 bg-green-50 px-2 py-1 rounded-lg border border-green-100">{item.qty} {item.uom}</div>{item.isReplacement ? <span className="text-[8px] font-black text-white bg-red-400 px-2 py-1 rounded-lg uppercase shadow-sm">REPLACEMENT</span> : <span className="text-[10px] font-black text-gray-700 bg-white border px-2 py-1 rounded-lg">RM {(item.price || 0).toFixed(2)}</span>}</div>
+                        
+                        <div className="flex items-center justify-between mt-2">
+                             <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
+                                <button onClick={() => updateCartQty(item.cartId, -1)} className="w-6 h-6 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded"><MinusIcon className="w-3 h-3"/></button>
+                                <span className="w-6 text-center text-xs font-black">{item.qty}</span>
+                                <button onClick={() => updateCartQty(item.cartId, 1)} className="w-6 h-6 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded"><PlusIcon className="w-3 h-3"/></button>
+                             </div>
+                             <span className="text-[9px] font-black text-gray-500 ml-1 mr-auto">{item.uom}</span>
+                             
+                             {item.isReplacement ? (
+                                 <span className="text-[8px] font-black text-white bg-red-400 px-2 py-1 rounded shadow-sm">REP</span>
+                             ) : (
+                                 <span className="text-[10px] font-black text-gray-700 bg-white border border-gray-200 px-2 py-1 rounded">RM {(item.price || 0).toFixed(2)}</span>
+                             )}
+                        </div>
                     </div>
                   ))}
               </div>
               
               {/* RECURRING TOGGLE AREA */}
-              <div className="mt-auto pt-6 border-t border-gray-100 space-y-4">
+              <div className="mt-auto pt-4 border-t border-gray-100 space-y-4">
                   <div className="bg-indigo-50/50 border border-indigo-100 p-3 rounded-2xl">
                       <label className="flex items-center gap-2 cursor-pointer mb-2">
                           <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
-                          <span className="text-xs font-black text-indigo-900 uppercase tracking-widest">Save as Weekly Pattern</span>
+                          <span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save as Weekly Pattern</span>
                       </label>
                       {isRecurring && (
                           <div className="mt-2 animate-in fade-in slide-in-from-top-1">
-                              <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest ml-1">Generate On Every:</span>
+                              <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest ml-1">Generate On:</span>
                               <select className="w-full mt-1 border border-indigo-200 p-2 rounded-xl text-xs font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
                                   {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
                               </select>
@@ -877,54 +977,169 @@ export default function NewOrderPage() {
                       )}
                   </div>
                   
-                  <div className="flex justify-between text-xs font-black text-gray-800 px-2 uppercase tracking-widest"><span>Total Entries:</span><span>{cart.length}</span></div>
+                  <div className="flex justify-between text-xs font-black text-gray-800 px-1 uppercase tracking-widest"><span>Total:</span><span>{cart.reduce((sum, item) => sum + item.qty, 0)} Items</span></div>
                   <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/30 active:scale-95'}`}>
-                      {submitting ? 'PROCESSING ENGINE...' : (isRecurring ? '🚀 FINALIZE & SAVE PATTERN' : '🚀 FINALIZE ORDER')}
+                      {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & ORDER' : 'CONFIRM ORDER')}
                   </button>
               </div>
            </div>
         </div>
+
+        {/* --- MOBILE FLOATING CART BAR --- */}
+        {cart.length > 0 && !isMobileCartOpen && (
+            <div 
+                className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-50 animate-in slide-in-from-bottom-10"
+                style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+            >
+                <div className="flex items-center justify-between gap-4">
+                    <button 
+                        onClick={() => setIsMobileCartOpen(true)}
+                        className="flex items-center justify-center gap-3 bg-gray-50 px-4 py-4 rounded-xl border border-gray-200 flex-1 active:bg-gray-100 transition-colors"
+                    >
+                        <div className="relative">
+                            <ShoppingCartIcon className="w-6 h-6 text-gray-700" />
+                            <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full">{cart.length}</span>
+                        </div>
+                        <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">View Cart</span>
+                    </button>
+                    <button 
+                        onClick={handleSubmitOrder}
+                        disabled={submitting}
+                        className="bg-green-600 hover:bg-green-700 text-white font-black py-4 px-6 rounded-xl shadow-lg transition active:scale-95 text-xs uppercase tracking-widest flex-1"
+                    >
+                        {submitting ? 'PROCESSING...' : 'CONFIRM ORDER'}
+                    </button>
+                </div>
+            </div>
+        )}
+
+        {/* --- FULL SCREEN MOBILE CART MODAL --- */}
+        {isMobileCartOpen && (
+             <div className="lg:hidden fixed inset-0 bg-white z-[120] flex flex-col animate-in slide-in-from-bottom-full duration-300">
+                <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50 shrink-0" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
+                    <div className="flex items-center gap-2">
+                        <ShoppingCartIcon className="w-6 h-6 text-green-600" />
+                        <h2 className="text-base font-black text-gray-800 uppercase tracking-tight">Review Cart</h2>
+                    </div>
+                    <button onClick={() => setIsMobileCartOpen(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><XMarkIcon className="w-5 h-5"/></button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-100/50 custom-scrollbar">
+                    {cart.map((item) => (
+                        <div key={item.cartId} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 relative">
+                            <button onClick={() => removeFromCart(item.cartId)} className="absolute top-3 right-3 text-gray-300 hover:text-red-500 p-1.5 bg-gray-50 rounded-lg"><XMarkIcon className="w-4 h-4" /></button>
+                            <div className="text-xs font-black uppercase text-gray-800 pr-8 mb-4">{item.ProductName}</div>
+                            
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center bg-gray-50 border border-gray-200 rounded-lg p-1.5">
+                                    <button onClick={() => updateCartQty(item.cartId, -1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><MinusIcon className="w-4 h-4"/></button>
+                                    <span className="w-10 text-center text-sm font-black">{item.qty}</span>
+                                    <button onClick={() => updateCartQty(item.cartId, 1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><PlusIcon className="w-4 h-4"/></button>
+                                </div>
+                                <span className="text-[10px] font-black text-gray-500 uppercase mx-2">{item.uom}</span>
+                                
+                                {item.isReplacement ? (
+                                    <span className="text-[10px] font-black text-white bg-red-400 px-3 py-1.5 rounded-lg shadow-sm">REP</span>
+                                ) : (
+                                    <span className="text-xs font-black text-gray-700 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg">RM {(item.price || 0).toFixed(2)}</span>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                    {cart.length === 0 && <div className="text-center p-10 text-gray-400 font-bold italic text-sm">Cart is empty</div>}
+                </div>
+
+                <div className="p-4 bg-white border-t border-gray-200 shrink-0 space-y-4 shadow-[0_-10px_20px_rgba(0,0,0,0.05)]" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+                    <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-2xl">
+                        <label className="flex items-center gap-3 cursor-pointer">
+                            <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
+                            <span className="text-xs font-black text-indigo-900 uppercase tracking-widest">Save Weekly Pattern</span>
+                        </label>
+                        {isRecurring && (
+                            <select className="w-full mt-3 border border-indigo-200 p-3 rounded-xl text-base font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
+                                {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                        )}
+                    </div>
+                    
+                    <button 
+                        onClick={handleSubmitOrder} 
+                        disabled={submitting || cart.length === 0} 
+                        className={`w-full py-4 rounded-xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 active:scale-95'}`}
+                    >
+                        {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & SUBMIT' : 'SUBMIT ORDER')}
+                    </button>
+                </div>
+             </div>
+        )}
       </div>
       )}
 
       {/* TAB 2: ORDER HISTORY LIST */}
       {activeTab === 'list' && (
-      <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-180px)] flex flex-col relative">
-         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 flex-none">
+      <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-140px)] flex flex-col relative overflow-hidden">
+         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 md:mb-6 gap-3 flex-none">
              <div>
-                <h2 className="text-xl font-black text-gray-800 tracking-tight flex items-center gap-2 uppercase">
-                    <ClipboardDocumentListIcon className="w-7 h-7 text-blue-600" /> Recent Logged Orders
+                <h2 className="text-base md:text-xl font-black text-gray-800 tracking-tight flex items-center gap-2 uppercase">
+                    <ClipboardDocumentListIcon className="w-5 h-5 md:w-7 md:h-7 text-blue-600" /> Recent Orders
                 </h2>
-                <div className="flex items-center gap-2 mt-1.5 ml-1">
-                    <div className={`w-2.5 h-2.5 rounded-full ${isRealtimeActive ? 'bg-green-500 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-gray-300'}`}></div>
-                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">
-                        {isRealtimeActive ? 'Live Real-time Monitoring' : 'Real-time Disconnected'}
+                <div className="flex items-center gap-1.5 mt-1 ml-1">
+                    <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full ${isRealtimeActive ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
+                    <span className="text-[8px] md:text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                        {isRealtimeActive ? 'Live' : 'Offline'}
                     </span>
                 </div>
              </div>
-             <div className="flex items-center gap-3 w-full sm:w-auto">
-                 <button onClick={handlePullShipdayStatus} disabled={isSyncing} className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-black py-3 px-5 rounded-2xl text-xs transition-all flex items-center gap-2 border border-blue-200 disabled:opacity-50 shadow-sm active:scale-95">
-                     <ArrowPathIcon className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                     {isSyncing ? 'SYNCING...' : 'SYNC SHIPDAY'}
+             <div className="flex w-full sm:w-auto gap-2">
+                 <button onClick={handlePullShipdayStatus} disabled={isSyncing} className="bg-blue-50 text-blue-700 font-bold p-3 rounded-xl transition-all border border-blue-200 disabled:opacity-50 shrink-0">
+                     <ArrowPathIcon className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
                  </button>
-                 <div className="relative w-full sm:w-80">
-                     <input type="text" placeholder="Search orders..." className="w-full pl-10 p-3.5 border border-gray-200 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-500 bg-gray-50/50 outline-none transition-all" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
-                     <span className="absolute left-3.5 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+                 <div className="relative w-full sm:w-64">
+                     <input type="text" placeholder="Search..." className="w-full pl-10 p-3 border border-gray-200 rounded-xl text-base md:text-sm font-medium focus:ring-2 focus:ring-blue-500 bg-gray-50 outline-none" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
+                     <span className="absolute left-3.5 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4 md:w-5 md:h-5"/></span>
                  </div>
              </div>
          </div>
 
-         <div className="flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
+         {/* Mobile Card View for Order History */}
+         <div className="md:hidden flex-1 overflow-y-auto space-y-3 custom-scrollbar pb-20">
+            {displayedHistory.map((group) => {
+                 const rawStatus = getRawStatus(group.info);
+                 const isSelected = selectedOrders.includes(group.info.DONumber);
+                 return (
+                     <div key={group.info.DONumber} className={`bg-white border rounded-2xl p-4 shadow-sm relative transition-all ${isSelected ? 'border-blue-400 ring-1 ring-blue-400 bg-blue-50/30' : 'border-gray-100'}`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
+                         <div className="flex justify-between items-start mb-2">
+                             <div className="flex flex-col gap-1">
+                                 <span className="font-mono text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 w-fit">{group.info.DONumber}</span>
+                                 <span className="text-[9px] font-bold text-gray-500">{new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB')}</span>
+                             </div>
+                             <span className={`px-2 py-1 rounded-md text-[8px] font-black uppercase border ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span>
+                         </div>
+                         <div className="font-black text-gray-800 text-sm uppercase leading-tight mb-2 pr-6">
+                             {group.info["Customer Name"]}
+                         </div>
+                         <div className="flex items-center gap-2 mb-3 border-t border-gray-50 pt-2">
+                             <span className="bg-gray-100 text-gray-600 text-[10px] font-black px-2 py-1 rounded-md">{group.items.length} Items</span>
+                         </div>
+                         <div className="flex justify-end gap-2 border-t border-gray-100 pt-3" onClick={e => e.stopPropagation()}>
+                             <button onClick={() => openEditModal(group)} className="p-2 bg-gray-50 text-blue-600 rounded-lg"><PencilSquareIcon className="w-4 h-4"/></button>
+                             <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-2 bg-gray-50 text-gray-600 rounded-lg"><PrinterIcon className="w-4 h-4"/></button>
+                             <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-2 bg-gray-50 text-green-600 rounded-lg"><TruckIcon className="w-4 h-4"/></button>
+                             <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 bg-red-50 text-red-600 rounded-lg"><TrashIcon className="w-4 h-4"/></button>
+                         </div>
+                     </div>
+                 )
+            })}
+            {displayedHistory.length === 0 && <div className="text-center p-10 text-gray-400 font-bold text-sm">No orders found.</div>}
+         </div>
+
+         {/* Desktop Table View for Order History */}
+         <div className="hidden md:block flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
              <table className="w-full text-left whitespace-nowrap min-w-[1050px]">
                  <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
                      <tr>
                         <th className="p-5 w-10 text-center">
-                            <input 
-                                type="checkbox" 
-                                className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                                checked={displayedHistory.length > 0 && selectedOrders.length === displayedHistory.length}
-                                onChange={toggleSelectAll}
-                            />
+                            <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer" checked={displayedHistory.length > 0 && selectedOrders.length === displayedHistory.length} onChange={toggleSelectAll} />
                         </th>
                         <th className="p-5 w-32">Delivery Date</th>
                         <th className="p-5 w-32">DO Number</th>
@@ -941,63 +1156,62 @@ export default function NewOrderPage() {
                          return (
                          <tr key={group.info.DONumber} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
                              <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                                <input 
-                                    type="checkbox" 
-                                    className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                                    checked={isSelected}
-                                    onChange={() => toggleOrderSelection(group.info.DONumber)}
-                                />
+                                <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer" checked={isSelected} onChange={() => toggleOrderSelection(group.info.DONumber)} />
                              </td>
                              <td className="p-4 font-mono text-gray-500 text-xs">{new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                              <td className="p-4 font-black text-blue-600 font-mono text-sm">{group.info.DONumber}</td>
                              <td className="p-4">
-                                 <div className="font-black text-gray-800 text-base md:text-lg uppercase max-w-[350px] whitespace-normal leading-tight" title={group.info["Customer Name"]}>{group.info["Customer Name"]}</div>
+                                 <div className="font-black text-gray-800 text-base uppercase max-w-[350px] whitespace-normal leading-tight" title={group.info["Customer Name"]}>{group.info["Customer Name"]}</div>
                              </td>
                              <td className="p-4 text-center"><span className="bg-white border border-gray-100 shadow-sm px-3 py-1 rounded-full font-black text-sm">{group.items.length}</span></td>
                              <td className="p-4 text-center"><span className={`px-2.5 py-1.5 rounded-full text-[10px] font-black uppercase border shadow-sm whitespace-nowrap ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></td>
                              <td className="p-4 text-right pr-6" onClick={(e) => e.stopPropagation()}>
-                                 <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity w-full">
-                                     <button onClick={() => openEditModal(group)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Modify Order"><PencilSquareIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Print DO"><PrinterIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-1.5 text-green-600 hover:bg-green-100 rounded-lg transition" title="Push to Shipday"><TruckIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-1.5 text-red-600 hover:bg-red-100 rounded-lg transition" title="Purge Record"><TrashIcon className="w-5 h-5" /></button>
+                                 <div className="flex items-center justify-end gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity w-full">
+                                     <button onClick={() => openEditModal(group)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition"><PencilSquareIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition"><PrinterIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition"><TruckIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition"><TrashIcon className="w-5 h-5" /></button>
                                  </div>
                              </td>
                          </tr>
                      )})}
-                     {displayedHistory.length === 0 && (
-                         <tr><td colSpan="7" className="p-16 text-center text-gray-300 italic font-bold">No orders match your current filter.</td></tr>
-                     )}
+                     {displayedHistory.length === 0 && <tr><td colSpan="7" className="p-16 text-center text-gray-300 italic font-bold">No orders match your current filter.</td></tr>}
                  </tbody>
              </table>
          </div>
 
          {/* STICKY FLOATING ACTION BAR FOR MULTI-SELECT */}
          {selectedOrders.length > 0 && (
-             <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-900/95 backdrop-blur-md text-white px-6 py-4 rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.3)] flex items-center gap-6 z-[100] animate-in slide-in-from-bottom-10 border border-gray-700 w-max">
-                 <div className="flex items-center gap-3">
-                     <span className="bg-blue-600 text-white w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shadow-inner">
-                         {selectedOrders.length}
-                     </span>
-                     <span className="font-bold text-[10px] uppercase tracking-widest text-gray-300 mr-2">Selected</span>
+             <div className="fixed bottom-4 md:bottom-8 left-1/2 transform -translate-x-1/2 w-[92%] sm:w-max bg-gray-900/95 backdrop-blur-xl text-white p-3 sm:px-6 sm:py-4 rounded-2xl sm:rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.4)] flex flex-col sm:flex-row items-center gap-3 sm:gap-6 z-[100] animate-in slide-in-from-bottom-10 border border-gray-700">
+                 
+                 <div className="flex items-center justify-between w-full sm:w-auto sm:border-r border-gray-700 sm:pr-6 shrink-0">
+                     <div className="flex items-center gap-3">
+                         <span className="bg-blue-600 text-white w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shadow-inner">
+                             {selectedOrders.length}
+                         </span>
+                         <span className="font-bold text-[10px] md:text-xs uppercase tracking-widest text-gray-300">Selected</span>
+                     </div>
+                     <button onClick={() => setSelectedOrders([])} className="sm:hidden text-gray-400 hover:text-white bg-gray-800 p-1.5 rounded-full transition">
+                         <XMarkIcon className="w-5 h-5" />
+                     </button>
                  </div>
                  
-                 <div className="flex gap-2 border-l border-gray-700 pl-6 border-r pr-6">
-                     <button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                 <div className="flex gap-2 w-full sm:w-auto overflow-x-auto custom-scrollbar pb-1 sm:pb-0 snap-x">
+                     <button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-2 bg-gray-800 sm:bg-transparent hover:bg-white/10 px-4 py-2.5 sm:py-2 rounded-xl transition font-bold text-[10px] md:text-xs shrink-0 snap-start border border-gray-700 sm:border-none">
                          <PencilSquareIcon className="w-4 h-4 text-blue-400" /> Multi-Edit
                      </button>
-                     <button onClick={handleBulkPrint} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                     <button onClick={handleBulkPrint} className="flex items-center gap-2 bg-gray-800 sm:bg-transparent hover:bg-white/10 px-4 py-2.5 sm:py-2 rounded-xl transition font-bold text-[10px] md:text-xs shrink-0 snap-start border border-gray-700 sm:border-none">
                          <PrinterIcon className="w-4 h-4 text-gray-300" /> Batch Print
                      </button>
-                     <button onClick={handleBulkShipday} className="flex items-center gap-2 hover:bg-white/10 px-4 py-2 rounded-xl transition font-bold text-xs">
+                     <button onClick={handleBulkShipday} className="flex items-center gap-2 bg-gray-800 sm:bg-transparent hover:bg-white/10 px-4 py-2.5 sm:py-2 rounded-xl transition font-bold text-[10px] md:text-xs shrink-0 snap-start border border-gray-700 sm:border-none">
                          <TruckIcon className="w-4 h-4 text-green-400" /> Push Shipday
                      </button>
-                     <button onClick={handleBulkDelete} className="flex items-center gap-2 hover:bg-red-500/20 px-4 py-2 rounded-xl transition font-bold text-xs text-red-400 hover:text-red-300">
+                     <button onClick={handleBulkDelete} className="flex items-center gap-2 bg-red-900/30 sm:bg-transparent hover:bg-red-500/20 px-4 py-2.5 sm:py-2 rounded-xl transition font-bold text-[10px] md:text-xs text-red-400 hover:text-red-300 shrink-0 snap-start border border-red-900/50 sm:border-none">
                          <TrashIcon className="w-4 h-4" /> Batch Delete
                      </button>
                  </div>
                  
-                 <button onClick={() => setSelectedOrders([])} className="text-gray-400 hover:text-white transition bg-gray-800 p-2 rounded-full hover:bg-gray-700" title="Clear Selection">
+                 <button onClick={() => setSelectedOrders([])} className="hidden sm:block text-gray-400 hover:text-white transition bg-gray-800 p-2 rounded-full hover:bg-gray-700 shrink-0" title="Clear Selection">
                      <XMarkIcon className="w-5 h-5" />
                  </button>
              </div>
@@ -1005,52 +1219,52 @@ export default function NewOrderPage() {
       </div>
       )}
 
-      {/* TAB 3: WEEKLY PATTERNS (NEW) */}
+      {/* TAB 3: WEEKLY PATTERNS */}
       {activeTab === 'recurring' && (
-      <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-indigo-100 animate-in fade-in h-[calc(100vh-180px)] flex flex-col relative">
+      <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-indigo-100 animate-in fade-in h-[calc(100vh-140px)] flex flex-col relative overflow-hidden">
          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 flex-none">
              <div>
-                <h2 className="text-xl font-black text-indigo-900 tracking-tight flex items-center gap-2 uppercase">
-                    <ArrowPathIcon className="w-7 h-7 text-indigo-600" /> Weekly Auto-Orders
+                <h2 className="text-lg md:text-xl font-black text-indigo-900 tracking-tight flex items-center gap-2 uppercase">
+                    <ArrowPathIcon className="w-6 h-6 md:w-7 md:h-7 text-indigo-600" /> Weekly Auto-Orders
                 </h2>
-                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-1 ml-1">Templates saved from checkout</p>
+                <p className="text-[9px] md:text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-1">Templates saved from checkout</p>
              </div>
              
-             {/* GENERATOR WIDGET */}
-             <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-100 p-2 rounded-2xl shadow-sm w-full sm:w-auto">
-                 <div className="flex flex-col px-3">
-                     <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Target Gen Date ({getTargetDayName()})</span>
-                     <input type="date" value={targetGenDate} onChange={e=>setTargetGenDate(e.target.value)} className="bg-transparent font-black text-indigo-900 text-sm outline-none cursor-pointer" />
+             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-indigo-50 border border-indigo-100 p-2 md:p-3 rounded-2xl w-full sm:w-auto">
+                 <div className="flex flex-col px-2">
+                     <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-1">Target Date ({getTargetDayName()})</span>
+                     <input type="date" value={targetGenDate} onChange={e=>setTargetGenDate(e.target.value)} className="bg-transparent font-black text-indigo-900 text-xs md:text-sm outline-none cursor-pointer w-full" />
                  </div>
-                 <button onClick={handleGenerateAutos} disabled={isGenerating} className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 px-6 rounded-xl text-xs transition-all flex items-center gap-2 shadow-md active:scale-95 disabled:opacity-50 uppercase tracking-widest">
+                 <button onClick={handleGenerateAutos} disabled={isGenerating} className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 px-6 rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-md active:scale-95 disabled:opacity-50 uppercase tracking-widest w-full sm:w-auto">
                      <PlayCircleIcon className="w-5 h-5" />
                      {isGenerating ? 'RUNNING...' : 'GENERATE TODAY'}
                  </button>
              </div>
          </div>
 
-         <div className="flex-1 overflow-auto custom-scrollbar border border-indigo-50 rounded-3xl bg-gray-50/30 p-2">
-             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+         <div className="flex-1 overflow-auto custom-scrollbar border border-indigo-50 rounded-3xl bg-gray-50/30 p-2 md:p-4">
+             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 md:gap-4">
                  {standingOrders.map(t => (
-                     <div key={t.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:border-indigo-300 transition-all group">
+                     <div key={t.id} className="bg-white p-4 md:p-5 rounded-2xl border border-gray-100 shadow-sm hover:border-indigo-300 transition-all">
                          <div className="flex justify-between items-start mb-3">
-                             <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-indigo-50 text-indigo-600 border-indigo-200">
+                             <span className="px-2 py-1 md:px-2.5 md:py-1 rounded-lg text-[8px] md:text-[9px] font-black uppercase tracking-widest border bg-indigo-50 text-indigo-600 border-indigo-200">
                                  Every {t.DeliveryDay}
                              </span>
-                             <button onClick={() => deletePattern(t.id)} className="text-gray-300 hover:text-red-500 transition"><TrashIcon className="w-4 h-4"/></button>
+                             <button onClick={() => deletePattern(t.id)} className="p-1.5 text-gray-300 hover:bg-red-50 hover:text-red-500 rounded-md transition"><TrashIcon className="w-4 h-4 md:w-5 md:h-5"/></button>
                          </div>
-                         <h4 className="font-black text-gray-800 uppercase leading-tight mb-1">{t.CustomerName}</h4>
-                         <p className="text-[10px] text-gray-500 font-medium mb-3 truncate">{t.DeliveryAddress}</p>
+                         <h4 className="font-black text-gray-800 text-sm md:text-base uppercase leading-tight mb-1 pr-4">{t.CustomerName}</h4>
+                         <p className="text-[9px] md:text-[10px] text-gray-500 font-medium mb-3 truncate max-w-full">{t.DeliveryAddress}</p>
                          
-                         <div className="border-t border-gray-50 pt-3 text-xs font-bold text-gray-600">
-                             {t.Items?.length || 0} Items <span className="text-gray-300 mx-1">|</span> Mode: {t.DeliveryMode}
+                         <div className="border-t border-gray-50 pt-3 text-[10px] md:text-xs font-bold text-gray-600 flex justify-between">
+                             <span>{t.Items?.length || 0} Items</span>
+                             <span>Mode: {t.DeliveryMode}</span>
                          </div>
                      </div>
                  ))}
                  {standingOrders.length === 0 && (
-                     <div className="col-span-full py-20 flex flex-col items-center text-center text-indigo-300 italic font-bold">
-                         <ArrowPathIcon className="w-16 h-16 mb-4 opacity-20" />
-                         No weekly patterns found. <br/><span className="text-xs mt-2">Create one by checking the "Save as Weekly Pattern" box when placing a New Order.</span>
+                     <div className="col-span-full py-20 flex flex-col items-center text-center text-indigo-300 italic font-bold px-4">
+                         <ArrowPathIcon className="w-12 h-12 md:w-16 md:h-16 mb-4 opacity-20" />
+                         No weekly patterns found. <br/><span className="text-[10px] md:text-xs mt-2 font-medium">Create one by checking the "Save as Weekly Pattern" box when placing a New Order.</span>
                      </div>
                  )}
              </div>
@@ -1062,26 +1276,26 @@ export default function NewOrderPage() {
           BULK EDIT MODAL
           ========================================== */}
       {isBulkEditOpen && (
-          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
-             <div className="bg-white rounded-3xl w-full max-w-lg p-8 shadow-2xl flex flex-col animate-in zoom-in duration-200 border border-gray-100">
-                 <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
+             <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg p-6 sm:p-8 shadow-2xl flex flex-col animate-in slide-in-from-bottom-10 sm:zoom-in duration-200 border-t border-gray-100 sm:border max-h-[90dvh]">
+                 <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4 shrink-0">
                      <div>
-                         <h2 className="text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit Orders</h2>
-                         <p className="text-xs text-gray-400 font-bold mt-1">Applying changes to <span className="text-blue-600">{selectedOrders.length}</span> orders.</p>
+                         <h2 className="text-lg md:text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit Orders</h2>
+                         <p className="text-[10px] md:text-xs text-gray-400 font-bold mt-1">Applying changes to <span className="text-blue-600">{selectedOrders.length}</span> orders.</p>
                      </div>
-                     <button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                     <button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
                  </div>
                  
-                 <div className="space-y-4 mb-8">
+                 <div className="space-y-4 mb-6 overflow-y-auto custom-scrollbar px-1">
                      <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">New Delivery Date</label>
-                         <input type="date" className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryDate} onChange={e => setBulkEditData({...bulkEditData, deliveryDate: e.target.value})} />
-                         <p className="text-[9px] text-gray-400 mt-1 italic">*Leave blank to keep existing dates</p>
+                         <input type="date" className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-bold text-base md:text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryDate} onChange={e => setBulkEditData({...bulkEditData, deliveryDate: e.target.value})} />
+                         <p className="text-[9px] text-gray-400 mt-2 italic">*Leave blank to keep existing dates</p>
                      </div>
                      
                      <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Delivery Mode Override</label>
-                         <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryMode} onChange={e => setBulkEditData({...bulkEditData, deliveryMode: e.target.value})}>
+                         <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-base md:text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryMode} onChange={e => setBulkEditData({...bulkEditData, deliveryMode: e.target.value})}>
                              <option value="">-- No Change --</option>
                              <option value="Driver">Driver</option>
                              <option value="Lalamove">Lalamove</option>
@@ -1091,7 +1305,7 @@ export default function NewOrderPage() {
 
                      <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Force Status Update</label>
-                         <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.status} onChange={e => setBulkEditData({...bulkEditData, status: e.target.value})}>
+                         <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-base md:text-sm focus:ring-2 focus:ring-blue-500" value={bulkEditData.status} onChange={e => setBulkEditData({...bulkEditData, status: e.target.value})}>
                              <option value="">-- No Change --</option>
                              <option value="PENDING">PENDING</option>
                              <option value="ASSIGNED">ASSIGNED</option>
@@ -1103,9 +1317,9 @@ export default function NewOrderPage() {
                      </div>
                  </div>
 
-                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-                    <button onClick={() => setIsBulkEditOpen(false)} className="px-6 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
-                    <button onClick={handleBulkEditSave} className="px-8 py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 hover:shadow-blue-500/30 transition-all active:scale-95 text-xs uppercase tracking-widest">Apply to {selectedOrders.length} Orders</button>
+                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 shrink-0 pb-4 sm:pb-0">
+                    <button onClick={() => setIsBulkEditOpen(false)} className="flex-1 sm:flex-none px-6 py-4 sm:py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
+                    <button onClick={handleBulkEditSave} className="flex-1 sm:flex-none px-8 py-4 sm:py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-xs uppercase tracking-widest">Apply to {selectedOrders.length}</button>
                 </div>
              </div>
           </div>
@@ -1113,82 +1327,144 @@ export default function NewOrderPage() {
 
       {/* EDIT INDIVIDUAL ORDER MODAL */}
       {isEditModalOpen && editingOrder && (
-          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-[2.5rem] w-full max-w-5xl p-8 shadow-2xl flex flex-col max-h-[95vh] animate-in zoom-in duration-200 border border-gray-100">
-                <div className="flex justify-between items-center mb-6 border-b pb-6 shrink-0">
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-t-3xl sm:rounded-[2.5rem] w-full max-w-5xl p-5 sm:p-8 shadow-2xl flex flex-col max-h-[90dvh] sm:max-h-[95vh] animate-in slide-in-from-bottom-10 sm:zoom-in duration-200 border-t sm:border border-gray-100">
+                
+                {/* Modal Header */}
+                <div className="flex justify-between items-center mb-4 sm:mb-6 border-b pb-4 sm:pb-6 shrink-0">
                     <div>
-                        <h2 className="text-2xl font-black text-gray-800 uppercase flex items-center gap-2">Edit Master Order <span className="text-blue-600 font-mono tracking-tighter">{editingOrder.DONumber}</span></h2>
-                        <div className="flex items-center gap-3 mt-3">
-                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Manual Status Override:</span>
-                            <select className={`border rounded-xl px-4 py-1.5 text-[10px] font-black outline-none shadow-sm transition-all ${getStatusColor(getRawStatus(editingOrder))}`} value={formatDisplayStatus(getRawStatus(editingOrder))} onChange={e => setEditingOrder({...editingOrder, Status: e.target.value})}>
+                        <h2 className="text-lg sm:text-2xl font-black text-gray-800 uppercase flex items-center gap-2">
+                            Edit <span className="text-blue-600 font-mono tracking-tighter">{editingOrder.DONumber}</span>
+                        </h2>
+                        <div className="flex items-center gap-2 mt-2">
+                            <span className="text-[9px] sm:text-[10px] font-black text-gray-400 uppercase tracking-widest hidden sm:block">Status:</span>
+                            <select className={`border rounded-lg px-2 sm:px-4 py-1 sm:py-1.5 text-[9px] sm:text-[10px] font-black outline-none shadow-sm transition-all ${getStatusColor(getRawStatus(editingOrder))}`} value={formatDisplayStatus(getRawStatus(editingOrder))} onChange={e => setEditingOrder({...editingOrder, Status: e.target.value})}>
                                 <option value="PENDING">PENDING</option><option value="ASSIGNED">ASSIGNED</option><option value="IN TRANSIT">IN TRANSIT</option><option value="DELIVERED">DELIVERED</option><option value="FAILED">FAILED</option><option value="CANCELLED">CANCELLED</option>
                             </select>
                         </div>
                     </div>
-                    <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-4xl font-bold bg-gray-50 hover:bg-red-50 w-12 h-12 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                    <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 shrink-0 bg-gray-50/50 p-6 rounded-3xl border border-gray-100 text-xs font-bold uppercase shadow-inner">
-                    <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1.5 ml-1">Customer Entity</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-black focus:ring-2 focus:ring-blue-500" value={editingOrder["Customer Name"]} onChange={e => setEditingOrder({...editingOrder, "Customer Name": e.target.value})} /></div>
-                    <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1.5 ml-1">Full Logistics Address</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-medium focus:ring-2 focus:ring-blue-500" value={editingOrder["Delivery Address"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Address": e.target.value})} /></div>
-                    <div><label className="block text-[9px] text-gray-400 mb-1.5 ml-1">Contact Phone</label><input className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-black focus:ring-2 focus:ring-blue-500" value={editingOrder["Contact Number"] || ''} onChange={e => setEditingOrder({...editingOrder, "Contact Number": e.target.value})} /></div>
-                    <div><label className="block text-[9px] text-gray-400 mb-1.5 ml-1">Logistics Date</label><input type="date" className="w-full p-3 border border-gray-200 rounded-2xl outline-none font-black bg-blue-50 text-blue-800 focus:ring-2 focus:ring-blue-500" value={editingOrder["Delivery Date"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Date": e.target.value})} /></div>
-                </div>
+                <div className="overflow-y-auto flex-1 custom-scrollbar px-1 pb-4">
+                    {/* Form Fields */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6 bg-gray-50/50 p-4 sm:p-6 rounded-2xl sm:rounded-3xl border border-gray-100 shadow-inner">
+                        <div className="sm:col-span-2"><label className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Customer</label><input className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-black text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={editingOrder["Customer Name"]} onChange={e => setEditingOrder({...editingOrder, "Customer Name": e.target.value})} /></div>
+                        <div className="sm:col-span-2"><label className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Address</label><input className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-medium text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={editingOrder["Delivery Address"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Address": e.target.value})} /></div>
+                        <div><label className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Contact</label><input className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-black text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={editingOrder["Contact Person"] || ''} onChange={e => setEditingOrder({...editingOrder, "Contact Person": e.target.value})} /></div>
+                        <div><label className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Phone</label><input className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-black text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={editingOrder["Contact Number"] || ''} onChange={e => setEditingOrder({...editingOrder, "Contact Number": e.target.value})} /></div>
+                        <div><label className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Date</label><input type="date" className="w-full p-3 border border-gray-200 rounded-xl outline-none font-black text-base md:text-xs bg-blue-50 text-blue-800 focus:ring-2 focus:ring-blue-500" value={editingOrder["Delivery Date"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Date": e.target.value})} /></div>
+                        <div>
+                            <label className="block text-[9px] font-bold text-gray-500 uppercase tracking-widest mb-1 ml-1">Mode</label>
+                            <select className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-black text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={editingOrder["Delivery Mode"] || 'Driver'} onChange={e => setEditingOrder({...editingOrder, "Delivery Mode": e.target.value})}>
+                                <option value="Driver">Driver</option><option value="Lalamove">Lalamove</option><option value="Self Pick-up">Self Pick-up</option>
+                            </select>
+                        </div>
+                    </div>
 
-                <div className="flex-1 overflow-auto border border-gray-100 rounded-3xl mb-6 custom-scrollbar bg-white shadow-inner">
-                    <table className="w-full text-left text-xs whitespace-nowrap">
-                        <thead className="bg-gray-100/50 font-black text-gray-500 sticky top-0 z-10 text-[10px] uppercase tracking-widest border-b border-gray-100">
-                            <tr><th className="p-4 pl-6">Product Catalog Item</th><th className="p-4 w-24 text-center">Qty</th><th className="p-4 w-28 text-center">UOM</th><th className="p-4 w-32 text-right">Unit Price</th><th className="p-4 w-24 text-center">REP?</th><th className="p-4 w-12 pr-6"></th></tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-50">
+                    {/* Items List (Mobile Cards & Desktop Table) */}
+                    <div className="mb-6">
+                        <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 ml-1">Order Items</label>
+                        
+                        {/* Mobile Cards for Items */}
+                        <div className="md:hidden space-y-3">
                             {editingItems.map((item, idx) => (
-                                <tr key={item.id || idx} className={item.Replacement === 'YES' ? 'bg-red-50/20' : 'hover:bg-gray-50/30'}>
-                                    <td className="p-3 pl-6">
-                                        <select className="w-full p-2.5 border border-gray-200 rounded-xl text-xs font-black uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}>
+                                <div key={item.id || idx} className={`p-4 rounded-2xl border relative ${item.Replacement === 'YES' ? 'bg-red-50/30 border-red-200' : 'bg-white border-gray-200 shadow-sm'}`}>
+                                    <button onClick={() => handleDeleteItem(idx)} className="absolute top-3 right-3 p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 rounded-lg"><TrashIcon className="w-4 h-4"/></button>
+                                    
+                                    <div className="pr-8 mb-3">
+                                        <select className="w-full p-2 border-none bg-transparent text-base md:text-xs font-black uppercase outline-none focus:ring-2 focus:ring-blue-500 -ml-2" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}>
                                             <option value={item["Order Items"]}>{item["Order Items"]}</option>
                                             {products.filter(p => p.ProductName !== item["Order Items"]).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}
                                         </select>
-                                    </td>
-                                    <td className="p-3 text-center"><input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td>
-                                    <td className="p-3 text-center">
-                                        <select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <input type="number" className="w-16 p-2 border border-gray-200 rounded-lg text-center font-black text-base md:text-xs" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} />
+                                        <select className="w-20 p-2 border border-gray-200 rounded-lg text-center font-bold uppercase text-base md:text-xs outline-none" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
                                             {(() => {
                                                 const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);
                                                 const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];
                                                 return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);
                                             })()}
                                         </select>
-                                    </td>
-                                    <td className="p-3 text-right"><input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} disabled={item.Replacement === 'YES'} /></td>
-                                    <td className="p-3 text-center"><input type="checkbox" className="w-5 h-5 text-red-500 rounded border-gray-300 focus:ring-red-500 cursor-pointer shadow-sm" checked={item.Replacement === 'YES'} onChange={e => { handleEditItemChange(idx, 'Replacement', e.target.checked ? 'YES' : ''); if (e.target.checked) handleEditItemChange(idx, 'Price', 0); }} /></td>
-                                    <td className="p-3 text-center pr-6"><button onClick={() => handleDeleteItem(idx)} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-4 h-4" /></button></td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                                    </div>
 
-                <div className="bg-gray-50 p-6 rounded-3xl border border-gray-100 mb-8 shrink-0 relative">
-                    <div className="flex gap-2 relative">
-                        <span className="absolute left-4 top-3.5 text-gray-400 text-lg"><MagnifyingGlassIcon className="w-5 h-5"/></span>
-                        <input type="text" placeholder="Add additional product to this order..." className="w-full pl-11 p-3.5 border border-gray-200 rounded-2xl text-xs font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
-                    </div>
-                    {productSearchTerm && (
-                        <div className="absolute left-6 right-6 mt-1 bg-white border border-gray-200 rounded-2xl shadow-2xl max-h-48 overflow-y-auto z-20 custom-scrollbar divide-y divide-gray-50">
-                            {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).map(p => (
-                                <div key={p.ProductCode} onClick={() => handleAddItem(p)} className="p-4 hover:bg-blue-50 cursor-pointer flex justify-between items-center group/add text-xs uppercase font-black">
-                                    <div>{p.ProductName} <span className="text-[10px] text-gray-400 ml-2 font-mono tracking-tighter">{p.ProductCode}</span></div>
-                                    <span className="bg-blue-600 text-white w-6 h-6 rounded-lg flex items-center justify-center opacity-0 group-hover/add:opacity-100 transition-all font-black"><PlusCircleIcon className="w-4 h-4"/></span>
+                                    <div className="flex items-center justify-between border-t border-gray-50 pt-3 mt-1">
+                                        <label className="flex items-center gap-1.5 cursor-pointer">
+                                            <input type="checkbox" className="w-4 h-4 text-red-500 rounded border-gray-300" checked={item.Replacement === 'YES'} onChange={e => { handleEditItemChange(idx, 'Replacement', e.target.checked ? 'YES' : ''); if (e.target.checked) handleEditItemChange(idx, 'Price', 0); }} />
+                                            <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">REP</span>
+                                        </label>
+                                        <div className="relative w-24">
+                                            <span className="absolute left-2 top-2 text-[8px] font-bold text-gray-400">RM</span>
+                                            <input type="number" step="0.01" className="w-full pl-7 pr-2 py-1.5 border border-gray-200 rounded-lg text-right font-black text-base md:text-xs outline-none" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} disabled={item.Replacement === 'YES'} />
+                                        </div>
+                                    </div>
                                 </div>
                             ))}
                         </div>
-                    )}
+
+                        {/* Desktop Table for Items */}
+                        <div className="hidden md:block overflow-x-auto border border-gray-200 rounded-2xl shadow-inner bg-white">
+                            <table className="w-full text-left text-xs whitespace-nowrap min-w-[700px]">
+                                <thead className="bg-gray-50 font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 text-[10px]">
+                                    <tr><th className="p-3 pl-4">Product Catalog Item</th><th className="p-3 w-20 text-center">Qty</th><th className="p-3 w-24 text-center">UOM</th><th className="p-3 w-28 text-right">Price</th><th className="p-3 w-20 text-center">REP?</th><th className="p-3 w-12 pr-4"></th></tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50">
+                                    {editingItems.map((item, idx) => (
+                                        <tr key={item.id || idx} className={item.Replacement === 'YES' ? 'bg-red-50/20' : 'hover:bg-gray-50/50'}>
+                                            <td className="p-2 pl-4">
+                                                <select className="w-full p-2 border border-gray-200 rounded-lg text-xs font-black uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}>
+                                                    <option value={item["Order Items"]}>{item["Order Items"]}</option>
+                                                    {products.filter(p => p.ProductName !== item["Order Items"]).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}
+                                                </select>
+                                            </td>
+                                            <td className="p-2 text-center"><input type="number" className="w-full p-2 border border-gray-200 rounded-lg text-center font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td>
+                                            <td className="p-2 text-center">
+                                                <select className="w-full p-2 border border-gray-200 rounded-lg text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
+                                                    {(() => {
+                                                        const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);
+                                                        const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];
+                                                        return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);
+                                                    })()}
+                                                </select>
+                                            </td>
+                                            <td className="p-2 text-right"><input type="number" step="0.01" className="w-full p-2 border border-gray-200 rounded-lg text-right font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} disabled={item.Replacement === 'YES'} /></td>
+                                            <td className="p-2 text-center"><input type="checkbox" className="w-4 h-4 text-red-500 rounded border-gray-300 focus:ring-red-500 cursor-pointer shadow-sm" checked={item.Replacement === 'YES'} onChange={e => { handleEditItemChange(idx, 'Replacement', e.target.checked ? 'YES' : ''); if (e.target.checked) handleEditItemChange(idx, 'Price', 0); }} /></td>
+                                            <td className="p-2 text-center pr-4"><button onClick={() => handleDeleteItem(idx)} className="p-2 bg-red-50 text-red-500 hover:bg-red-100 rounded-lg transition shadow-sm"><TrashIcon className="w-4 h-4" /></button></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-blue-100 shadow-sm relative">
+                        <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-2 ml-1">Add New Product</label>
+                        <div className="flex gap-2 relative">
+                            <span className="absolute left-3 sm:left-4 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4 sm:w-5 sm:h-5"/></span>
+                            <input type="text" placeholder="Search catalog..." className="w-full pl-9 sm:pl-11 p-3 sm:p-3.5 border border-gray-200 bg-gray-50 rounded-xl text-base md:text-xs font-bold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
+                        </div>
+                        {productSearchTerm && (
+                            <div className="absolute left-4 right-4 mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-48 overflow-y-auto z-20 custom-scrollbar divide-y divide-gray-50">
+                                {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).map(p => (
+                                    <div key={p.ProductCode} onClick={() => handleAddItem(p)} className="p-3 sm:p-4 hover:bg-blue-50 cursor-pointer flex justify-between items-center group/add text-[10px] sm:text-xs uppercase font-black">
+                                        <div>{p.ProductName} <span className="text-[9px] sm:text-[10px] text-gray-400 ml-2 font-mono tracking-tighter">{p.ProductCode}</span></div>
+                                        <span className="bg-blue-600 text-white p-1 rounded flex items-center justify-center opacity-100 md:opacity-0 md:group-hover/add:opacity-100 transition-all font-black shadow-sm"><PlusIcon className="w-3 h-3 sm:w-4 sm:h-4"/></span>
+                                    </div>
+                                ))}
+                                {products.filter(p => p.ProductName.toLowerCase().includes(productSearchTerm.toLowerCase())).length === 0 && (
+                                    <div className="p-4 text-center text-[10px] text-gray-400 font-bold italic">No match found</div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
-                <div className="flex justify-end gap-3 mt-auto shrink-0 pt-6 border-t border-gray-100">
-                    <button onClick={() => setIsEditModalOpen(false)} className="px-8 py-4 bg-gray-100 text-gray-600 font-black rounded-2xl hover:bg-gray-200 transition-all active:scale-95 uppercase text-xs tracking-widest border border-gray-200">Abort</button>
-                    <button onClick={saveEditedOrder} className="px-10 py-4 bg-blue-600 text-white font-black rounded-2xl shadow-xl hover:bg-blue-700 hover:shadow-blue-500/30 transition-all active:scale-95 uppercase text-xs tracking-widest flex items-center gap-2">
-                        <CheckIcon className="w-5 h-5" strokeWidth={3} /> Commit Changes
+                <div className="flex justify-end gap-2 sm:gap-3 mt-4 shrink-0 pt-4 sm:pt-6 border-t border-gray-100 pb-2 sm:pb-0">
+                    <button onClick={() => setIsEditModalOpen(false)} className="flex-1 sm:flex-none px-4 sm:px-8 py-3.5 sm:py-4 bg-gray-100 text-gray-600 font-black rounded-xl sm:rounded-2xl hover:bg-gray-200 transition-all active:scale-95 uppercase text-[10px] sm:text-xs tracking-widest border border-gray-200">Cancel</button>
+                    <button onClick={saveEditedOrder} className="flex-[2] sm:flex-none px-6 sm:px-10 py-3.5 sm:py-4 bg-blue-600 text-white font-black rounded-xl sm:rounded-2xl shadow-lg hover:bg-blue-700 hover:shadow-blue-500/30 transition-all active:scale-95 uppercase text-[10px] sm:text-xs tracking-widest flex justify-center items-center gap-2">
+                        <CheckIcon className="w-4 h-4 sm:w-5 sm:h-5" strokeWidth={3} /> Save Order
                     </button>
                 </div>
             </div>
