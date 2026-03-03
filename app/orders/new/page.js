@@ -23,10 +23,13 @@ import {
   ChevronUpIcon,
   ChevronDownIcon,
   MagnifyingGlassIcon,
-  CheckIcon
+  CheckIcon,
+  PlayCircleIcon
 } from '@heroicons/react/24/outline';
 
 
+
+const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 // --- STATUS HELPERS ---
 const getRawStatus = (info) => info?.Status || info?.status || info?.delivery_status || 'PENDING';
@@ -55,12 +58,13 @@ export default function NewOrderPage() {
   const router = useRouter();
   
   // Tab State
-  const [activeTab, setActiveTab] = useState('new'); // 'new' or 'list'
+  const [activeTab, setActiveTab] = useState('new'); // 'new', 'list', or 'recurring'
 
   // Data States
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [orderHistory, setOrderHistory] = useState([]);
+  const [standingOrders, setStandingOrders] = useState([]); // Recurring templates
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRealtimeActive, setIsRealtimeActive] = useState(false);
@@ -102,6 +106,18 @@ export default function NewOrderPage() {
   const [submitting, setSubmitting] = useState(false);
   const [productInputs, setProductInputs] = useState({});
 
+  // RECURRING LOGIC STATES
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringDay, setRecurringDay] = useState('Monday');
+  
+  // AUTO-GENERATOR STATE
+  const [targetGenDate, setTargetGenDate] = useState(() => {
+    const tmr = new Date();
+    tmr.setDate(tmr.getDate() + 1);
+    return getLocalDateString(tmr);
+  });
+  const [isGenerating, setIsGenerating] = useState(false);
+
   // --- ORDER LIST / EDIT STATES ---
   const [historySearchTerm, setHistorySearchTerm] = useState('');
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -116,7 +132,7 @@ export default function NewOrderPage() {
   const [bulkEditData, setBulkEditData] = useState({ deliveryDate: '', deliveryMode: '', status: '' });
   
   const [sortConfig, setSortConfig] = useState({ key: 'Delivery Date', direction: 'desc' });
-  const [columnFilters, setColumnFilters] = useState({ DONumber: '', CustomerName: '', DeliveryDate: '', Status: '' });
+  const [columnFilters, setColumnFilters] = useState({ DONumber: '', CustomerName: '', DeliveryDate: '', Status: '', Logistics: '' });
   const [isFilterRowVisible, setIsFilterRowVisible] = useState(false);
 
   const fetchOrderHistory = async () => {
@@ -127,11 +143,6 @@ export default function NewOrderPage() {
           .order('Delivery Date', { ascending: false }) 
           .limit(3000); 
       
-      if (error) {
-          console.error("Error fetching orders:", error);
-          return;
-      }
-
       if (data) {
           const grouped = {};
           data.forEach(row => {
@@ -141,10 +152,8 @@ export default function NewOrderPage() {
               } else {
                   const currentRaw = getRawStatus(grouped[dn].info);
                   const newRaw = getRawStatus(row);
-                  
                   const currentMapped = formatDisplayStatus(currentRaw);
                   const newMapped = formatDisplayStatus(newRaw);
-                  
                   const statusPriority = { 'FAILED': 0, 'PENDING': 1, 'ASSIGNED': 2, 'IN TRANSIT': 3, 'DELIVERED': 4 };
                   
                   if (statusPriority[newMapped] > statusPriority[currentMapped]) {
@@ -157,16 +166,21 @@ export default function NewOrderPage() {
           const sortedHistory = Object.values(grouped).sort((a, b) => {
               const dateA = new Date(a.info["Delivery Date"]);
               const dateB = new Date(b.info["Delivery Date"]);
-              if (dateA.getTime() !== dateB.getTime()) {
-                  return dateB - dateA;
-              }
+              if (dateA.getTime() !== dateB.getTime()) return dateB - dateA;
               return new Date(b.info.Timestamp) - new Date(a.info.Timestamp);
           });
           setOrderHistory(sortedHistory);
       }
     } catch(err) {
-      console.error("Error formatting order history:", err);
+      console.error(err);
     }
+  };
+
+  const fetchStandingOrders = async () => {
+      try {
+          const { data } = await supabase.from('StandingOrders').select('*').order('CreatedAt', { ascending: false });
+          if (data) setStandingOrders(data);
+      } catch (err) {}
   };
 
   useEffect(() => {
@@ -182,23 +196,14 @@ export default function NewOrderPage() {
         const username = email.split('@')[0].toUpperCase();
         setCurrentUser(username);
 
-        const { data: custData } = await supabase
-          .from('Customers')
-          .select('*')
-          .order('CompanyName');
-
-        const { data: prodData } = await supabase
-          .from('ProductMaster')
-          .select('ProductCode, ProductName, BaseUOM, SalesUOM, Category, StockBalance, ReportingUOM, AllowedUOMs')
-          .order('ProductName');
+        const { data: custData } = await supabase.from('Customers').select('*').order('CompanyName');
+        const { data: prodData } = await supabase.from('ProductMaster').select('ProductCode, ProductName, BaseUOM, SalesUOM, Category, StockBalance, ReportingUOM, AllowedUOMs').order('ProductName');
 
         setCustomers(custData || []);
         setProducts(prodData || []);
         
-        await fetchOrderHistory();
-      } catch(err) {
-        console.error("Error loading initialization data:", err);
-      }
+        await Promise.all([fetchOrderHistory(), fetchStandingOrders()]);
+      } catch(err) {}
       setLoading(false);
     }
     
@@ -210,8 +215,7 @@ export default function NewOrderPage() {
           fetchOrderHistory();
       })
       .subscribe((status) => {
-          if (status === 'SUBSCRIBED') setIsRealtimeActive(true);
-          else setIsRealtimeActive(false);
+          setIsRealtimeActive(status === 'SUBSCRIBED');
       });
 
     return () => {
@@ -219,27 +223,28 @@ export default function NewOrderPage() {
     };
   }, []);
 
+  // Update default recurring day based on delivery date
+  useEffect(() => {
+      if (deliveryDate) {
+          const d = new Date(deliveryDate);
+          if (!isNaN(d)) setRecurringDay(DAYS_OF_WEEK[d.getDay()]);
+      }
+  }, [deliveryDate]);
+
   // ==========================================
   // SHIPDAY PULL SYNC LOGIC
   // ==========================================
   const handlePullShipdayStatus = async () => {
       if (!confirm("Pulling latest status from Shipday (including completions). Proceed?")) return;
-      
       setIsSyncing(true);
       try {
           const res = await fetch('/api/shipday/sync-status', { method: 'POST' });
           const result = await res.json();
-          
           if (res.ok) {
               alert(`Success! Updated ${result.updatedCount || 0} orders.`);
               await fetchOrderHistory(); 
-          } else {
-              alert("Sync Error: " + (result.error || 'Unknown error'));
           }
-      } catch (err) {
-          console.error(err);
-          alert("Error communicating with the server.");
-      }
+      } catch (err) {}
       setIsSyncing(false);
   };
 
@@ -316,6 +321,7 @@ export default function NewOrderPage() {
     const dateStr = `${year.slice(2)}${month}${day}`;
     const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+    // Automatic Constraint Bypass Logic
     const occurrenceMap = {};
     const orderRows = cart.map(item => {
         let baseRep = item.isReplacement ? "YES" : (item.price === 0 ? "FOC" : "");
@@ -351,18 +357,49 @@ export default function NewOrderPage() {
     });
 
     try {
+        // 1. ALWAYS Save standard order for the selected date
         const { error } = await supabase.from('Orders').insert(orderRows);
 
         if (error) {
-          alert("Database Error: " + error.message);
-        } else {
-          alert(`Order Created: ${doNumber}`);
-          setCart([]);
-          setSelectedCustomerValue('');
-          setCustDetails({ ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
-          fetchOrderHistory();
-          setActiveTab('list'); 
+            alert("Database Error: " + error.message);
+            setSubmitting(false);
+            return;
         }
+
+        // 2. Save as Recurring Template if checked
+        if (isRecurring) {
+            const cleanItems = cart.map(({ cartId, ...rest }) => ({
+                ProductCode: rest.ProductCode,
+                OrderItems: rest.ProductName,
+                Quantity: rest.qty,
+                UOM: rest.uom,
+                Price: rest.price,
+                Replacement: rest.isReplacement ? "YES" : (rest.price === 0 ? "FOC" : "")
+            }));
+
+            const patternPayload = {
+                CustomerName: selectedCustomerValue.toUpperCase(),
+                DeliveryAddress: custDetails.DeliveryAddress.toUpperCase(),
+                ContactPerson: custDetails.ContactPerson.toUpperCase(),
+                ContactNumber: custDetails.ContactNumber,
+                DeliveryMode: deliveryMode,
+                DeliveryDay: recurringDay,
+                Status: 'Active',
+                Items: cleanItems
+            };
+            
+            await supabase.from('StandingOrders').insert([patternPayload]);
+            fetchStandingOrders(); // refresh patterns
+        }
+
+        alert(`Order Created: ${doNumber}`);
+        setCart([]);
+        setSelectedCustomerValue('');
+        setCustDetails({ ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
+        setIsRecurring(false);
+        fetchOrderHistory();
+        setActiveTab('list'); 
+        
     } catch(err) {
         console.error(err);
     }
@@ -370,7 +407,97 @@ export default function NewOrderPage() {
   };
 
   // ==========================================
-  // ORDER LIST ACTIONS (INDIVIDUAL & BULK)
+  // RECURRING PATTERN GENERATOR ENGINE
+  // ==========================================
+  const getTargetDayName = () => {
+      if (!targetGenDate) return '';
+      const [y, m, d] = targetGenDate.split('-');
+      const localDate = new Date(Number(y), Number(m)-1, Number(d));
+      return DAYS_OF_WEEK[localDate.getDay()];
+  };
+
+  const handleGenerateAutos = async () => {
+      const dayName = getTargetDayName();
+      const matchingTemplates = standingOrders.filter(t => t.DeliveryDay === dayName && t.Status === 'Active');
+      
+      if (matchingTemplates.length === 0) {
+          return alert(`No active recurring orders scheduled for ${dayName}s.`);
+      }
+
+      if (!confirm(`Ready to automatically generate ${matchingTemplates.length} delivery orders for ${targetGenDate} (${dayName})?`)) return;
+
+      setIsGenerating(true);
+      let successCount = 0;
+      let skippedCount = 0;
+
+      for (const template of matchingTemplates) {
+          // Check if already auto-generated today for this customer
+          const { data: existing } = await supabase.from('Orders')
+              .select('DONumber')
+              .eq('Delivery Date', targetGenDate)
+              .eq('Customer Name', template.CustomerName)
+              .ilike('SpecialNotes', '%AUTO-GENERATED%');
+
+          if (existing && existing.length > 0) {
+              skippedCount++;
+              continue;
+          }
+
+          const dateStr = targetGenDate.replaceAll('-', '').slice(2);
+          const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+          const occurrenceMap = {};
+          const orderRows = (template.Items || []).map(item => {
+              let baseRep = item.Replacement || "";
+              const key = `${item.ProductCode}_${baseRep}`;
+              let repVal = baseRep;
+              if (occurrenceMap[key]) {
+                  repVal = baseRep + " ".repeat(occurrenceMap[key]);
+                  occurrenceMap[key]++;
+              } else {
+                  occurrenceMap[key] = 1;
+              }
+
+              return {
+                  "Timestamp": new Date(),
+                  "Status": "Pending",
+                  "DONumber": doNumber,
+                  "Delivery Date": targetGenDate,
+                  "Delivery Mode": template.DeliveryMode || 'Driver',
+                  "Customer Name": template.CustomerName,
+                  "Delivery Address": template.DeliveryAddress,
+                  "Contact Person": template.ContactPerson,
+                  "Contact Number": template.ContactNumber,
+                  "Product Code": item.ProductCode,
+                  "Order Items": item.OrderItems,
+                  "Quantity": item.Quantity,
+                  "UOM": item.UOM,
+                  "Price": item.Price,
+                  "Replacement": repVal,
+                  "SpecialNotes": "AUTO-GENERATED STANDING ORDER",
+                  "LoggedBy": currentUser
+              };
+          });
+
+          if (orderRows.length > 0) {
+              const { error } = await supabase.from('Orders').insert(orderRows);
+              if (!error) successCount++;
+          }
+      }
+
+      alert(`Automation Complete!\n\n✅ Created: ${successCount} DOs\n⏭️ Skipped (Already Exist): ${skippedCount}`);
+      fetchOrderHistory();
+      setIsGenerating(false);
+  };
+
+  const deletePattern = async (id) => {
+      if (!confirm("Permanently delete this weekly pattern?")) return;
+      const { error } = await supabase.from('StandingOrders').delete().eq('id', id);
+      if (!error) fetchStandingOrders();
+  };
+
+  // ==========================================
+  // ORDER LIST ACTIONS & MODALS
   // ==========================================
   const toggleOrderSelection = (doNumber) => {
     setSelectedOrders(prev => 
@@ -404,8 +531,6 @@ export default function NewOrderPage() {
         if (!error) {
             setSelectedOrders([]);
             fetchOrderHistory();
-        } else {
-            alert("Error deleting orders: " + error.message);
         }
       } catch(e){}
   };
@@ -431,20 +556,16 @@ export default function NewOrderPage() {
           });
           const result = await res.json();
           if (res.ok) alert(`Success! Sent ${doNumber} to Shipday.`);
-          else alert(`Failed to send ${doNumber} to Shipday. Message: ${result.message}`);
-      } catch (err) {
-          alert("Server connection error.");
-      }
+          else alert(`Failed. Message: ${result.message}`);
+      } catch (err) {}
   };
 
   const handleBulkShipday = async () => {
-      if (!confirm(`Are you sure you want to push ${selectedOrders.length} selected orders to Shipday?`)) return;
+      if (!confirm(`Push ${selectedOrders.length} selected orders to Shipday?`)) return;
       let successCount = 0;
-      
       for (const doNumber of selectedOrders) {
           const group = orderHistory.find(g => g.info.DONumber === doNumber);
           if (!group) continue;
-          
           try {
               const res = await fetch('/api/shipday', {
                   method: 'POST',
@@ -452,11 +573,9 @@ export default function NewOrderPage() {
                   body: JSON.stringify({ order: group })
               });
               if (res.ok) successCount++;
-          } catch (e) {
-              console.error(`Error sending ${doNumber}:`, e);
-          }
+          } catch (e) {}
       }
-      alert(`Completed Shipday push. Successful: ${successCount} / ${selectedOrders.length}`);
+      alert(`Completed push. Successful: ${successCount} / ${selectedOrders.length}`);
   };
 
   const handleBulkEditSave = async () => {
@@ -465,18 +584,12 @@ export default function NewOrderPage() {
       if (bulkEditData.deliveryMode) updates["Delivery Mode"] = bulkEditData.deliveryMode;
       if (bulkEditData.status) updates["Status"] = bulkEditData.status;
 
-      if (Object.keys(updates).length === 0) {
-          alert("No fields to update.");
-          return;
-      }
-      
+      if (Object.keys(updates).length === 0) return alert("No fields to update.");
       if (!confirm(`Apply changes to ${selectedOrders.length} orders?`)) return;
 
       try {
         const { error } = await supabase.from('Orders').update(updates).in('DONumber', selectedOrders);
-        if (error) {
-            alert("Bulk Edit Error: " + error.message);
-        } else {
+        if (!error) {
             alert("Bulk update successful!");
             setIsBulkEditOpen(false);
             setSelectedOrders([]);
@@ -486,9 +599,6 @@ export default function NewOrderPage() {
       } catch(e){}
   };
 
-  // ==========================================
-  // EDIT INDIVIDUAL ORDER MODAL
-  // ==========================================
   const openEditModal = (group) => {
       setEditingOrder({ ...group.info });
       setEditingItems([...group.items]);
@@ -551,13 +661,11 @@ export default function NewOrderPage() {
 
         editingItems.forEach(item => {
             const isNew = !item.id || (typeof item.id === 'string' && item.id.startsWith('new-'));
-            
             let baseRep = item.Replacement || "";
             if (item.Price === 0 && baseRep !== "YES") baseRep = "FOC";
             
             const key = `${item["Product Code"]}_${baseRep.trim()}`;
             let repVal = baseRep;
-            
             if (occurrenceMap[key]) {
                 repVal = baseRep.trim() + " ".repeat(occurrenceMap[key]);
                 occurrenceMap[key]++;
@@ -583,8 +691,7 @@ export default function NewOrderPage() {
         const res1 = newItems.length > 0 ? await supabase.from('Orders').insert(newItems) : { error: null };
         const res2 = existingItems.length > 0 ? await supabase.from('Orders').upsert(existingItems) : { error: null };
 
-        if (res1.error || res2.error) alert("Database Error: Could not save data.");
-        else {
+        if (!res1.error && !res2.error) {
             alert("Updated successfully.");
             setIsEditModalOpen(false); 
             fetchOrderHistory(); 
@@ -592,7 +699,6 @@ export default function NewOrderPage() {
       } catch(e) {}
   };
 
-  // --- FILTERING & SORTING LOGIC ---
   const filteredProducts = products.filter(p => {
     if (!searchTerm) return false;
     const searchParts = searchTerm.toLowerCase().split(' ').filter(Boolean);
@@ -601,53 +707,18 @@ export default function NewOrderPage() {
   });
 
   const filteredOrderHistory = orderHistory.filter(group => {
-      // 1. General Search Term
-      if (historySearchTerm) {
-          const terms = historySearchTerm.toLowerCase().split(' ').filter(Boolean);
-          const cleanStatus = formatDisplayStatus(getRawStatus(group.info));
-          const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${cleanStatus}`.toLowerCase();
-          if (!terms.every(t => searchStr.includes(t))) return false;
-      }
-
-      // 2. Column-Specific Filters
-      const mappedStatus = formatDisplayStatus(getRawStatus(group.info));
-      if (columnFilters.DONumber && !group.info.DONumber.toLowerCase().includes(columnFilters.DONumber.toLowerCase())) return false;
-      if (columnFilters.CustomerName && !group.info["Customer Name"].toLowerCase().includes(columnFilters.CustomerName.toLowerCase())) return false;
-      if (columnFilters.DeliveryDate && !group.info["Delivery Date"].includes(columnFilters.DeliveryDate)) return false;
-      if (columnFilters.Status && !mappedStatus.toLowerCase().includes(columnFilters.Status.toLowerCase())) return false;
-
-      return true;
+      if (!historySearchTerm) return true;
+      const terms = historySearchTerm.toLowerCase().split(' ').filter(Boolean);
+      const cleanStatus = formatDisplayStatus(getRawStatus(group.info));
+      const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${cleanStatus}`.toLowerCase();
+      return terms.every(t => searchStr.includes(t));
   });
 
-  // Apply Sorting
-  let displayedHistory = [...filteredOrderHistory];
-  displayedHistory.sort((a, b) => {
-      let valA, valB;
-      switch (sortConfig.key) {
-          case 'DONumber': valA = a.info.DONumber; valB = b.info.DONumber; break;
-          case 'Customer Name': valA = a.info["Customer Name"]; valB = b.info["Customer Name"]; break;
-          case 'Delivery Date': valA = new Date(a.info["Delivery Date"]); valB = new Date(b.info["Delivery Date"]); break;
-          case 'Status': valA = formatDisplayStatus(getRawStatus(a.info)); valB = formatDisplayStatus(getRawStatus(b.info)); break;
-          case 'Items': valA = a.items.length; valB = b.items.length; break;
-          default: return 0;
-      }
-      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-  });
-
-  // Apply limit if no filters are active to maintain fast rendering
-  const hasFilters = historySearchTerm || columnFilters.DONumber || columnFilters.CustomerName || columnFilters.DeliveryDate || columnFilters.Status;
-  if (!hasFilters) {
-      displayedHistory = displayedHistory.slice(0, 100);
-  }
+  const displayedHistory = historySearchTerm ? filteredOrderHistory : filteredOrderHistory.slice(0, 100);
 
   const toggleSelectAll = () => {
-    if (selectedOrders.length === displayedHistory.length) {
-        setSelectedOrders([]);
-    } else {
-        setSelectedOrders(displayedHistory.map(group => group.info.DONumber));
-    }
+    if (selectedOrders.length === displayedHistory.length) setSelectedOrders([]);
+    else setSelectedOrders(displayedHistory.map(group => group.info.DONumber));
   };
 
   const getStockColor = (balance) => {
@@ -681,6 +752,9 @@ export default function NewOrderPage() {
           </button>
           <button onClick={() => setActiveTab('list')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
               <ClipboardDocumentListIcon className="w-5 h-5" /> Order History
+          </button>
+          <button onClick={() => setActiveTab('recurring')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'recurring' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
+              <ArrowPathIcon className="w-5 h-5" /> Weekly Autos
           </button>
       </div>
 
@@ -736,6 +810,8 @@ export default function NewOrderPage() {
                 {filteredProducts.slice(0, 10).map(p => {
                     const inputs = productInputs[p.ProductCode] || {};
                     const uomOptions = p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u) : [p.BaseUOM];
+                    const uniqueUoms = Array.from(new Set(uomOptions));
+                    
                     return (
                       <div key={p.ProductCode} className="bg-white p-4 rounded-3xl border border-gray-100 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
                          <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-2xl text-[8px] font-black uppercase ${getStockColor(p.StockBalance)}`}>
@@ -744,7 +820,7 @@ export default function NewOrderPage() {
                          <h3 className="font-black text-gray-800 text-sm uppercase leading-tight mb-3 pr-10">{p.ProductName}</h3>
                          <div className="flex gap-2 mb-3">
                             <select className="bg-gray-50 border border-gray-200 rounded-xl text-[10px] p-2 flex-1 font-black uppercase outline-none" value={inputs.uom || p.SalesUOM || p.BaseUOM} onChange={(e) => handleProductInputChange(p.ProductCode, 'uom', e.target.value)}>
-                              {uomOptions.map(u => <option key={u} value={u}>{u}</option>)}
+                              {uniqueUoms.map(u => <option key={u} value={u}>{u}</option>)}
                             </select>
                             <input type="number" placeholder="Qty" className="w-20 border border-gray-200 rounded-xl text-xs p-2 font-black text-center outline-none" value={inputs.qty || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'qty', e.target.value)} />
                          </div>
@@ -783,10 +859,27 @@ export default function NewOrderPage() {
                     </div>
                   ))}
               </div>
+              
+              {/* RECURRING TOGGLE AREA */}
               <div className="mt-auto pt-6 border-t border-gray-100 space-y-4">
+                  <div className="bg-indigo-50/50 border border-indigo-100 p-3 rounded-2xl">
+                      <label className="flex items-center gap-2 cursor-pointer mb-2">
+                          <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
+                          <span className="text-xs font-black text-indigo-900 uppercase tracking-widest">Save as Weekly Pattern</span>
+                      </label>
+                      {isRecurring && (
+                          <div className="mt-2 animate-in fade-in slide-in-from-top-1">
+                              <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest ml-1">Generate On Every:</span>
+                              <select className="w-full mt-1 border border-indigo-200 p-2 rounded-xl text-xs font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
+                                  {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
+                              </select>
+                          </div>
+                      )}
+                  </div>
+                  
                   <div className="flex justify-between text-xs font-black text-gray-800 px-2 uppercase tracking-widest"><span>Total Entries:</span><span>{cart.length}</span></div>
                   <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/30 active:scale-95'}`}>
-                      {submitting ? 'PROCESSING ENGINE...' : '🚀 FINALIZE ORDER'}
+                      {submitting ? 'PROCESSING ENGINE...' : (isRecurring ? '🚀 FINALIZE & SAVE PATTERN' : '🚀 FINALIZE ORDER')}
                   </button>
               </div>
            </div>
@@ -810,15 +903,12 @@ export default function NewOrderPage() {
                 </div>
              </div>
              <div className="flex items-center gap-3 w-full sm:w-auto">
-                 <button onClick={() => setIsFilterRowVisible(!isFilterRowVisible)} className={`p-3 rounded-xl border transition-all ${isFilterRowVisible ? 'bg-blue-600 text-white border-blue-600 shadow-lg' : 'bg-white text-gray-400 hover:bg-gray-50 border-gray-200'}`} title="Advanced Filters">
-                    <AdjustmentsHorizontalIcon className="w-5 h-5" />
-                 </button>
                  <button onClick={handlePullShipdayStatus} disabled={isSyncing} className="bg-blue-50 hover:bg-blue-100 text-blue-700 font-black py-3 px-5 rounded-2xl text-xs transition-all flex items-center gap-2 border border-blue-200 disabled:opacity-50 shadow-sm active:scale-95">
                      <ArrowPathIcon className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
                      {isSyncing ? 'SYNCING...' : 'SYNC SHIPDAY'}
                  </button>
                  <div className="relative w-full sm:w-80">
-                     <input type="text" placeholder="Search orders globally..." className="w-full pl-10 p-3.5 border border-gray-200 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-500 bg-gray-50/50 outline-none transition-all" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
+                     <input type="text" placeholder="Search orders..." className="w-full pl-10 p-3.5 border border-gray-200 rounded-2xl text-xs font-bold focus:ring-2 focus:ring-blue-500 bg-gray-50/50 outline-none transition-all" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
                      <span className="absolute left-3.5 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
                  </div>
              </div>
@@ -836,41 +926,20 @@ export default function NewOrderPage() {
                                 onChange={toggleSelectAll}
                             />
                         </th>
-                        <th className="p-5 w-32 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('Delivery Date')}>
-                            Delivery Date {sortConfig.key === 'Delivery Date' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
-                        </th>
-                        <th className="p-5 w-32 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('DONumber')}>
-                            DO Number {sortConfig.key === 'DONumber' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
-                        </th>
-                        <th className="p-5 w-[350px] cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('Customer Name')}>
-                            Customer Entity {sortConfig.key === 'Customer Name' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
-                        </th>
-                        <th className="p-5 text-center w-16 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('Items')}>
-                            Items {sortConfig.key === 'Items' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
-                        </th>
-                        <th className="p-5 text-center w-28 cursor-pointer hover:text-blue-600 transition-colors" onClick={() => requestSort('Status')}>
-                            Live Status {sortConfig.key === 'Status' && (sortConfig.direction === 'asc' ? <ChevronUpIcon className="inline w-3 h-3 ml-1" /> : <ChevronDownIcon className="inline w-3 h-3 ml-1" />)}
-                        </th>
-                        <th className="p-5 text-right pr-6 w-40">Actions</th>
+                        <th className="p-5 w-32">Delivery Date</th>
+                        <th className="p-5 w-32">DO Number</th>
+                        <th className="p-5 w-[350px]">Customer Entity</th>
+                        <th className="p-5 text-center w-16">Items</th>
+                        <th className="p-5 text-center w-28">Live Status</th>
+                        <th className="p-5 text-right pr-6 w-32">Actions</th>
                      </tr>
-                     {isFilterRowVisible && (
-                        <tr className="bg-gray-50/80 backdrop-blur-md border-t border-gray-100">
-                            <th></th>
-                            <th className="px-2 py-2"><input type="text" placeholder="Filter date..." className="w-full p-2 rounded-lg text-[10px] font-bold border border-gray-200 outline-none focus:ring-1 focus:ring-blue-500 bg-white" value={columnFilters.DeliveryDate} onChange={e => setColumnFilters({...columnFilters, DeliveryDate: e.target.value})} /></th>
-                            <th className="px-2 py-2"><input type="text" placeholder="Filter DO..." className="w-full p-2 rounded-lg text-[10px] font-bold border border-gray-200 outline-none focus:ring-1 focus:ring-blue-500 bg-white" value={columnFilters.DONumber} onChange={e => setColumnFilters({...columnFilters, DONumber: e.target.value})} /></th>
-                            <th className="px-2 py-2"><input type="text" placeholder="Filter Customer..." className="w-full p-2 rounded-lg text-[10px] font-bold border border-gray-200 outline-none focus:ring-1 focus:ring-blue-500 bg-white" value={columnFilters.CustomerName} onChange={e => setColumnFilters({...columnFilters, CustomerName: e.target.value})} /></th>
-                            <th></th>
-                            <th className="px-2 py-2"><input type="text" placeholder="Filter Status..." className="w-full p-2 rounded-lg text-[10px] font-bold border border-gray-200 outline-none focus:ring-1 focus:ring-blue-500 bg-white" value={columnFilters.Status} onChange={e => setColumnFilters({...columnFilters, Status: e.target.value})} /></th>
-                            <th></th>
-                        </tr>
-                     )}
                  </thead>
                  <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
                      {displayedHistory.map((group) => {
                          const rawStatus = getRawStatus(group.info);
                          const isSelected = selectedOrders.includes(group.info.DONumber);
                          return (
-                         <tr key={group.info.DONumber} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'} transition-colors cursor-pointer`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
+                         <tr key={group.info.DONumber} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
                              <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                                 <input 
                                     type="checkbox" 
@@ -887,11 +956,11 @@ export default function NewOrderPage() {
                              <td className="p-4 text-center"><span className="bg-white border border-gray-100 shadow-sm px-3 py-1 rounded-full font-black text-sm">{group.items.length}</span></td>
                              <td className="p-4 text-center"><span className={`px-2.5 py-1.5 rounded-full text-[10px] font-black uppercase border shadow-sm whitespace-nowrap ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></td>
                              <td className="p-4 text-right pr-6" onClick={(e) => e.stopPropagation()}>
-                                 <div className="flex items-center justify-end gap-1 w-full">
-                                     <button onClick={() => openEditModal(group)} className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition" title="Modify Order"><PencilSquareIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-1.5 text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition" title="Print DO"><PrinterIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-1.5 text-green-600 bg-green-50 hover:bg-green-100 rounded-lg transition" title="Push to Shipday"><TruckIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition" title="Purge Record"><TrashIcon className="w-5 h-5" /></button>
+                                 <div className="flex items-center justify-end gap-0.5 opacity-0 group-hover/row:opacity-100 transition-opacity w-full">
+                                     <button onClick={() => openEditModal(group)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Modify Order"><PencilSquareIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-1.5 text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Print DO"><PrinterIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-1.5 text-green-600 hover:bg-green-100 rounded-lg transition" title="Push to Shipday"><TruckIcon className="w-5 h-5" /></button>
+                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-1.5 text-red-600 hover:bg-red-100 rounded-lg transition" title="Purge Record"><TrashIcon className="w-5 h-5" /></button>
                                  </div>
                              </td>
                          </tr>
@@ -933,6 +1002,59 @@ export default function NewOrderPage() {
                  </button>
              </div>
          )}
+      </div>
+      )}
+
+      {/* TAB 3: WEEKLY PATTERNS (NEW) */}
+      {activeTab === 'recurring' && (
+      <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-indigo-100 animate-in fade-in h-[calc(100vh-180px)] flex flex-col relative">
+         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 flex-none">
+             <div>
+                <h2 className="text-xl font-black text-indigo-900 tracking-tight flex items-center gap-2 uppercase">
+                    <ArrowPathIcon className="w-7 h-7 text-indigo-600" /> Weekly Auto-Orders
+                </h2>
+                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-1 ml-1">Templates saved from checkout</p>
+             </div>
+             
+             {/* GENERATOR WIDGET */}
+             <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-100 p-2 rounded-2xl shadow-sm w-full sm:w-auto">
+                 <div className="flex flex-col px-3">
+                     <span className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Target Gen Date ({getTargetDayName()})</span>
+                     <input type="date" value={targetGenDate} onChange={e=>setTargetGenDate(e.target.value)} className="bg-transparent font-black text-indigo-900 text-sm outline-none cursor-pointer" />
+                 </div>
+                 <button onClick={handleGenerateAutos} disabled={isGenerating} className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 px-6 rounded-xl text-xs transition-all flex items-center gap-2 shadow-md active:scale-95 disabled:opacity-50 uppercase tracking-widest">
+                     <PlayCircleIcon className="w-5 h-5" />
+                     {isGenerating ? 'RUNNING...' : 'GENERATE TODAY'}
+                 </button>
+             </div>
+         </div>
+
+         <div className="flex-1 overflow-auto custom-scrollbar border border-indigo-50 rounded-3xl bg-gray-50/30 p-2">
+             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                 {standingOrders.map(t => (
+                     <div key={t.id} className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm hover:border-indigo-300 transition-all group">
+                         <div className="flex justify-between items-start mb-3">
+                             <span className="px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border bg-indigo-50 text-indigo-600 border-indigo-200">
+                                 Every {t.DeliveryDay}
+                             </span>
+                             <button onClick={() => deletePattern(t.id)} className="text-gray-300 hover:text-red-500 transition"><TrashIcon className="w-4 h-4"/></button>
+                         </div>
+                         <h4 className="font-black text-gray-800 uppercase leading-tight mb-1">{t.CustomerName}</h4>
+                         <p className="text-[10px] text-gray-500 font-medium mb-3 truncate">{t.DeliveryAddress}</p>
+                         
+                         <div className="border-t border-gray-50 pt-3 text-xs font-bold text-gray-600">
+                             {t.Items?.length || 0} Items <span className="text-gray-300 mx-1">|</span> Mode: {t.DeliveryMode}
+                         </div>
+                     </div>
+                 ))}
+                 {standingOrders.length === 0 && (
+                     <div className="col-span-full py-20 flex flex-col items-center text-center text-indigo-300 italic font-bold">
+                         <ArrowPathIcon className="w-16 h-16 mb-4 opacity-20" />
+                         No weekly patterns found. <br/><span className="text-xs mt-2">Create one by checking the "Save as Weekly Pattern" box when placing a New Order.</span>
+                     </div>
+                 )}
+             </div>
+         </div>
       </div>
       )}
 
@@ -1029,9 +1151,13 @@ export default function NewOrderPage() {
                                     </td>
                                     <td className="p-3 text-center"><input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td>
                                     <td className="p-3 text-center">
-                                      <select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
-                                        {Array.from(new Set([item.UOM, 'KG', 'CTN', 'PCS', 'BOX', 'PKT', 'BKL'])).map(u => <option key={u} value={u}>{u}</option>)}
-                                      </select>
+                                        <select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
+                                            {(() => {
+                                                const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);
+                                                const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];
+                                                return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);
+                                            })()}
+                                        </select>
                                     </td>
                                     <td className="p-3 text-right"><input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right font-black outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} disabled={item.Replacement === 'YES'} /></td>
                                     <td className="p-3 text-center"><input type="checkbox" className="w-5 h-5 text-red-500 rounded border-gray-300 focus:ring-red-500 cursor-pointer shadow-sm" checked={item.Replacement === 'YES'} onChange={e => { handleEditItemChange(idx, 'Replacement', e.target.checked ? 'YES' : ''); if (e.target.checked) handleEditItemChange(idx, 'Price', 0); }} /></td>

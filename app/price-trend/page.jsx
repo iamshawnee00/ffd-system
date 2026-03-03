@@ -188,24 +188,34 @@ export default function PriceTrendPage() {
     return searchParts.every(part => combinedText.includes(part));
   });
 
-  if (loading) return <div className="p-10 text-center font-bold text-gray-400">Loading Price Data...</div>;
+  if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse uppercase">Loading Price Data...</div>;
 
   return (
-    <div className="p-3 md:p-6 max-w-full overflow-x-hidden pt-16 md:pt-6">
-        <h1 className="text-xl md:text-2xl font-black text-gray-800 mb-6 tracking-tight">Price Trend Analysis</h1>
+    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32 animate-in fade-in duration-300">
+        
+        {/* HEADER: Standardized to match Order Management & Delivery */}
+        <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+           <div>
+               <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Price Trend Analysis</h1>
+               <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Analyze product cost and selling price volatility</p>
+           </div>
+        </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
             {/* LEFT COLUMN: Product List */}
-            <div className="bg-white p-4 rounded-3xl shadow-xl border border-gray-100 lg:col-span-1 h-[400px] lg:h-[85vh] flex flex-col">
+            <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 lg:col-span-1 h-[400px] lg:h-[calc(100vh-140px)] flex flex-col">
                 <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-2">Select Product</h2>
-                <input 
-                    type="text"
-                    placeholder="🔍 Search all products..."
-                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-green-100 transition-all mb-4"
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                />
+                <div className="relative mb-4">
+                    <span className="absolute left-3.5 top-3.5 text-gray-400">🔍</span>
+                    <input 
+                        type="text"
+                        placeholder="Search all products..."
+                        className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-green-500 transition-all"
+                        value={searchTerm}
+                        onChange={e => setSearchTerm(e.target.value)}
+                    />
+                </div>
                 
                 <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
                     {filteredProducts.map(p => (
@@ -215,7 +225,7 @@ export default function PriceTrendPage() {
                             className={`p-3 rounded-xl cursor-pointer border transition-all duration-200 group ${
                                 selectedProduct?.ProductCode === p.ProductCode 
                                 ? 'bg-green-50 border-green-500 ring-1 ring-green-500 shadow-sm' 
-                                : 'bg-white border-gray-100 hover:border-green-200 hover:shadow-md'
+                                : 'bg-white border-gray-100 hover:border-green-200 hover:bg-gray-50'
                             }`}
                         >
                             <div className="flex justify-between items-start">
@@ -223,16 +233,16 @@ export default function PriceTrendPage() {
                                     <div className={`font-bold text-xs uppercase leading-tight mb-1 ${selectedProduct?.ProductCode === p.ProductCode ? 'text-green-800' : 'text-gray-700'}`}>
                                         {p.ProductName}
                                     </div>
-                                    <div className="text-[9px] text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded w-fit">
+                                    <div className="text-[9px] text-gray-400 font-mono bg-white border border-gray-200 px-1.5 py-0.5 rounded w-fit">
                                         {p.ProductCode}
                                     </div>
                                 </div>
                                 {p.latestPurchase > 0 ? (
-                                    <div className="text-[8px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-lg whitespace-nowrap ml-2">
+                                    <div className="text-[8px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-lg whitespace-nowrap ml-2 border border-gray-100">
                                         {new Date(p.latestPurchase).toLocaleDateString('en-GB', {day:'2-digit', month:'short'})}
                                     </div>
                                 ) : (
-                                    <div className="text-[8px] font-bold text-gray-300 bg-gray-50 px-2 py-1 rounded-lg whitespace-nowrap ml-2">
+                                    <div className="text-[8px] font-bold text-gray-300 bg-gray-50 px-2 py-1 rounded-lg whitespace-nowrap ml-2 border border-gray-100">
                                         -
                                     </div>
                                 )}
@@ -240,7 +250,7 @@ export default function PriceTrendPage() {
                         </div>
                     ))}
                     {filteredProducts.length === 0 && (
-                        <div className="text-center py-10 text-gray-400 text-sm italic">
+                        <div className="text-center py-10 text-gray-400 text-sm italic font-bold">
                             No matching products found.
                         </div>
                     )}
@@ -248,22 +258,22 @@ export default function PriceTrendPage() {
             </div>
 
             {/* RIGHT COLUMN: Stats & Charts */}
-            <div className="lg:col-span-2 space-y-6 overflow-y-auto lg:h-[85vh] pr-1 custom-scrollbar">
+            <div className="lg:col-span-2 space-y-6 overflow-y-auto lg:h-[calc(100vh-140px)] pr-1 custom-scrollbar">
                 
                 {selectedProduct ? (
                     <>
                         {/* Header Card */}
-                        <div className="bg-white p-4 md:p-6 rounded-3xl shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div className="bg-white p-5 md:p-6 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                             <div>
-                                <h2 className="text-xl md:text-2xl font-black text-gray-800 leading-none uppercase">{selectedProduct.ProductName}</h2>
-                                <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-wide">Code: {selectedProduct.ProductCode}</p>
+                                <h2 className="text-xl md:text-2xl font-black text-gray-800 leading-none uppercase tracking-tight">{selectedProduct.ProductName}</h2>
+                                <p className="text-[10px] font-bold text-gray-400 mt-1 uppercase tracking-wide font-mono">Code: {selectedProduct.ProductCode}</p>
                             </div>
                             
                             <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 p-1 rounded-xl shadow-sm w-full md:w-auto">
                                 <select 
                                     value={dateRange} 
                                     onChange={(e) => setDateRange(e.target.value)}
-                                    className="bg-transparent text-xs font-bold text-gray-700 outline-none px-3 py-2 cursor-pointer w-full"
+                                    className="bg-transparent text-xs font-bold text-gray-700 outline-none px-3 py-2 cursor-pointer w-full uppercase tracking-wider"
                                 >
                                     <option value="1day">Last 24 Hours</option>
                                     <option value="3days">Last 3 Days</option>
@@ -276,29 +286,28 @@ export default function PriceTrendPage() {
                             </div>
                         </div>
 
-                        {/* Stats Cards (Cost Based) - Updated to 4 columns */}
+                        {/* Stats Cards (Cost Based) */}
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-                            <div className="bg-green-50 p-3 md:p-5 rounded-3xl border border-green-100 text-center shadow-sm">
-                                <p className="text-[8px] md:text-[10px] font-black text-green-400 uppercase tracking-widest mb-1">Max Cost</p>
+                            <div className="bg-green-50 p-4 md:p-5 rounded-[2rem] border border-green-100 text-center shadow-sm">
+                                <p className="text-[8px] md:text-[10px] font-black text-green-500 uppercase tracking-widest mb-1">Max Cost</p>
                                 <p className="text-lg md:text-xl font-black text-green-700">RM {Number(stats.maxSell).toFixed(2)}</p>
                             </div>
-                            <div className="bg-blue-50 p-3 md:p-5 rounded-3xl border border-blue-100 text-center shadow-sm">
-                                <p className="text-[8px] md:text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Avg Cost</p>
+                            <div className="bg-blue-50 p-4 md:p-5 rounded-[2rem] border border-blue-100 text-center shadow-sm">
+                                <p className="text-[8px] md:text-[10px] font-black text-blue-500 uppercase tracking-widest mb-1">Avg Cost</p>
                                 <p className="text-lg md:text-xl font-black text-blue-700">RM {Number(stats.avgSell).toFixed(2)}</p>
                             </div>
-                            <div className="bg-orange-50 p-3 md:p-5 rounded-3xl border border-orange-100 text-center shadow-sm">
-                                <p className="text-[8px] md:text-[10px] font-black text-orange-400 uppercase tracking-widest mb-1">Latest Cost</p>
+                            <div className="bg-orange-50 p-4 md:p-5 rounded-[2rem] border border-orange-100 text-center shadow-sm">
+                                <p className="text-[8px] md:text-[10px] font-black text-orange-500 uppercase tracking-widest mb-1">Latest Cost</p>
                                 <p className="text-lg md:text-xl font-black text-orange-700">RM {Number(stats.latestCost).toFixed(2)}</p>
                             </div>
-                            {/* NEW: Recommended Price Card */}
-                            <div className="bg-purple-50 p-3 md:p-5 rounded-3xl border border-purple-100 text-center shadow-sm">
-                                <p className="text-[8px] md:text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1">Sugg. Price (+15%)</p>
+                            <div className="bg-purple-50 p-4 md:p-5 rounded-[2rem] border border-purple-100 text-center shadow-sm">
+                                <p className="text-[8px] md:text-[10px] font-black text-purple-500 uppercase tracking-widest mb-1">Sugg. Price (+15%)</p>
                                 <p className="text-lg md:text-xl font-black text-purple-700">RM {recommendedPrice}</p>
                             </div>
                         </div>
 
                         {/* Chart Section */}
-                        <div className="bg-white p-4 md:p-6 rounded-3xl shadow-lg border border-gray-100">
+                        <div className="bg-white p-5 md:p-6 rounded-[2rem] shadow-sm border border-gray-100">
                             <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-wider mb-6">Price Volatility Chart</h3>
                             
                             <div className="h-[300px] w-full"> 
@@ -349,8 +358,8 @@ export default function PriceTrendPage() {
                                         </LineChart>
                                     </ResponsiveContainer>
                                 ) : (
-                                    <div className="h-full flex flex-col items-center justify-center text-gray-300">
-                                        <span className="text-4xl mb-3 opacity-50">📉</span>
+                                    <div className="h-full flex flex-col items-center justify-center text-gray-300 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-100">
+                                        <span className="text-4xl mb-3 opacity-50 grayscale">📉</span>
                                         <p className="font-bold text-sm">No pricing data for this period</p>
                                     </div>
                                 )}
@@ -360,29 +369,29 @@ export default function PriceTrendPage() {
                         {/* History Tables */}
                         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 pb-4">
                             {/* Purchases */}
-                            <div className="bg-white rounded-3xl shadow-md border border-gray-100 overflow-hidden flex flex-col h-[350px]">
-                                <div className="p-4 border-b border-red-50 bg-red-50/50">
-                                    <h3 className="text-[10px] font-black text-red-600 uppercase tracking-wide">Latest Costs (Purchases)</h3>
+                            <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[350px]">
+                                <div className="p-5 border-b border-red-50 bg-red-50/50">
+                                    <h3 className="text-[10px] font-black text-red-600 uppercase tracking-widest">Latest Costs (Purchases)</h3>
                                 </div>
                                 <div className="overflow-y-auto flex-1 custom-scrollbar">
                                     <table className="w-full text-[10px] md:text-xs text-left">
-                                        <thead className="sticky top-0 bg-white shadow-sm z-10 text-gray-400 font-bold">
+                                        <thead className="sticky top-0 bg-white shadow-sm z-10 text-gray-400 font-bold uppercase tracking-wider text-[9px]">
                                             <tr>
-                                                <th className="p-4">Date</th>
+                                                <th className="p-4 pl-5">Date</th>
                                                 <th className="p-4">Supplier</th>
-                                                <th className="p-4 text-right">Cost</th>
+                                                <th className="p-4 text-right pr-5">Cost</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-50">
                                             {purchaseHistory.slice(0, 50).map((row, idx) => (
                                                 <tr key={idx} className="hover:bg-red-50/30 transition-colors">
-                                                    <td className="p-4 text-gray-500 font-mono">{row.Timestamp ? row.Timestamp.substring(0, 10) : '-'}</td>
+                                                    <td className="p-4 pl-5 text-gray-500 font-mono text-[10px]">{row.Timestamp ? row.Timestamp.substring(0, 10) : '-'}</td>
                                                     <td className="p-4 font-bold text-gray-700 truncate max-w-[120px]" title={row.Supplier}>{row.Supplier}</td>
-                                                    <td className="p-4 text-right font-black text-red-600">RM {Number(row.CostPrice).toFixed(2)}</td>
+                                                    <td className="p-4 pr-5 text-right font-black text-red-600">RM {Number(row.CostPrice).toFixed(2)}</td>
                                                 </tr>
                                             ))}
                                             {purchaseHistory.length === 0 && (
-                                                <tr><td colSpan="3" className="p-8 text-center text-gray-300 italic">No purchase history found.</td></tr>
+                                                <tr><td colSpan="3" className="p-10 text-center text-gray-400 italic font-bold">No purchase history found.</td></tr>
                                             )}
                                         </tbody>
                                     </table>
@@ -390,29 +399,29 @@ export default function PriceTrendPage() {
                             </div>
 
                             {/* Sales */}
-                            <div className="bg-white rounded-3xl shadow-md border border-gray-100 overflow-hidden flex flex-col h-[350px]">
-                                <div className="p-4 border-b border-green-50 bg-green-50/50">
-                                    <h3 className="text-[10px] font-black text-green-600 uppercase tracking-wide">Latest Sales ({selectedProduct.SalesUOM || 'Unit'})</h3>
+                            <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[350px]">
+                                <div className="p-5 border-b border-green-50 bg-green-50/50">
+                                    <h3 className="text-[10px] font-black text-green-600 uppercase tracking-widest">Latest Sales ({selectedProduct.SalesUOM || 'Unit'})</h3>
                                 </div>
                                 <div className="overflow-y-auto flex-1 custom-scrollbar">
                                     <table className="w-full text-[10px] md:text-xs text-left">
-                                        <thead className="sticky top-0 bg-white shadow-sm z-10 text-gray-400 font-bold">
+                                        <thead className="sticky top-0 bg-white shadow-sm z-10 text-gray-400 font-bold uppercase tracking-wider text-[9px]">
                                             <tr>
-                                                <th className="p-4">Date</th>
+                                                <th className="p-4 pl-5">Date</th>
                                                 <th className="p-4">Customer</th>
-                                                <th className="p-4 text-right">Price</th>
+                                                <th className="p-4 text-right pr-5">Price</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-gray-50">
                                             {salesHistory.slice(0, 50).map((row, idx) => (
                                                 <tr key={idx} className="hover:bg-green-50/30 transition-colors">
-                                                    <td className="p-4 text-gray-500 font-mono">{row["Delivery Date"]}</td>
+                                                    <td className="p-4 pl-5 text-gray-500 font-mono text-[10px]">{row["Delivery Date"] ? row["Delivery Date"].substring(0, 10) : '-'}</td>
                                                     <td className="p-4 font-bold text-gray-800 truncate max-w-[120px]" title={row["Customer Name"]}>{row["Customer Name"]}</td>
-                                                    <td className="p-4 text-right font-black text-green-600">RM {Number(row.Price).toFixed(2)}</td>
+                                                    <td className="p-4 pr-5 text-right font-black text-green-600">RM {Number(row.Price).toFixed(2)}</td>
                                                 </tr>
                                             ))}
                                             {salesHistory.length === 0 && (
-                                                <tr><td colSpan="3" className="p-8 text-center text-gray-300 italic">No sales history found.</td></tr>
+                                                <tr><td colSpan="3" className="p-10 text-center text-gray-400 italic font-bold">No sales history found.</td></tr>
                                             )}
                                         </tbody>
                                     </table>
@@ -421,12 +430,12 @@ export default function PriceTrendPage() {
                         </div>
                     </>
                 ) : (
-                    <div className="bg-white rounded-3xl shadow-xl border border-gray-100 flex flex-col items-center justify-center h-full text-gray-300 p-10 text-center min-h-[400px]">
-                        <div className="bg-gray-50 p-8 rounded-full mb-6">
+                    <div className="bg-white rounded-[2rem] shadow-sm border border-gray-100 flex flex-col items-center justify-center h-full text-gray-300 p-10 text-center min-h-[400px]">
+                        <div className="bg-gray-50 p-8 rounded-full mb-6 border border-gray-100">
                             <span className="text-6xl grayscale opacity-50">📊</span>
                         </div>
-                        <h3 className="text-xl font-bold text-gray-600 mb-2">No Product Selected</h3>
-                        <p className="text-sm max-w-sm mx-auto">Select a product from the list on the left to view detailed price trends, cost analysis, and history.</p>
+                        <h3 className="text-xl font-black text-gray-800 mb-2 uppercase tracking-tight">No Product Selected</h3>
+                        <p className="text-xs max-w-xs mx-auto font-bold text-gray-400">Select a product from the list on the left to view detailed price trends, cost analysis, and history.</p>
                     </div>
                 )}
 
