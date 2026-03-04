@@ -2,11 +2,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 
 // ------------------------------------------------------------------
-// 注意：为了在当前预览环境中正常编译，以下两行真实的 Next.js 导入已被注释。
-// 在您的真实本地项目中，请务必取消注释这两行，并删除下方的 Mock 代码！
+// --- 真实的本地环境导入 (请在您的本地项目中取消注释以下两行) ---
 import { supabase } from '../../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 // ------------------------------------------------------------------
+
 
 import { 
   PlusCircleIcon, 
@@ -27,13 +27,19 @@ import {
   PlayCircleIcon,
   MinusIcon,
   PlusIcon,
-  ShoppingCartIcon
+  ShoppingCartIcon,
+  StarIcon,
+  UserCircleIcon,
+  CalendarDaysIcon,
+  TagIcon,
+  BoltIcon
 } from '@heroicons/react/24/outline';
 
-
+// ==========================================
+// 状态与样式助手函数 (全局)
+// ==========================================
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-// --- STATUS HELPERS ---
 const getRawStatus = (info) => info?.Status || info?.status || info?.delivery_status || 'PENDING';
 
 const formatDisplayStatus = (rawStatus) => {
@@ -56,26 +62,47 @@ const getStatusColor = (rawStatus) => {
   return 'bg-gray-100 text-gray-700 border-gray-200';
 };
 
+const getStockColor = (balance) => {
+    if (balance === null || balance === undefined) return 'bg-gray-100 text-gray-500'; 
+    const qty = Number(balance);
+    if (qty <= 0) return 'bg-red-100 text-red-600'; 
+    if (qty < 20) return 'bg-orange-100 text-orange-600';
+    if (qty <= 50) return 'bg-yellow-100 text-yellow-600';
+    return 'bg-green-100 text-green-600';
+};
+
+const getLocalDateString = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 export default function NewOrderPage() {
   const router = useRouter();
   
   // Tab State
-  const [activeTab, setActiveTab] = useState('new'); // 'new', 'list', or 'recurring'
+  const [activeTab, setActiveTab] = useState('new'); 
 
   // Data States
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [orderHistory, setOrderHistory] = useState([]);
-  const [standingOrders, setStandingOrders] = useState([]); // Recurring templates
+  const [standingOrders, setStandingOrders] = useState([]); 
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isRealtimeActive, setIsRealtimeActive] = useState(false);
+  const [autopilotMessage, setAutopilotMessage] = useState(''); // Background Engine Message
 
   // User State
   const [currentUser, setCurrentUser] = useState('');
 
-  // --- NEW ORDER STATES ---
-  const [isCustomerBoxOpen, setIsCustomerBoxOpen] = useState(true); // State for collapsible box
+  // --- NEW ORDER STATES (UI/UX Enhanced) ---
+  const [isCustomerBoxOpen, setIsCustomerBoxOpen] = useState(true); 
+  const [activeCategory, setActiveCategory] = useState('All');
+  const [quickAddItems, setQuickAddItems] = useState([]); 
+  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
+
   const [selectedCustomerValue, setSelectedCustomerValue] = useState('');
   const [custDetails, setCustDetails] = useState({ 
     ContactPerson: '', 
@@ -83,18 +110,10 @@ export default function NewOrderPage() {
     DeliveryAddress: '' 
   });
   
-  const getLocalDateString = (date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
   const [deliveryDate, setDeliveryDate] = useState(() => {
     const now = new Date();
     const hours = now.getHours();
-    const minutes = now.getMinutes();
-    if (hours > 12 || (hours === 12 && minutes > 0)) {
+    if (hours > 12) {
       const tomorrow = new Date();
       tomorrow.setDate(now.getDate() + 1);
       return getLocalDateString(tomorrow);
@@ -113,7 +132,6 @@ export default function NewOrderPage() {
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurringDay, setRecurringDay] = useState('Monday');
   
-  // AUTO-GENERATOR STATE
   const [targetGenDate, setTargetGenDate] = useState(() => {
     const tmr = new Date();
     tmr.setDate(tmr.getDate() + 1);
@@ -133,10 +151,11 @@ export default function NewOrderPage() {
   const [selectedOrders, setSelectedOrders] = useState([]);
   const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({ deliveryDate: '', deliveryMode: '', status: '' });
+  const [sortConfig, setSortConfig] = useState({ key: 'Delivery Date', direction: 'desc' });
 
-  // Add state for mobile cart modal
-  const [isMobileCartOpen, setIsMobileCartOpen] = useState(false);
-
+  // ==========================================
+  // INITIAL DATA FETCH & BACKGROUND ENGINE
+  // ==========================================
   const fetchOrderHistory = async () => {
     try {
       const { data, error } = await supabase
@@ -182,7 +201,83 @@ export default function NewOrderPage() {
       try {
           const { data } = await supabase.from('StandingOrders').select('*').order('CreatedAt', { ascending: false });
           if (data) setStandingOrders(data);
-      } catch (err) {}
+          return data || [];
+      } catch (err) {
+          return [];
+      }
+  };
+
+  // THE AUTOPILOT ENGINE: Checks and generates tomorrow's orders silently
+  const runBackgroundAutopilot = async (activeTemplates) => {
+      if (!activeTemplates || activeTemplates.length === 0) return;
+
+      const tmr = new Date();
+      tmr.setDate(tmr.getDate() + 1);
+      const targetDate = getLocalDateString(tmr);
+      const dayName = DAYS_OF_WEEK[tmr.getDay()];
+
+      // Filter templates meant for tomorrow
+      const tomorrowTemplates = activeTemplates.filter(t => t.DeliveryDay === dayName && t.Status === 'Active');
+      if (tomorrowTemplates.length === 0) return;
+
+      let generatedCount = 0;
+
+      for (const template of tomorrowTemplates) {
+          // Check if already auto-generated
+          const { data: existing } = await supabase.from('Orders')
+              .select('DONumber')
+              .eq('Delivery Date', targetDate)
+              .eq('Customer Name', template.CustomerName)
+              .ilike('SpecialNotes', '%AUTO-GENERATED%');
+
+          if (existing && existing.length > 0) continue; // Skip, already generated
+
+          // Generate
+          const dateStr = targetDate.replaceAll('-', '').slice(2);
+          const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+          const occurrenceMap = {};
+          const orderRows = (template.Items || []).map(item => {
+              let baseRep = item.Replacement || "";
+              const key = `${item.ProductCode}_${baseRep}`;
+              let repVal = baseRep;
+              if (occurrenceMap[key]) {
+                  repVal = baseRep + " ".repeat(occurrenceMap[key]);
+                  occurrenceMap[key]++;
+              } else {
+                  occurrenceMap[key] = 1;
+              }
+              return {
+                  "Timestamp": new Date(),
+                  "Status": "Pending",
+                  "DONumber": doNumber,
+                  "Delivery Date": targetDate,
+                  "Delivery Mode": template.DeliveryMode || 'Driver',
+                  "Customer Name": template.CustomerName,
+                  "Delivery Address": template.DeliveryAddress,
+                  "Contact Person": template.ContactPerson,
+                  "Contact Number": template.ContactNumber,
+                  "Product Code": item.ProductCode,
+                  "Order Items": item.OrderItems,
+                  "Quantity": item.Quantity,
+                  "UOM": item.UOM,
+                  "Price": item.Price,
+                  "Replacement": repVal,
+                  "SpecialNotes": "AUTO-GENERATED STANDING ORDER",
+                  "LoggedBy": "SYSTEM_AUTOPILOT"
+              };
+          });
+
+          if (orderRows.length > 0) {
+              const { error } = await supabase.from('Orders').insert(orderRows);
+              if (!error) generatedCount++;
+          }
+      }
+
+      if (generatedCount > 0) {
+          setAutopilotMessage(`Autopilot generated ${generatedCount} DOs for tomorrow.`);
+          setTimeout(() => setAutopilotMessage(''), 5000);
+          await fetchOrderHistory(); // Refresh to show new orders
+      }
   };
 
   useEffect(() => {
@@ -204,7 +299,12 @@ export default function NewOrderPage() {
         setCustomers(custData || []);
         setProducts(prodData || []);
         
-        await Promise.all([fetchOrderHistory(), fetchStandingOrders()]);
+        await fetchOrderHistory();
+        const templates = await fetchStandingOrders();
+
+        // 🚀 FIRE AUTOPILOT ENGINE IN BACKGROUND 🚀
+        await runBackgroundAutopilot(templates);
+
       } catch(err) {}
       setLoading(false);
     }
@@ -223,9 +323,8 @@ export default function NewOrderPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [router]);
 
-  // Update default recurring day based on delivery date
   useEffect(() => {
       if (deliveryDate) {
           const d = new Date(deliveryDate);
@@ -253,7 +352,7 @@ export default function NewOrderPage() {
   // ==========================================
   // NEW ORDER FORM LOGIC
   // ==========================================
-  const handleCustomerChange = (e) => {
+  const handleCustomerChange = async (e) => {
     const inputValue = e.target.value;
     setSelectedCustomerValue(inputValue);
     
@@ -268,9 +367,23 @@ export default function NewOrderPage() {
         ContactNumber: details.ContactNumber || '',
         DeliveryAddress: details.DeliveryAddress || ''
       });
-      // Auto-collapse customer box to save space on mobile
+      // UX Enhancement: Auto-collapse on mobile to save space
       if (window.innerWidth < 1024) {
           setIsCustomerBoxOpen(false);
+      }
+
+      // UX Enhancement: Fetch Favorites / Quick Add
+      const { data: pastItems } = await supabase.from('Orders')
+          .select('"Product Code"')
+          .ilike('Customer Name', inputValue)
+          .order('Timestamp', {ascending: false})
+          .limit(100);
+          
+      if (pastItems) {
+          const freq = {};
+          pastItems.forEach(i => { freq[i["Product Code"]] = (freq[i["Product Code"]] || 0) + 1; });
+          const topCodes = Object.keys(freq).sort((a,b) => freq[b] - freq[a]).slice(0, 8);
+          setQuickAddItems(products.filter(p => topCodes.includes(p.ProductCode)));
       }
     }
   };
@@ -288,15 +401,20 @@ export default function NewOrderPage() {
     });
   };
 
-  const addToCart = (product) => {
+  const addToCart = (product, forcedQty = null) => {
     const inputs = productInputs[product.ProductCode] || {};
-    const qty = parseFloat(inputs.qty) || 1; // Default to 1 if no qty entered
+    const qty = forcedQty || parseFloat(inputs.qty) || 1;
     const price = inputs.price === '' || inputs.price === undefined ? 0 : parseFloat(inputs.price); 
+    const uom = inputs.uom || product.SalesUOM || product.BaseUOM;
     
     if (qty <= 0) return;
 
     setCart(prevCart => {
-      const existingItemIndex = prevCart.findIndex(item => item.ProductCode === product.ProductCode && item.uom === (inputs.uom || product.SalesUOM || product.BaseUOM) && item.isReplacement === (inputs.replacement || false));
+      const existingItemIndex = prevCart.findIndex(item => 
+        item.ProductCode === product.ProductCode && 
+        item.uom === uom && 
+        item.isReplacement === (inputs.replacement || false)
+      );
       
       if (existingItemIndex > -1) {
         const newCart = [...prevCart];
@@ -308,7 +426,7 @@ export default function NewOrderPage() {
         ...product,
         cartId: `${product.ProductCode}-${Date.now()}-${Math.random()}`, 
         qty: qty,
-        uom: inputs.uom || product.SalesUOM || product.BaseUOM,
+        uom: uom,
         price: price, 
         notes: '',
         isReplacement: inputs.replacement || false
@@ -336,6 +454,8 @@ export default function NewOrderPage() {
 
   const removeFromCart = (cartId) => setCart(cart.filter(item => item.cartId !== cartId));
 
+  const totalAmount = useMemo(() => cart.reduce((sum, item) => sum + (Number(item.price) * Number(item.qty)), 0), [cart]);
+
   const handleSubmitOrder = async () => {
     if (!selectedCustomerValue || !deliveryDate || cart.length === 0) {
       alert("Please select a customer, date, and at least one item.");
@@ -347,7 +467,6 @@ export default function NewOrderPage() {
     const dateStr = `${year.slice(2)}${month}${day}`;
     const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // Automatic Constraint Bypass Logic
     const occurrenceMap = {};
     const orderRows = cart.map(item => {
         let baseRep = item.isReplacement ? "YES" : (item.price === 0 ? "FOC" : "");
@@ -383,7 +502,6 @@ export default function NewOrderPage() {
     });
 
     try {
-        // 1. ALWAYS Save standard order for the selected date
         const { error } = await supabase.from('Orders').insert(orderRows);
 
         if (error) {
@@ -392,7 +510,6 @@ export default function NewOrderPage() {
             return;
         }
 
-        // 2. Save as Recurring Template if checked
         if (isRecurring) {
             const cleanItems = cart.map(({ cartId, ...rest }) => ({
                 ProductCode: rest.ProductCode,
@@ -415,7 +532,7 @@ export default function NewOrderPage() {
             };
             
             await supabase.from('StandingOrders').insert([patternPayload]);
-            fetchStandingOrders(); // refresh patterns
+            fetchStandingOrders(); 
         }
 
         alert(`Order Created: ${doNumber}`);
@@ -423,8 +540,8 @@ export default function NewOrderPage() {
         setSelectedCustomerValue('');
         setCustDetails({ ContactPerson: '', ContactNumber: '', DeliveryAddress: '' });
         setIsRecurring(false);
-        setIsMobileCartOpen(false); // Close mobile cart
-        setIsCustomerBoxOpen(true); // Re-open customer box for next order
+        setIsMobileCartOpen(false); 
+        setIsCustomerBoxOpen(true); 
         fetchOrderHistory();
         setActiveTab('list'); 
         
@@ -435,7 +552,7 @@ export default function NewOrderPage() {
   };
 
   // ==========================================
-  // RECURRING PATTERN GENERATOR ENGINE
+  // MANUAL RECURRING PATTERN GENERATOR (Fallback)
   // ==========================================
   const getTargetDayName = () => {
       if (!targetGenDate) return '';
@@ -452,14 +569,13 @@ export default function NewOrderPage() {
           return alert(`No active recurring orders scheduled for ${dayName}s.`);
       }
 
-      if (!confirm(`Ready to automatically generate ${matchingTemplates.length} delivery orders for ${targetGenDate} (${dayName})?`)) return;
+      if (!confirm(`Ready to manually generate ${matchingTemplates.length} delivery orders for ${targetGenDate} (${dayName})?`)) return;
 
       setIsGenerating(true);
       let successCount = 0;
       let skippedCount = 0;
 
       for (const template of matchingTemplates) {
-          // Check if already auto-generated today for this customer
           const { data: existing } = await supabase.from('Orders')
               .select('DONumber')
               .eq('Delivery Date', targetGenDate)
@@ -513,7 +629,7 @@ export default function NewOrderPage() {
           }
       }
 
-      alert(`Automation Complete!\n\n✅ Created: ${successCount} DOs\n⏭️ Skipped (Already Exist): ${skippedCount}`);
+      alert(`Manual Generation Complete!\n\n✅ Created: ${successCount} DOs\n⏭️ Skipped (Already Exist): ${skippedCount}`);
       fetchOrderHistory();
       setIsGenerating(false);
   };
@@ -727,48 +843,53 @@ export default function NewOrderPage() {
       } catch(e) {}
   };
 
-  const filteredProducts = products.filter(p => {
-    if (!searchTerm) return false;
-    const searchParts = searchTerm.toLowerCase().split(' ').filter(Boolean);
-    const combined = `${p.ProductName} ${p.ProductCode} ${p.Category || ''}`.toLowerCase();
-    return searchParts.every(part => combined.includes(part));
-  });
+  // --- FILTERS & MEMOIZATION ---
+  const categories = useMemo(() => ['All', ...new Set(products.map(p => p.Category || 'Other'))], [products]);
 
-  const filteredOrderHistory = orderHistory.filter(group => {
+  const filteredProducts = useMemo(() => products.filter(p => {
+    const matchesCat = activeCategory === 'All' || p.Category === activeCategory;
+    const matchesSearch = !searchTerm || `${p.ProductName} ${p.ProductCode}`.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesCat && matchesSearch;
+  }).slice(0, 30), [products, activeCategory, searchTerm]);
+
+  const filteredOrderHistory = useMemo(() => orderHistory.filter(group => {
       if (!historySearchTerm) return true;
       const terms = historySearchTerm.toLowerCase().split(' ').filter(Boolean);
       const cleanStatus = formatDisplayStatus(getRawStatus(group.info));
       const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${cleanStatus}`.toLowerCase();
       return terms.every(t => searchStr.includes(t));
-  });
+  }), [orderHistory, historySearchTerm]);
 
-  const displayedHistory = historySearchTerm ? filteredOrderHistory : filteredOrderHistory.slice(0, 100);
+  const displayedHistory = filteredOrderHistory.slice(0, 100);
 
   const toggleSelectAll = () => {
     if (selectedOrders.length === displayedHistory.length) setSelectedOrders([]);
     else setSelectedOrders(displayedHistory.map(group => group.info.DONumber));
   };
 
-  const getStockColor = (balance) => {
-    if (balance === null || balance === undefined) return 'bg-gray-100 text-gray-500'; 
-    const qty = Number(balance);
-    if (qty <= 0) return 'bg-red-100 text-red-600'; // Mobile specific change: OOS is red
-    if (qty < 20) return 'bg-orange-100 text-orange-600';
-    if (qty <= 50) return 'bg-yellow-100 text-yellow-600';
-    return 'bg-green-100 text-green-600';
-  };
 
-  // Add function to format currency for mobile
-  const formatCurrency = (val) => {
-      return Number(val || 0).toLocaleString('en-MY', { style: 'currency', currency: 'MYR', minimumFractionDigits: 2 });
-  };
-
-  if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse">FFD SYSTEM ENGINE BOOTING...</div>;
+  if (loading) return <div className="p-10 flex items-center justify-center h-screen font-black text-gray-300 animate-pulse">FFD SYSTEM ENGINE BOOTING...</div>;
 
   return (
-    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-40 md:pb-32">
+    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-40 md:pb-32 font-sans relative">
       
-      {/* Header - Hidden on small mobile to save space, visible on sm+ */}
+      {/* 防缩放输入框全局样式 */}
+      <style jsx global>{`
+        input, select, textarea { font-size: 16px !important; }
+        @supports (-webkit-touch-callout: none) { .h-screen { height: -webkit-fill-available; } }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+      `}</style>
+
+      {/* Autopilot Status Toast */}
+      {autopilotMessage && (
+          <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[500] bg-green-600 text-white px-6 py-3 rounded-full shadow-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 animate-in fade-in slide-in-from-top-10">
+              <BoltIcon className="w-5 h-5" />
+              {autopilotMessage}
+          </div>
+      )}
+
+      {/* 桌面端头部 */}
       <div className="hidden sm:flex mb-6 flex-col sm:flex-row justify-between items-start sm:items-center gap-3"> 
          <div>
              <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Order Management</h1> 
@@ -779,409 +900,375 @@ export default function NewOrderPage() {
          </div>
       </div>
 
-      {/* Navigation Tabs - Scrollable on Mobile */}
-      <div className="flex gap-2 mb-4 md:mb-6 overflow-x-auto pb-2 border-b border-gray-200 snap-x custom-scrollbar -mx-3 px-3 sm:mx-0 sm:px-0">
+      {/* 选项卡导航 */}
+      <div className="flex gap-2 mb-4 md:mb-6 overflow-x-auto pb-2 border-b border-gray-200 snap-x custom-scrollbar -mx-3 px-3 sm:mx-0 sm:px-0 shrink-0">
           <button onClick={() => setActiveTab('new')} className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'new' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <PlusCircleIcon className="w-4 h-4 md:w-5 md:h-5" /> New Order
+              <PlusCircleIcon className="w-4 h-4 md:w-5 h-5" /> New Order
           </button>
           <button onClick={() => setActiveTab('list')} className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <ClipboardDocumentListIcon className="w-4 h-4 md:w-5 md:h-5" /> Order History
+              <ClipboardDocumentListIcon className="w-4 h-4 md:w-5 h-5" /> Order History
           </button>
           <button onClick={() => setActiveTab('recurring')} className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'recurring' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <ArrowPathIcon className="w-4 h-4 md:w-5 md:h-5" /> Weekly Autos
+              <ArrowPathIcon className="w-4 h-4 md:w-5 h-5" /> Auto-Pilot
           </button>
       </div>
 
-      {/* TAB 1: CREATE NEW ORDER */}
+      {/* TAB 1: 新建订单界面 (Fragment wrapping to separate animated container from fixed modals) */}
       {activeTab === 'new' && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in duration-300">
-        
-        {/* Main Content Area (Customer Details & Product Search) */}
-        <div className="lg:col-span-2 space-y-4 md:space-y-6">
-          
-          {/* Customer & Logistics Card (Collapsible on Mobile) */}
-          <div className="bg-white rounded-2xl md:rounded-3xl shadow-sm border border-gray-100 overflow-hidden"> 
+      <>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in duration-300">
             
-            {/* Header / Toggle */}
-            <div 
-               className="p-4 md:p-5 flex justify-between items-center cursor-pointer bg-gray-50/50 hover:bg-gray-50 transition-colors"
-               onClick={() => setIsCustomerBoxOpen(!isCustomerBoxOpen)}
-            >
-               <div>
-                   <h2 className="text-[10px] font-black text-gray-500 uppercase tracking-[0.2em]">Customer & Logistics</h2>
-                   {!isCustomerBoxOpen && selectedCustomerValue && (
-                       <p className="text-sm font-bold text-gray-800 mt-1 truncate">{selectedCustomerValue}</p>
-                   )}
-               </div>
-               <button className="p-1.5 bg-white border border-gray-200 rounded-full text-gray-500 shadow-sm">
-                   {isCustomerBoxOpen ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
-               </button>
+            <div className="lg:col-span-2 space-y-4 md:space-y-6">
+              
+              {/* 极致紧凑的客户面板 (Ultra Compact UX) */}
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"> 
+                <div 
+                   className="p-3 flex justify-between items-center cursor-pointer bg-white hover:bg-gray-50 transition-colors"
+                   onClick={() => setIsCustomerBoxOpen(!isCustomerBoxOpen)}
+                >
+                   <div className="flex items-center gap-2 overflow-hidden">
+                       <UserCircleIcon className="w-5 h-5 text-blue-500 shrink-0" />
+                       <div className="flex items-center gap-2">
+                           <h2 className="text-[10px] font-black text-gray-500 uppercase tracking-widest shrink-0">Customer:</h2>
+                           {!isCustomerBoxOpen && (
+                               <span className="text-xs md:text-sm font-black text-gray-900 truncate uppercase">
+                                   {selectedCustomerValue || 'Tap to Select'}
+                               </span>
+                           )}
+                       </div>
+                   </div>
+                   <div className="flex items-center gap-2 shrink-0">
+                       {!isCustomerBoxOpen && selectedCustomerValue && (
+                           <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 hidden sm:block">
+                               {deliveryDate?.substring(5)}
+                           </span>
+                       )}
+                       <ChevronDownIcon className={`w-4 h-4 text-gray-400 transition-transform ${isCustomerBoxOpen ? 'rotate-180' : ''}`} />
+                   </div>
+                </div>
+
+                {isCustomerBoxOpen && (
+                    <div className="p-3 bg-gray-50/50 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-4 gap-2.5 animate-in slide-in-from-top-2 duration-200"> 
+                       <div className="col-span-2 sm:col-span-4">
+                          <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1 tracking-widest">Search Customer</label>
+                          <input list="customer-list" type="text" className="w-full border border-gray-200 rounded-lg p-2 text-base md:text-sm font-black bg-white outline-none focus:ring-2 focus:ring-blue-500 uppercase shadow-sm" value={selectedCustomerValue} onChange={handleCustomerChange} placeholder="NAME / BRANCH..." />
+                          <datalist id="customer-list">{customers.map(c => <option key={c.id} value={c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName} />)}</datalist>
+                       </div>
+                       <div className="col-span-1">
+                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1 tracking-widest">Date</label>
+                           <input type="date" className="w-full border border-blue-200 rounded-lg p-2 text-base md:text-sm font-black bg-blue-50 text-blue-800 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
+                       </div>
+                       <div className="col-span-1">
+                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1 tracking-widest">Mode</label>
+                           <select className="w-full border border-gray-200 bg-white text-gray-800 text-base md:text-sm font-black rounded-lg p-2 outline-none shadow-sm focus:ring-2 focus:ring-blue-500" value={deliveryMode} onChange={e => setDeliveryMode(e.target.value)}>
+                               <option value="Driver">Driver</option>
+                               <option value="Lalamove">Lalamove</option>
+                               <option value="Self Pick-up">Self Pick-up</option>
+                           </select>
+                       </div>
+                       <div className="col-span-1">
+                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1 tracking-widest">Channel</label>
+                           <select className="w-full border border-gray-200 bg-white text-gray-800 text-base md:text-sm font-bold rounded-lg p-2 outline-none shadow-sm focus:ring-2 focus:ring-blue-500" value={salesChannel} onChange={(e) => setSalesChannel(e.target.value)}><option>Online/FnB</option><option>Wholesale</option><option>Outlet</option></select>
+                       </div>
+                       <div className="col-span-1">
+                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1">Contact</label>
+                           <input type="text" className="w-full border border-gray-200 p-2 rounded-lg text-base md:text-sm font-medium uppercase outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm" value={custDetails.ContactPerson} onChange={(e) => handleDetailChange('ContactPerson', e.target.value)} placeholder="Name" />
+                       </div>
+                       
+                       <div className="col-span-1 sm:col-span-1">
+                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1">Phone</label>
+                           <input type="text" className="w-full border border-gray-200 p-2 rounded-lg text-base md:text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm" value={custDetails.ContactNumber} onChange={(e) => handleDetailChange('ContactNumber', e.target.value)} placeholder="Phone" />
+                       </div>
+                       <div className="col-span-1 sm:col-span-3">
+                          <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1">Delivery Address</label>
+                          <input type="text" className="w-full border border-gray-200 rounded-lg p-2 text-base md:text-sm font-medium uppercase bg-white outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={custDetails.DeliveryAddress} onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)} placeholder="Full address..." />
+                       </div>
+                    </div>
+                )}
+              </div>
+
+              {/* 常用商品快捷栏 */}
+              {selectedCustomerValue && quickAddItems.length > 0 && (
+                 <div className="animate-in slide-in-from-left-4 duration-500">
+                    <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 custom-scrollbar snap-x">
+                        {quickAddItems.map(p => (
+                            <button key={p.ProductCode} onClick={() => addToCart(p, 1)} className="snap-start shrink-0 bg-white border border-orange-200 p-2.5 rounded-xl shadow-sm flex flex-col items-center gap-1.5 hover:border-orange-400 active:scale-95 transition-all w-24 group">
+                                <span className="text-[9px] font-black text-gray-800 uppercase line-clamp-2 text-center h-6 leading-tight group-hover:text-orange-600 transition-colors">{p.ProductName}</span>
+                                <div className="text-[8px] text-gray-400 font-bold">{p.BaseUOM}</div>
+                            </button>
+                        ))}
+                    </div>
+                 </div>
+              )}
+
+              {/* 分类与产品搜索 */}
+              <div className="space-y-3">
+                 <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 custom-scrollbar">
+                    {categories.map(cat => (
+                        <button key={cat} onClick={() => setActiveCategory(cat)} className={`shrink-0 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all ${activeCategory === cat ? 'bg-gray-800 text-white border-gray-800 shadow-md' : 'bg-white text-gray-400 border-gray-100 hover:border-gray-400'}`}>{cat}</button>
+                    ))}
+                 </div>
+
+                 <div className="sticky top-[0px] z-20 bg-gray-50/90 backdrop-blur-md py-1">
+                    <div className="relative shadow-sm rounded-xl overflow-hidden">
+                        <input type="text" placeholder="Search catalog..." className="w-full pl-10 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 text-base md:text-sm font-bold bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+                    </div>
+                 </div>
+                 
+                 {/* 更紧凑的移动端产品卡片 */}
+                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-6 md:pb-0">
+                    {filteredProducts.map(p => {
+                        const inputs = productInputs[p.ProductCode] || {};
+                        const uoms = Array.from(new Set(p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()) : [p.BaseUOM]));
+                        return (
+                          <div key={p.ProductCode} className="bg-white p-3 rounded-2xl border border-gray-200 shadow-sm relative group active:scale-[0.98] flex flex-col justify-between hover:border-green-400 transition-all">
+                              <div className={`absolute top-0 right-0 px-2 py-0.5 text-[8px] font-black uppercase rounded-bl-xl border-l border-b ${getStockColor(p.StockBalance)}`}>BAL: {p.StockBalance || '0'} {p.BaseUOM}</div>
+                              <div className="pr-12 mb-2"><h3 className="font-black text-gray-800 text-xs uppercase leading-tight line-clamp-2">{p.ProductName}</h3><p className="text-[9px] text-gray-400 font-mono mt-0.5 tracking-widest">{p.ProductCode}</p></div>
+                              <div className="flex gap-2 mb-2 bg-gray-50 p-1.5 rounded-xl border border-gray-100">
+                                  <select className="bg-white border border-gray-200 rounded-lg text-sm p-1.5 flex-1 font-black uppercase outline-none focus:ring-1 focus:ring-green-500" value={inputs.uom || p.SalesUOM || p.BaseUOM} onChange={(e) => handleProductInputChange(p.ProductCode, 'uom', e.target.value)}>{uoms.map(u => <option key={u} value={u}>{u}</option>)}</select>
+                                  <input type="number" placeholder="QTY" className="w-14 border border-gray-200 bg-white rounded-lg text-sm p-1.5 font-black text-center outline-none focus:ring-2 focus:ring-green-500" value={inputs.qty || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'qty', e.target.value)} />
+                              </div>
+                              <div className="flex items-center gap-2 mt-auto">
+                                  <label className="flex items-center gap-1 cursor-pointer p-1.5 bg-gray-50 rounded-lg border border-gray-100"><input type="checkbox" className="w-3.5 h-3.5 text-red-500 rounded border-gray-300" checked={inputs.replacement || false} onChange={(e) => handleProductInputChange(p.ProductCode, 'replacement', e.target.checked)} /> <span className="text-[8px] font-black text-red-500 uppercase tracking-widest">REP</span></label>
+                                  <div className="flex-1 relative"><span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-gray-400">RM</span><input type="number" step="0.01" className="w-full pl-6 pr-2 py-1.5 text-sm border border-gray-200 rounded-lg text-right font-black outline-none disabled:bg-gray-100 focus:ring-2 focus:ring-green-500" disabled={inputs.replacement} value={inputs.price || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)} placeholder="0.00" /></div>
+                                  <button onClick={() => addToCart(p)} className="bg-green-600 hover:bg-green-700 text-white rounded-xl w-10 h-10 flex items-center justify-center font-bold shadow-md active:scale-90 shrink-0 transition-transform"><PlusIcon className="w-5 h-5" strokeWidth={3} /></button>
+                              </div>
+                          </div>
+                        );
+                    })}
+                 </div>
+              </div>
             </div>
 
-            {/* Expandable Body */}
-            {isCustomerBoxOpen && (
-                <div className="p-4 md:p-5 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 md:gap-4 animate-in slide-in-from-top-2 duration-200"> 
-                   <div className="col-span-1">
-                       <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Sales Channel</label>
-                       <select className="w-full bg-green-50 border border-green-200 text-green-800 text-base md:text-sm font-black rounded-xl p-3 focus:ring-2 focus:ring-green-500 outline-none" value={salesChannel} onChange={(e) => setSalesChannel(e.target.value)}>
-                          <option>Online / FnB</option><option>Wholesale</option><option>Outlet</option>
-                       </select>
-                   </div>
-                   <div className="col-span-1 sm:col-span-2 md:col-span-2">
-                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Customer Search</label>
-                      <input list="customer-list" type="text" className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-black focus:ring-2 focus:ring-green-500 uppercase bg-gray-50/50 outline-none" value={selectedCustomerValue} onChange={handleCustomerChange} placeholder="TYPE TO FIND CUSTOMER..." />
-                      <datalist id="customer-list">{customers.map(c => <option key={c.id} value={c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName} />)}</datalist>
-                   </div>
-                   
-                   <div className="col-span-1">
-                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Contact Person</label>
-                      <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-bold uppercase outline-none focus:ring-2 focus:ring-green-500" value={custDetails.ContactPerson} onChange={(e) => handleDetailChange('ContactPerson', e.target.value)} placeholder="NAME" />
-                   </div>
-                   <div className="col-span-1">
-                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Contact Number</label>
-                      <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-bold outline-none focus:ring-2 focus:ring-green-500" value={custDetails.ContactNumber} onChange={(e) => handleDetailChange('ContactNumber', e.target.value)} placeholder="PHONE" />
-                   </div>
-                   <div className="col-span-1 sm:col-span-2 md:col-span-1">
-                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Delivery Date</label>
-                      <input type="date" className="w-full border border-blue-200 rounded-xl p-3 text-base md:text-sm font-black bg-blue-50 text-blue-800 outline-none focus:ring-2 focus:ring-blue-500" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
-                   </div>
-                   <div className="col-span-1">
-                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Mode</label>
-                      <select className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-black outline-none focus:ring-2 focus:ring-green-500" value={deliveryMode} onChange={e => setDeliveryMode(e.target.value)}>
-                        <option value="Driver">Driver</option><option value="Lalamove">Lalamove</option><option value="Self Pick-up">Self Pick-up</option>
-                      </select>
-                   </div>
-                   <div className="col-span-1 sm:col-span-2 md:col-span-2">
-                      <label className="block text-[9px] font-bold text-gray-400 uppercase mb-1">Delivery Address</label>
-                      <input type="text" className="w-full border border-gray-200 rounded-xl p-3 text-base md:text-sm font-medium uppercase bg-gray-50/50 outline-none focus:ring-2 focus:ring-green-500" value={custDetails.DeliveryAddress} onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)} placeholder="FULL ADDRESS..." />
-                   </div>
-                </div>
-            )}
-          </div>
-
-          {/* Product Search & List */}
-          <div className="space-y-3 md:space-y-4 relative">
-             {/* Sticky Search Bar for Mobile */}
-             <div className="sticky top-[72px] md:top-0 z-20 bg-gray-50/90 backdrop-blur-md pb-2 md:pb-0 md:bg-transparent pt-1 md:pt-0">
-                <div className="relative shadow-sm rounded-xl md:rounded-2xl">
-                    <input 
-                      type="text" 
-                      placeholder="Search catalog..." 
-                      className="w-full pl-10 md:pl-12 p-3 md:p-4 border border-gray-200 rounded-xl md:rounded-2xl focus:ring-2 focus:ring-green-500 text-base md:text-sm font-bold bg-white outline-none" 
-                      value={searchTerm} 
-                      onChange={e => setSearchTerm(e.target.value)} 
-                    />
-                    <span className="absolute left-3.5 md:left-4 top-3.5 md:top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
-                </div>
-             </div>
-             
-             {/* Mobile-Optimized Product Grid */}
-             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 pb-24 md:pb-0">
-                {filteredProducts.slice(0, 15).map(p => {
-                    const inputs = productInputs[p.ProductCode] || {};
-                    const uomOptions = p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(u => u) : [p.BaseUOM];
-                    const uniqueUoms = Array.from(new Set(uomOptions));
-                    
-                    return (
-                      <div key={p.ProductCode} className="bg-white p-3 md:p-4 rounded-xl md:rounded-3xl border border-gray-100 shadow-sm relative group hover:shadow-md transition-all flex flex-col justify-between">
-                         <div className={`absolute top-0 right-0 px-2 py-1 md:px-3 rounded-bl-xl text-[8px] md:text-[9px] font-black uppercase ${getStockColor(p.StockBalance)}`}>
-                            {p.StockBalance ? Number(p.StockBalance).toFixed(1) : '0'} {p.BaseUOM}
-                         </div>
-                         
-                         <div className="pr-12 md:pr-16 mb-2 md:mb-3">
-                            <h3 className="font-black text-gray-800 text-xs md:text-sm uppercase leading-tight line-clamp-2">{p.ProductName}</h3>
-                            <p className="text-[9px] text-gray-400 font-mono mt-0.5">{p.ProductCode}</p>
-                         </div>
-                         
-                         {/* Controls Row 1: UOM & Qty */}
-                         <div className="flex gap-2 mb-2">
-                            <select className="bg-gray-50 border border-gray-200 rounded-lg text-base md:text-xs p-2 flex-1 font-black uppercase outline-none focus:ring-2 focus:ring-green-500" value={inputs.uom || p.SalesUOM || p.BaseUOM} onChange={(e) => handleProductInputChange(p.ProductCode, 'uom', e.target.value)}>
-                              {uniqueUoms.map(u => <option key={u} value={u}>{u}</option>)}
-                            </select>
-                            <input type="number" placeholder="Qty" className="w-16 md:w-20 border border-gray-200 rounded-lg text-base md:text-sm p-2 font-black text-center outline-none focus:ring-2 focus:ring-green-500" value={inputs.qty || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'qty', e.target.value)} />
-                         </div>
-                         
-                         {/* Controls Row 2: Price & Add */}
-                         <div className="flex items-center gap-2 mt-auto">
-                            <label className="flex items-center gap-1 cursor-pointer p-1.5 bg-gray-50 rounded-lg border border-gray-100">
-                               <input type="checkbox" className="w-4 h-4 md:w-4 md:h-4 text-red-500 rounded border-gray-300" checked={inputs.replacement || false} onChange={(e) => handleProductInputChange(p.ProductCode, 'replacement', e.target.checked)} /> 
-                               <span className="text-[9px] font-black text-red-500 uppercase tracking-widest">REP</span>
-                            </label>
-                            
-                            <div className="flex-1 relative">
-                                <span className="absolute left-2.5 top-2.5 md:top-2.5 text-[10px] md:text-[10px] font-bold text-gray-400">RM</span>
-                                <input type="number" step="0.01" className="w-full pl-8 pr-2 py-2 text-base md:text-xs border border-gray-200 rounded-lg text-right font-black outline-none disabled:bg-gray-100 focus:ring-2 focus:ring-green-500" disabled={inputs.replacement} value={inputs.price || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)} placeholder="0.00" />
+            {/* 桌面端购物车 */}
+            <div className="hidden lg:block lg:col-span-1">
+               <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 sticky top-4 flex flex-col h-[calc(100vh-6rem)] min-h-[500px]">
+                  <div className="flex justify-between items-center mb-6">
+                     <h2 className="text-lg font-black text-gray-800 tracking-tight uppercase">Cart Summary</h2>
+                     <span className="bg-green-100 text-green-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{cart.length} items</span>
+                  </div>
+                  <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-1">
+                      {cart.length === 0 ? <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">Cart is empty</div> : cart.map((item) => (
+                        <div key={item.cartId} className="p-3 bg-gray-50/80 border border-gray-100 rounded-xl relative group">
+                            <div className="flex justify-between items-start mb-1">
+                                <div className="pr-6 text-[10px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
+                                <button onClick={() => removeFromCart(item.cartId)} className="text-gray-400 hover:text-red-500 absolute top-2 right-2"><XMarkIcon className="w-4 h-4" /></button>
                             </div>
-                            
-                            <button onClick={() => addToCart(p)} className="bg-green-600 hover:bg-green-700 text-white rounded-lg w-10 h-10 md:w-10 md:h-10 flex items-center justify-center font-bold shadow-md active:scale-95 transition-transform shrink-0">
-                                <PlusIcon className="w-5 h-5 md:w-5 md:h-5" strokeWidth={3} />
-                            </button>
-                         </div>
+                            <div className="flex items-center justify-between mt-2">
+                                 <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5"><button onClick={() => updateCartQty(item.cartId, -1)} className="w-6 h-6 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded"><MinusIcon className="w-3 h-3"/></button><span className="w-6 text-center text-xs font-black">{item.qty}</span><button onClick={() => updateCartQty(item.cartId, 1)} className="w-6 h-6 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded"><PlusIcon className="w-3 h-3"/></button></div>
+                                 <span className="text-[9px] font-black text-gray-500 ml-1 mr-auto">{item.uom}</span>
+                                 {item.isReplacement ? <span className="text-[8px] font-black text-white bg-red-400 px-2 py-1 rounded shadow-sm">REP</span> : <span className="text-[10px] font-black text-gray-700 bg-white border border-gray-200 px-2 py-1 rounded">RM {(item.price || 0).toFixed(2)}</span>}
+                            </div>
+                        </div>
+                      ))}
+                  </div>
+                  <div className="mt-auto pt-4 border-t border-gray-100 space-y-4">
+                      <div className="bg-indigo-50/50 border border-indigo-100 p-3 rounded-2xl">
+                          <label className="flex items-center gap-2 cursor-pointer mb-2">
+                              <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
+                              <span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save as Weekly Pattern</span>
+                          </label>
+                          {isRecurring && (
+                              <div className="mt-2 animate-in fade-in slide-in-from-top-1">
+                                  <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest ml-1">Generate On:</span>
+                                  <select className="w-full mt-1 border border-indigo-200 p-2 rounded-xl text-xs font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
+                                      {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
+                                  </select>
+                              </div>
+                          )}
                       </div>
-                    );
-                })}
-                {searchTerm && filteredProducts.length === 0 && (
-                    <div className="col-span-full p-6 text-center text-gray-400 italic text-sm border-2 border-dashed border-gray-200 rounded-xl">No products found.</div>
-                )}
-             </div>
+                      <div className="flex justify-between text-xs font-black text-gray-800 px-1 uppercase tracking-widest"><span>Total:</span><span className="text-green-600 text-sm">RM {totalAmount.toFixed(2)}</span></div>
+                      <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/30 active:scale-95'}`}>
+                          {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & ORDER' : 'CONFIRM ORDER')}
+                      </button>
+                  </div>
+               </div>
+            </div>
           </div>
-        </div>
-
-        {/* --- RIGHT COLUMN (Cart - Desktop) --- */}
-        <div className="hidden lg:block lg:col-span-1">
-           <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 sticky top-4 flex flex-col h-[calc(100vh-6rem)] min-h-[500px]">
-              <div className="flex justify-between items-center mb-6">
-                 <h2 className="text-lg font-black text-gray-800 tracking-tight uppercase">Cart Summary</h2>
-                 <span className="bg-green-100 text-green-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{cart.length} items</span>
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-1">
-                  {cart.length === 0 ? <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">Cart is empty</div> : cart.map((item) => (
-                    <div key={item.cartId} className="p-3 bg-gray-50/80 border border-gray-100 rounded-xl relative group">
-                        <div className="flex justify-between items-start mb-1">
-                            <div className="pr-6 text-[10px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
-                            <button onClick={() => removeFromCart(item.cartId)} className="text-gray-400 hover:text-red-500 absolute top-2 right-2"><XMarkIcon className="w-4 h-4" /></button>
-                        </div>
-                        
-                        <div className="flex items-center justify-between mt-2">
-                             <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5">
-                                <button onClick={() => updateCartQty(item.cartId, -1)} className="w-6 h-6 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded"><MinusIcon className="w-3 h-3"/></button>
-                                <span className="w-6 text-center text-xs font-black">{item.qty}</span>
-                                <button onClick={() => updateCartQty(item.cartId, 1)} className="w-6 h-6 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded"><PlusIcon className="w-3 h-3"/></button>
-                             </div>
-                             <span className="text-[9px] font-black text-gray-500 ml-1 mr-auto">{item.uom}</span>
-                             
-                             {item.isReplacement ? (
-                                 <span className="text-[8px] font-black text-white bg-red-400 px-2 py-1 rounded shadow-sm">REP</span>
-                             ) : (
-                                 <span className="text-[10px] font-black text-gray-700 bg-white border border-gray-200 px-2 py-1 rounded">RM {(item.price || 0).toFixed(2)}</span>
-                             )}
-                        </div>
-                    </div>
-                  ))}
-              </div>
-              
-              {/* RECURRING TOGGLE AREA */}
-              <div className="mt-auto pt-4 border-t border-gray-100 space-y-4">
-                  <div className="bg-indigo-50/50 border border-indigo-100 p-3 rounded-2xl">
-                      <label className="flex items-center gap-2 cursor-pointer mb-2">
-                          <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
-                          <span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save as Weekly Pattern</span>
-                      </label>
-                      {isRecurring && (
-                          <div className="mt-2 animate-in fade-in slide-in-from-top-1">
-                              <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest ml-1">Generate On:</span>
-                              <select className="w-full mt-1 border border-indigo-200 p-2 rounded-xl text-xs font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
-                                  {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
-                              </select>
+          
+          {/* 移动端永远显示的底部购物车栏 (从 grid 容器中移出，绝对锚定视口底部) */}
+          {!isMobileCartOpen && (
+              <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-[200] animate-in slide-in-from-bottom-2" style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
+                  <div className="flex items-center justify-between gap-3 max-w-lg mx-auto">
+                      <button onClick={() => setIsMobileCartOpen(true)} className="flex items-center justify-center gap-3 bg-gray-50 px-4 py-3.5 rounded-xl border border-gray-200 flex-1 active:bg-gray-100 transition-colors">
+                          <div className="relative">
+                              <ShoppingCartIcon className="w-6 h-6 text-gray-700" />
+                              {cart.length > 0 && (
+                                  <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full shadow-sm">
+                                      {cart.length}
+                                  </span>
+                              )}
                           </div>
-                      )}
+                          <div className="flex flex-col items-start leading-none">
+                              <span className="text-[10px] font-bold text-gray-600 uppercase tracking-wide">View Cart</span>
+                              <span className="text-xs font-black text-green-600 mt-1">RM {totalAmount.toFixed(2)}</span>
+                          </div>
+                      </button>
+                      <button 
+                          onClick={handleSubmitOrder} 
+                          disabled={submitting || cart.length === 0} 
+                          className={`text-white font-black py-3.5 px-6 rounded-xl shadow-lg transition active:scale-95 text-xs uppercase tracking-widest flex-1 ${submitting || cart.length === 0 ? 'bg-gray-300 shadow-none' : 'bg-green-600 hover:bg-green-700'}`}
+                      >
+                          {submitting ? 'PROCESSING...' : 'CONFIRM'}
+                      </button>
+                  </div>
+              </div>
+          )}
+
+          {/* 移动端购物车弹窗 (从 grid 容器中移出) */}
+          {isMobileCartOpen && (
+               <div className="lg:hidden fixed inset-0 bg-white z-[300] flex flex-col h-[100dvh] w-screen overflow-hidden animate-in slide-in-from-bottom-full duration-300">
+                  <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50 shrink-0" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
+                      <div className="flex items-center gap-2"><ShoppingCartIcon className="w-6 h-6 text-green-600" /><h2 className="text-base font-black text-gray-800 uppercase tracking-tight">Review Cart</h2></div>
+                      <button onClick={() => setIsMobileCartOpen(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><XMarkIcon className="w-5 h-5"/></button>
                   </div>
                   
-                  <div className="flex justify-between text-xs font-black text-gray-800 px-1 uppercase tracking-widest"><span>Total:</span><span>{cart.reduce((sum, item) => sum + item.qty, 0)} Items</span></div>
-                  <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/30 active:scale-95'}`}>
-                      {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & ORDER' : 'CONFIRM ORDER')}
-                  </button>
-              </div>
-           </div>
-        </div>
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-100/50 custom-scrollbar pb-24">
+                      {cart.map((item) => (
+                          <div key={item.cartId} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 relative">
+                              <button onClick={() => removeFromCart(item.cartId)} className="absolute top-3 right-3 text-gray-300 hover:text-red-500 p-1"><XMarkIcon className="w-4 h-4" /></button>
+                              <div className="text-xs font-black uppercase text-gray-800 pr-8 mb-3">{item.ProductName}</div>
+                              <div className="flex items-center justify-between">
+                                  <div className="flex items-center bg-gray-50 border border-gray-200 rounded-lg p-1">
+                                      <button onClick={() => updateCartQty(item.cartId, -1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><MinusIcon className="w-4 h-4"/></button>
+                                      <span className="w-8 text-center text-sm font-black">{item.qty}</span>
+                                      <button onClick={() => updateCartQty(item.cartId, 1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><PlusIcon className="w-4 h-4"/></button>
+                                  </div>
+                                  <div className="flex flex-col items-end">
+                                      <span className="text-[10px] font-black text-gray-500 uppercase mx-2 mb-1">{item.uom}</span>
+                                      {item.isReplacement ? <span className="text-[9px] font-black text-white bg-red-400 px-2 py-1 rounded shadow-sm">REP</span> : <span className="text-[11px] font-black text-gray-700 bg-gray-50 border border-gray-200 px-2 py-1 rounded">RM {(item.price * item.qty).toFixed(2)}</span>}
+                                  </div>
+                              </div>
+                          </div>
+                      ))}
+                      {cart.length === 0 && <div className="text-center p-10 text-gray-400 font-bold italic text-sm">Cart is empty</div>}
+                  </div>
 
-        {/* --- MOBILE FLOATING CART BAR --- */}
-        {cart.length > 0 && !isMobileCartOpen && (
-            <div 
-                className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-50 animate-in slide-in-from-bottom-10"
-                style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
-            >
-                <div className="flex items-center justify-between gap-4">
-                    <button 
-                        onClick={() => setIsMobileCartOpen(true)}
-                        className="flex items-center justify-center gap-3 bg-gray-50 px-4 py-4 rounded-xl border border-gray-200 flex-1 active:bg-gray-100 transition-colors"
-                    >
-                        <div className="relative">
-                            <ShoppingCartIcon className="w-6 h-6 text-gray-700" />
-                            <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full">{cart.length}</span>
-                        </div>
-                        <span className="text-xs font-bold text-gray-700 uppercase tracking-wide">View Cart</span>
-                    </button>
-                    <button 
-                        onClick={handleSubmitOrder}
-                        disabled={submitting}
-                        className="bg-green-600 hover:bg-green-700 text-white font-black py-4 px-6 rounded-xl shadow-lg transition active:scale-95 text-xs uppercase tracking-widest flex-1"
-                    >
-                        {submitting ? 'PROCESSING...' : 'CONFIRM ORDER'}
-                    </button>
-                </div>
-            </div>
-        )}
-
-        {/* --- FULL SCREEN MOBILE CART MODAL --- */}
-        {isMobileCartOpen && (
-             <div className="lg:hidden fixed inset-0 bg-white z-[120] flex flex-col animate-in slide-in-from-bottom-full duration-300">
-                <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50 shrink-0" style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}>
-                    <div className="flex items-center gap-2">
-                        <ShoppingCartIcon className="w-6 h-6 text-green-600" />
-                        <h2 className="text-base font-black text-gray-800 uppercase tracking-tight">Review Cart</h2>
-                    </div>
-                    <button onClick={() => setIsMobileCartOpen(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><XMarkIcon className="w-5 h-5"/></button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-100/50 custom-scrollbar">
-                    {cart.map((item) => (
-                        <div key={item.cartId} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 relative">
-                            <button onClick={() => removeFromCart(item.cartId)} className="absolute top-3 right-3 text-gray-300 hover:text-red-500 p-1.5 bg-gray-50 rounded-lg"><XMarkIcon className="w-4 h-4" /></button>
-                            <div className="text-xs font-black uppercase text-gray-800 pr-8 mb-4">{item.ProductName}</div>
-                            
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center bg-gray-50 border border-gray-200 rounded-lg p-1.5">
-                                    <button onClick={() => updateCartQty(item.cartId, -1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><MinusIcon className="w-4 h-4"/></button>
-                                    <span className="w-10 text-center text-sm font-black">{item.qty}</span>
-                                    <button onClick={() => updateCartQty(item.cartId, 1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><PlusIcon className="w-4 h-4"/></button>
-                                </div>
-                                <span className="text-[10px] font-black text-gray-500 uppercase mx-2">{item.uom}</span>
-                                
-                                {item.isReplacement ? (
-                                    <span className="text-[10px] font-black text-white bg-red-400 px-3 py-1.5 rounded-lg shadow-sm">REP</span>
-                                ) : (
-                                    <span className="text-xs font-black text-gray-700 bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-lg">RM {(item.price || 0).toFixed(2)}</span>
-                                )}
-                            </div>
-                        </div>
-                    ))}
-                    {cart.length === 0 && <div className="text-center p-10 text-gray-400 font-bold italic text-sm">Cart is empty</div>}
-                </div>
-
-                <div className="p-4 bg-white border-t border-gray-200 shrink-0 space-y-4 shadow-[0_-10px_20px_rgba(0,0,0,0.05)]" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
-                    <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-2xl">
-                        <label className="flex items-center gap-3 cursor-pointer">
-                            <input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
-                            <span className="text-xs font-black text-indigo-900 uppercase tracking-widest">Save Weekly Pattern</span>
-                        </label>
-                        {isRecurring && (
-                            <select className="w-full mt-3 border border-indigo-200 p-3 rounded-xl text-base font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
-                                {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
-                            </select>
-                        )}
-                    </div>
-                    
-                    <button 
-                        onClick={handleSubmitOrder} 
-                        disabled={submitting || cart.length === 0} 
-                        className={`w-full py-4 rounded-xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 active:scale-95'}`}
-                    >
-                        {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & SUBMIT' : 'SUBMIT ORDER')}
-                    </button>
-                </div>
-             </div>
-        )}
-      </div>
+                  <div className="bg-white border-t border-gray-200 shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.05)]">
+                      <div className="p-4 space-y-4" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
+                          <div className="flex justify-between items-end mb-2">
+                              <div><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total</p><h3 className="text-2xl font-black text-gray-900 leading-none">RM {totalAmount.toFixed(2)}</h3></div>
+                              <div className="bg-indigo-50 border border-indigo-100 p-2.5 rounded-xl"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} /><span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save Pattern</span></label></div>
+                          </div>
+                          {isRecurring && <select className="w-full mt-2 border border-indigo-200 p-3 rounded-xl text-base font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>{DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}</select>}
+                          <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 active:scale-95'}`}>
+                              {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & SUBMIT' : 'SUBMIT ORDER')}
+                          </button>
+                      </div>
+                  </div>
+               </div>
+          )}
+      </>
       )}
 
       {/* TAB 2: ORDER HISTORY LIST */}
       {activeTab === 'list' && (
-      <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-140px)] flex flex-col relative overflow-hidden">
-         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 md:mb-6 gap-3 flex-none">
-             <div>
-                <h2 className="text-base md:text-xl font-black text-gray-800 tracking-tight flex items-center gap-2 uppercase">
-                    <ClipboardDocumentListIcon className="w-5 h-5 md:w-7 md:h-7 text-blue-600" /> Recent Orders
-                </h2>
-                <div className="flex items-center gap-1.5 mt-1 ml-1">
-                    <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full ${isRealtimeActive ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                    <span className="text-[8px] md:text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                        {isRealtimeActive ? 'Live' : 'Offline'}
-                    </span>
-                </div>
-             </div>
-             <div className="flex w-full sm:w-auto gap-2">
-                 <button onClick={handlePullShipdayStatus} disabled={isSyncing} className="bg-blue-50 text-blue-700 font-bold p-3 rounded-xl transition-all border border-blue-200 disabled:opacity-50 shrink-0">
-                     <ArrowPathIcon className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
-                 </button>
-                 <div className="relative w-full sm:w-64">
-                     <input type="text" placeholder="Search..." className="w-full pl-10 p-3 border border-gray-200 rounded-xl text-base md:text-sm font-medium focus:ring-2 focus:ring-blue-500 bg-gray-50 outline-none" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
-                     <span className="absolute left-3.5 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4 md:w-5 md:h-5"/></span>
-                 </div>
-             </div>
-         </div>
+      <>
+        <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-140px)] flex flex-col relative overflow-hidden">
+           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 md:mb-6 gap-3 flex-none">
+               <div>
+                  <h2 className="text-base md:text-xl font-black text-gray-800 tracking-tight flex items-center gap-2 uppercase">
+                      <ClipboardDocumentListIcon className="w-5 h-5 md:w-7 md:h-7 text-blue-600" /> Recent Orders
+                  </h2>
+                  <div className="flex items-center gap-1.5 mt-1 ml-1">
+                      <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full ${isRealtimeActive ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
+                      <span className="text-[8px] md:text-[10px] font-black text-gray-400 uppercase tracking-widest">
+                          {isRealtimeActive ? 'Live' : 'Offline'}
+                      </span>
+                  </div>
+               </div>
+               <div className="flex w-full sm:w-auto gap-2">
+                   <button onClick={handlePullShipdayStatus} disabled={isSyncing} className="bg-blue-50 text-blue-700 font-bold p-3 rounded-xl transition-all border border-blue-200 disabled:opacity-50 shrink-0">
+                       <ArrowPathIcon className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
+                   </button>
+                   <div className="relative w-full sm:w-64">
+                       <input type="text" placeholder="Search..." className="w-full pl-10 p-3 border border-gray-200 rounded-xl text-base md:text-sm font-medium focus:ring-2 focus:ring-blue-500 bg-gray-50 outline-none" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
+                       <span className="absolute left-3.5 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4 md:w-5 md:h-5"/></span>
+                   </div>
+               </div>
+           </div>
 
-         {/* Mobile Card View for Order History */}
-         <div className="md:hidden flex-1 overflow-y-auto space-y-3 custom-scrollbar pb-20">
-            {displayedHistory.map((group) => {
-                 const rawStatus = getRawStatus(group.info);
-                 const isSelected = selectedOrders.includes(group.info.DONumber);
-                 return (
-                     <div key={group.info.DONumber} className={`bg-white border rounded-2xl p-4 shadow-sm relative transition-all ${isSelected ? 'border-blue-400 ring-1 ring-blue-400 bg-blue-50/30' : 'border-gray-100'}`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
-                         <div className="flex justify-between items-start mb-2">
-                             <div className="flex flex-col gap-1">
-                                 <span className="font-mono text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 w-fit">{group.info.DONumber}</span>
-                                 <span className="text-[9px] font-bold text-gray-500">{new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB')}</span>
-                             </div>
-                             <span className={`px-2 py-1 rounded-md text-[8px] font-black uppercase border ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span>
-                         </div>
-                         <div className="font-black text-gray-800 text-sm uppercase leading-tight mb-2 pr-6">
-                             {group.info["Customer Name"]}
-                         </div>
-                         <div className="flex items-center gap-2 mb-3 border-t border-gray-50 pt-2">
-                             <span className="bg-gray-100 text-gray-600 text-[10px] font-black px-2 py-1 rounded-md">{group.items.length} Items</span>
-                         </div>
-                         <div className="flex justify-end gap-2 border-t border-gray-100 pt-3" onClick={e => e.stopPropagation()}>
-                             <button onClick={() => openEditModal(group)} className="p-2 bg-gray-50 text-blue-600 rounded-lg"><PencilSquareIcon className="w-4 h-4"/></button>
-                             <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-2 bg-gray-50 text-gray-600 rounded-lg"><PrinterIcon className="w-4 h-4"/></button>
-                             <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-2 bg-gray-50 text-green-600 rounded-lg"><TruckIcon className="w-4 h-4"/></button>
-                             <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 bg-red-50 text-red-600 rounded-lg"><TrashIcon className="w-4 h-4"/></button>
-                         </div>
-                     </div>
-                 )
-            })}
-            {displayedHistory.length === 0 && <div className="text-center p-10 text-gray-400 font-bold text-sm">No orders found.</div>}
-         </div>
+           <div className="md:hidden flex-1 overflow-y-auto space-y-3 custom-scrollbar pb-20">
+              {displayedHistory.map((group) => {
+                   const rawStatus = getRawStatus(group.info);
+                   const isSelected = selectedOrders.includes(group.info.DONumber);
+                   return (
+                       <div key={group.info.DONumber} className={`bg-white border rounded-2xl p-4 shadow-sm relative transition-all ${isSelected ? 'border-blue-400 ring-1 ring-blue-400 bg-blue-50/30' : 'border-gray-100'}`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
+                           <div className="flex justify-between items-start mb-2">
+                               <div className="flex flex-col gap-1">
+                                   <span className="font-mono text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 w-fit">{group.info.DONumber}</span>
+                                   <span className="text-[9px] font-bold text-gray-500">{new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB')}</span>
+                               </div>
+                               <span className={`px-2 py-1 rounded-md text-[8px] font-black uppercase border ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span>
+                           </div>
+                           <div className="font-black text-gray-800 text-sm uppercase leading-tight mb-2 pr-6">
+                               {group.info["Customer Name"]}
+                           </div>
+                           <div className="flex items-center gap-2 mb-3 border-t border-gray-50 pt-2">
+                               <span className="bg-gray-100 text-gray-600 text-[10px] font-black px-2 py-1 rounded-md">{group.items.length} Items</span>
+                           </div>
+                           <div className="flex justify-end gap-2 border-t border-gray-100 pt-3" onClick={e => e.stopPropagation()}>
+                               <button onClick={() => openEditModal(group)} className="p-2 bg-gray-50 text-blue-600 rounded-lg"><PencilSquareIcon className="w-4 h-4"/></button>
+                               <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-2 bg-gray-50 text-gray-600 rounded-lg"><PrinterIcon className="w-4 h-4"/></button>
+                               <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-2 bg-gray-50 text-green-600 rounded-lg"><TruckIcon className="w-4 h-4"/></button>
+                               <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 bg-red-50 text-red-600 rounded-lg"><TrashIcon className="w-4 h-4"/></button>
+                           </div>
+                       </div>
+                   )
+              })}
+              {displayedHistory.length === 0 && <div className="text-center p-10 text-gray-400 font-bold text-sm">No orders found.</div>}
+           </div>
 
-         {/* Desktop Table View for Order History */}
-         <div className="hidden md:block flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
-             <table className="w-full text-left whitespace-nowrap min-w-[1050px]">
-                 <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
-                     <tr>
-                        <th className="p-5 w-10 text-center">
-                            <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer" checked={displayedHistory.length > 0 && selectedOrders.length === displayedHistory.length} onChange={toggleSelectAll} />
-                        </th>
-                        <th className="p-5 w-32">Delivery Date</th>
-                        <th className="p-5 w-32">DO Number</th>
-                        <th className="p-5 w-[350px]">Customer Entity</th>
-                        <th className="p-5 text-center w-16">Items</th>
-                        <th className="p-5 text-center w-28">Live Status</th>
-                        <th className="p-5 text-right pr-6 w-32">Actions</th>
-                     </tr>
-                 </thead>
-                 <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
-                     {displayedHistory.map((group) => {
-                         const rawStatus = getRawStatus(group.info);
-                         const isSelected = selectedOrders.includes(group.info.DONumber);
-                         return (
-                         <tr key={group.info.DONumber} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
-                             <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
-                                <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer" checked={isSelected} onChange={() => toggleOrderSelection(group.info.DONumber)} />
-                             </td>
-                             <td className="p-4 font-mono text-gray-500 text-xs">{new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                             <td className="p-4 font-black text-blue-600 font-mono text-sm">{group.info.DONumber}</td>
-                             <td className="p-4">
-                                 <div className="font-black text-gray-800 text-base uppercase max-w-[350px] whitespace-normal leading-tight" title={group.info["Customer Name"]}>{group.info["Customer Name"]}</div>
-                             </td>
-                             <td className="p-4 text-center"><span className="bg-white border border-gray-100 shadow-sm px-3 py-1 rounded-full font-black text-sm">{group.items.length}</span></td>
-                             <td className="p-4 text-center"><span className={`px-2.5 py-1.5 rounded-full text-[10px] font-black uppercase border shadow-sm whitespace-nowrap ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></td>
-                             <td className="p-4 text-right pr-6" onClick={(e) => e.stopPropagation()}>
-                                 <div className="flex items-center justify-end gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity w-full">
-                                     <button onClick={() => openEditModal(group)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition"><PencilSquareIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition"><PrinterIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition"><TruckIcon className="w-5 h-5" /></button>
-                                     <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition"><TrashIcon className="w-5 h-5" /></button>
-                                 </div>
-                             </td>
-                         </tr>
-                     )})}
-                     {displayedHistory.length === 0 && <tr><td colSpan="7" className="p-16 text-center text-gray-300 italic font-bold">No orders match your current filter.</td></tr>}
-                 </tbody>
-             </table>
-         </div>
+           <div className="hidden md:block flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
+               <table className="w-full text-left whitespace-nowrap min-w-[1050px]">
+                   <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
+                       <tr>
+                          <th className="p-5 w-10 text-center">
+                              <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer" checked={displayedHistory.length > 0 && selectedOrders.length === displayedHistory.length} onChange={toggleSelectAll} />
+                          </th>
+                          <th className="p-5 w-32">Delivery Date</th>
+                          <th className="p-5 w-32">DO Number</th>
+                          <th className="p-5 w-[350px]">Customer Entity</th>
+                          <th className="p-5 text-center w-16">Items</th>
+                          <th className="p-5 text-center w-28">Live Status</th>
+                          <th className="p-5 text-right pr-6 w-32">Actions</th>
+                       </tr>
+                   </thead>
+                   <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
+                       {displayedHistory.map((group) => {
+                           const rawStatus = getRawStatus(group.info);
+                           const isSelected = selectedOrders.includes(group.info.DONumber);
+                           return (
+                           <tr key={group.info.DONumber} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleOrderSelection(group.info.DONumber)}>
+                               <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                                  <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer" checked={isSelected} onChange={() => toggleOrderSelection(group.info.DONumber)} />
+                               </td>
+                               <td className="p-4 font-mono text-gray-500 text-xs">{new Date(group.info["Delivery Date"]).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                               <td className="p-4 font-black text-blue-600 font-mono text-sm">{group.info.DONumber}</td>
+                               <td className="p-4">
+                                   <div className="font-black text-gray-800 text-base uppercase max-w-[350px] whitespace-normal leading-tight" title={group.info["Customer Name"]}>{group.info["Customer Name"]}</div>
+                               </td>
+                               <td className="p-4 text-center"><span className="bg-white border border-gray-100 shadow-sm px-3 py-1 rounded-full font-black text-sm">{group.items.length}</span></td>
+                               <td className="p-4 text-center"><span className={`px-2.5 py-1.5 rounded-full text-[10px] font-black uppercase border shadow-sm whitespace-nowrap ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></td>
+                               <td className="p-4 text-right pr-6" onClick={(e) => e.stopPropagation()}>
+                                   <div className="flex items-center justify-end gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity w-full">
+                                       <button onClick={() => openEditModal(group)} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg transition"><PencilSquareIcon className="w-5 h-5" /></button>
+                                       <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition"><PrinterIcon className="w-5 h-5" /></button>
+                                       <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-2 text-green-600 hover:bg-green-100 rounded-lg transition"><TruckIcon className="w-5 h-5" /></button>
+                                       <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg transition"><TrashIcon className="w-5 h-5" /></button>
+                                   </div>
+                               </td>
+                           </tr>
+                       )})}
+                       {displayedHistory.length === 0 && <tr><td colSpan="7" className="p-16 text-center text-gray-300 italic font-bold">No orders match your current filter.</td></tr>}
+                   </tbody>
+               </table>
+           </div>
+        </div>
 
-         {/* STICKY FLOATING ACTION BAR FOR MULTI-SELECT */}
-         {selectedOrders.length > 0 && (
+        {/* 提取到外面，避免被父级 container clip */}
+        {selectedOrders.length > 0 && (
              <div className="fixed bottom-4 md:bottom-8 left-1/2 transform -translate-x-1/2 w-[92%] sm:w-max bg-gray-900/95 backdrop-blur-xl text-white p-3 sm:px-6 sm:py-4 rounded-2xl sm:rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.4)] flex flex-col sm:flex-row items-center gap-3 sm:gap-6 z-[100] animate-in slide-in-from-bottom-10 border border-gray-700">
                  
                  <div className="flex items-center justify-between w-full sm:w-auto sm:border-r border-gray-700 sm:pr-6 shrink-0">
@@ -1216,10 +1303,10 @@ export default function NewOrderPage() {
                  </button>
              </div>
          )}
-      </div>
+      </>
       )}
 
-      {/* TAB 3: WEEKLY PATTERNS */}
+      {/* TAB 3: WEEKLY PATTERNS / AUTOPILOT */}
       {activeTab === 'recurring' && (
       <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-indigo-100 animate-in fade-in h-[calc(100vh-140px)] flex flex-col relative overflow-hidden">
          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 flex-none">
@@ -1272,9 +1359,7 @@ export default function NewOrderPage() {
       </div>
       )}
 
-      {/* ==========================================
-          BULK EDIT MODAL
-          ========================================== */}
+      {/* BULK EDIT MODAL */}
       {isBulkEditOpen && (
           <div className="fixed inset-0 bg-black/60 z-[110] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
              <div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg p-6 sm:p-8 shadow-2xl flex flex-col animate-in slide-in-from-bottom-10 sm:zoom-in duration-200 border-t border-gray-100 sm:border max-h-[90dvh]">
