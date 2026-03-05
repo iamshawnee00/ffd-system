@@ -1,11 +1,12 @@
 'use client';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 
 // ------------------------------------------------------------------
 // --- 真实的本地环境导入 (请在您的本地项目中取消注释以下两行) ---
 import { supabase } from '../../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 // ------------------------------------------------------------------
+
 
 
 import { 
@@ -141,6 +142,7 @@ export default function NewOrderPage() {
 
   // --- ORDER LIST / EDIT STATES ---
   const [historySearchTerm, setHistorySearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('ALL'); // Add Status Filter state
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingOrder, setEditingOrder] = useState(null);
   const [editingItems, setEditingItems] = useState([]);
@@ -152,6 +154,8 @@ export default function NewOrderPage() {
   const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({ deliveryDate: '', deliveryMode: '', status: '' });
   const [sortConfig, setSortConfig] = useState({ key: 'Delivery Date', direction: 'desc' });
+
+  const autopilotFired = useRef(false);
 
   // ==========================================
   // INITIAL DATA FETCH & BACKGROUND ENGINE
@@ -216,26 +220,40 @@ export default function NewOrderPage() {
       const targetDate = getLocalDateString(tmr);
       const dayName = DAYS_OF_WEEK[tmr.getDay()];
 
+      // --- 1. LOCAL BROWSER LOCK (Prevents looping across page navigations) ---
+      const lockKey = `ffd_autopilot_ran_${targetDate}`;
+      if (typeof window !== 'undefined' && localStorage.getItem(lockKey)) {
+          return; 
+      }
+
       // Filter templates meant for tomorrow
       const tomorrowTemplates = activeTemplates.filter(t => t.DeliveryDay === dayName && t.Status === 'Active');
-      if (tomorrowTemplates.length === 0) return;
+      if (tomorrowTemplates.length === 0) {
+          if (typeof window !== 'undefined') localStorage.setItem(lockKey, 'true');
+          return;
+      }
+
+      // --- 2. DATABASE SAFETY LOCK (Fetch ALL auto-generated orders for tomorrow ONCE) ---
+      const { data: existingOrders } = await supabase.from('Orders')
+          .select('"Customer Name"')
+          .like('Delivery Date', `${targetDate}%`)
+          .ilike('SpecialNotes', '%AUTO-GENERATED%');
+
+      const existingCustomers = new Set((existingOrders || []).map(o => String(o["Customer Name"]).toUpperCase().trim()));
 
       let generatedCount = 0;
 
       for (const template of tomorrowTemplates) {
-          // Check if already auto-generated
-          const { data: existing } = await supabase.from('Orders')
-              .select('DONumber')
-              .eq('Delivery Date', targetDate)
-              .eq('Customer Name', template.CustomerName)
-              .ilike('SpecialNotes', '%AUTO-GENERATED%');
-
-          if (existing && existing.length > 0) continue; // Skip, already generated
+          const cName = String(template.CustomerName).toUpperCase().trim();
+          
+          // Check if already auto-generated in DB
+          if (existingCustomers.has(cName)) continue; 
 
           // Generate
           const dateStr = targetDate.replaceAll('-', '').slice(2);
           const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
           const occurrenceMap = {};
+          
           const orderRows = (template.Items || []).map(item => {
               let baseRep = item.Replacement || "";
               const key = `${item.ProductCode}_${baseRep}`;
@@ -269,8 +287,16 @@ export default function NewOrderPage() {
 
           if (orderRows.length > 0) {
               const { error } = await supabase.from('Orders').insert(orderRows);
-              if (!error) generatedCount++;
+              if (!error) {
+                  generatedCount++;
+                  existingCustomers.add(cName); // Mark as generated in memory to prevent duplicate batches
+              }
           }
+      }
+
+      // Lock it down for today so it doesn't hit DB again on remounts
+      if (typeof window !== 'undefined') {
+          localStorage.setItem(lockKey, 'true');
       }
 
       if (generatedCount > 0) {
@@ -302,8 +328,11 @@ export default function NewOrderPage() {
         await fetchOrderHistory();
         const templates = await fetchStandingOrders();
 
-        // 🚀 FIRE AUTOPILOT ENGINE IN BACKGROUND 🚀
-        await runBackgroundAutopilot(templates);
+        // 🚀 FIRE AUTOPILOT ENGINE (Protected by Ref to prevent double-firing) 🚀
+        if (!autopilotFired.current) {
+            autopilotFired.current = true;
+            await runBackgroundAutopilot(templates);
+        }
 
       } catch(err) {}
       setLoading(false);
@@ -323,7 +352,7 @@ export default function NewOrderPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [router]);
+  }, []);
 
   useEffect(() => {
       if (deliveryDate) {
@@ -843,7 +872,7 @@ export default function NewOrderPage() {
       } catch(e) {}
   };
 
-  // --- FILTERS & MEMOIZATION ---
+  // --- FILTERS, SORTING & MEMOIZATION ---
   const categories = useMemo(() => ['All', ...new Set(products.map(p => p.Category || 'Other'))], [products]);
 
   const filteredProducts = useMemo(() => products.filter(p => {
@@ -853,14 +882,51 @@ export default function NewOrderPage() {
   }).slice(0, 30), [products, activeCategory, searchTerm]);
 
   const filteredOrderHistory = useMemo(() => orderHistory.filter(group => {
+      const rawStatus = getRawStatus(group.info);
+      const displayStatus = formatDisplayStatus(rawStatus);
+      
+      // Status Filter
+      if (statusFilter !== 'ALL' && displayStatus !== statusFilter) return false;
+
+      // Text Search
       if (!historySearchTerm) return true;
       const terms = historySearchTerm.toLowerCase().split(' ').filter(Boolean);
-      const cleanStatus = formatDisplayStatus(getRawStatus(group.info));
-      const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${cleanStatus}`.toLowerCase();
+      const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${displayStatus}`.toLowerCase();
       return terms.every(t => searchStr.includes(t));
-  }), [orderHistory, historySearchTerm]);
+  }), [orderHistory, historySearchTerm, statusFilter]);
 
-  const displayedHistory = filteredOrderHistory.slice(0, 100);
+  // Apply Sorting Engine
+  const sortedOrderHistory = useMemo(() => {
+      let sortableItems = [...filteredOrderHistory];
+      if (sortConfig !== null) {
+          sortableItems.sort((a, b) => {
+              let aValue, bValue;
+              if (sortConfig.key === 'Delivery Date') {
+                  aValue = new Date(a.info['Delivery Date']).getTime();
+                  bValue = new Date(b.info['Delivery Date']).getTime();
+              } else if (sortConfig.key === 'DONumber') {
+                  aValue = a.info.DONumber;
+                  bValue = b.info.DONumber;
+              } else if (sortConfig.key === 'Customer Name') {
+                  aValue = a.info['Customer Name'];
+                  bValue = b.info['Customer Name'];
+              } else if (sortConfig.key === 'Items') {
+                  aValue = a.items.length;
+                  bValue = b.items.length;
+              } else if (sortConfig.key === 'Status') {
+                  aValue = formatDisplayStatus(getRawStatus(a.info));
+                  bValue = formatDisplayStatus(getRawStatus(b.info));
+              }
+
+              if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+              if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+              return 0;
+          });
+      }
+      return sortableItems;
+  }, [filteredOrderHistory, sortConfig]);
+
+  const displayedHistory = sortedOrderHistory.slice(0, 100);
 
   const toggleSelectAll = () => {
     if (selectedOrders.length === displayedHistory.length) setSelectedOrders([]);
@@ -920,68 +986,73 @@ export default function NewOrderPage() {
             
             <div className="lg:col-span-2 space-y-4 md:space-y-6">
               
-              {/* 极致紧凑的客户面板 (Ultra Compact UX) */}
-              <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden"> 
+              {/* 极致轻量化的极简客户面板 (Minimalistic Flat UX) */}
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-2"> 
                 <div 
-                   className="p-3 flex justify-between items-center cursor-pointer bg-white hover:bg-gray-50 transition-colors"
+                   className="px-4 py-3.5 flex justify-between items-center cursor-pointer bg-white hover:bg-gray-50 transition-colors"
                    onClick={() => setIsCustomerBoxOpen(!isCustomerBoxOpen)}
                 >
-                   <div className="flex items-center gap-2 overflow-hidden">
-                       <UserCircleIcon className="w-5 h-5 text-blue-500 shrink-0" />
-                       <div className="flex items-center gap-2">
-                           <h2 className="text-[10px] font-black text-gray-500 uppercase tracking-widest shrink-0">Customer:</h2>
-                           {!isCustomerBoxOpen && (
-                               <span className="text-xs md:text-sm font-black text-gray-900 truncate uppercase">
-                                   {selectedCustomerValue || 'Tap to Select'}
+                   <div className="flex items-center gap-3">
+                       <UserCircleIcon className="w-5 h-5 text-gray-400 shrink-0" />
+                       <div className="flex flex-col">
+                           <span className="text-sm font-semibold text-gray-800 uppercase tracking-wide">
+                               {selectedCustomerValue || 'Select Customer...'}
+                           </span>
+                           {!isCustomerBoxOpen && deliveryDate && (
+                               <span className="text-[10px] font-medium text-gray-500 mt-0.5 uppercase tracking-wider">
+                                   {deliveryDate} • {deliveryMode}
                                </span>
                            )}
                        </div>
                    </div>
-                   <div className="flex items-center gap-2 shrink-0">
-                       {!isCustomerBoxOpen && selectedCustomerValue && (
-                           <span className="text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 hidden sm:block">
-                               {deliveryDate?.substring(5)}
-                           </span>
-                       )}
-                       <ChevronDownIcon className={`w-4 h-4 text-gray-400 transition-transform ${isCustomerBoxOpen ? 'rotate-180' : ''}`} />
-                   </div>
+                   <ChevronDownIcon className={`w-4 h-4 text-gray-400 transition-transform ${isCustomerBoxOpen ? 'rotate-180' : ''}`} />
                 </div>
 
                 {isCustomerBoxOpen && (
-                    <div className="p-3 bg-gray-50/50 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-4 gap-2.5 animate-in slide-in-from-top-2 duration-200"> 
-                       <div className="col-span-2 sm:col-span-4">
-                          <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1 tracking-widest">Search Customer</label>
-                          <input list="customer-list" type="text" className="w-full border border-gray-200 rounded-lg p-2 text-base md:text-sm font-black bg-white outline-none focus:ring-2 focus:ring-blue-500 uppercase shadow-sm" value={selectedCustomerValue} onChange={handleCustomerChange} placeholder="NAME / BRANCH..." />
-                          <datalist id="customer-list">{customers.map(c => <option key={c.id} value={c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName} />)}</datalist>
-                       </div>
-                       <div className="col-span-1">
-                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1 tracking-widest">Date</label>
-                           <input type="date" className="w-full border border-blue-200 rounded-lg p-2 text-base md:text-sm font-black bg-blue-50 text-blue-800 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
-                       </div>
-                       <div className="col-span-1">
-                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1 tracking-widest">Mode</label>
-                           <select className="w-full border border-gray-200 bg-white text-gray-800 text-base md:text-sm font-black rounded-lg p-2 outline-none shadow-sm focus:ring-2 focus:ring-blue-500" value={deliveryMode} onChange={e => setDeliveryMode(e.target.value)}>
-                               <option value="Driver">Driver</option>
-                               <option value="Lalamove">Lalamove</option>
-                               <option value="Self Pick-up">Self Pick-up</option>
-                           </select>
-                       </div>
-                       <div className="col-span-1">
-                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1 tracking-widest">Channel</label>
-                           <select className="w-full border border-gray-200 bg-white text-gray-800 text-base md:text-sm font-bold rounded-lg p-2 outline-none shadow-sm focus:ring-2 focus:ring-blue-500" value={salesChannel} onChange={(e) => setSalesChannel(e.target.value)}><option>Online/FnB</option><option>Wholesale</option><option>Outlet</option></select>
-                       </div>
-                       <div className="col-span-1">
-                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1">Contact</label>
-                           <input type="text" className="w-full border border-gray-200 p-2 rounded-lg text-base md:text-sm font-medium uppercase outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm" value={custDetails.ContactPerson} onChange={(e) => handleDetailChange('ContactPerson', e.target.value)} placeholder="Name" />
-                       </div>
-                       
-                       <div className="col-span-1 sm:col-span-1">
-                           <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1">Phone</label>
-                           <input type="text" className="w-full border border-gray-200 p-2 rounded-lg text-base md:text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm" value={custDetails.ContactNumber} onChange={(e) => handleDetailChange('ContactNumber', e.target.value)} placeholder="Phone" />
-                       </div>
-                       <div className="col-span-1 sm:col-span-3">
-                          <label className="block text-[9px] font-bold text-gray-500 uppercase mb-0.5 ml-1">Delivery Address</label>
-                          <input type="text" className="w-full border border-gray-200 rounded-lg p-2 text-base md:text-sm font-medium uppercase bg-white outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={custDetails.DeliveryAddress} onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)} placeholder="Full address..." />
+                    <div className="px-4 pb-4 bg-white animate-in slide-in-from-top-2 duration-200"> 
+                       <div className="space-y-1 mt-2">
+                          {/* Search Customer */}
+                          <div className="border-b border-gray-100 py-2.5">
+                             <input list="customer-list" type="text" className="w-full text-sm font-semibold text-gray-900 bg-transparent outline-none placeholder-gray-400 uppercase" value={selectedCustomerValue} onChange={handleCustomerChange} placeholder="SEARCH CUSTOMER / BRANCH..." />
+                             <datalist id="customer-list">{customers.map(c => <option key={c.id} value={c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName} />)}</datalist>
+                          </div>
+                          
+                          {/* Date & Mode Inline */}
+                          <div className="flex gap-4 border-b border-gray-100 py-2.5">
+                             <div className="flex-1 flex items-center gap-2">
+                                 <span className="text-[10px] font-bold text-gray-400 w-10 uppercase">Date</span>
+                                 <input type="date" className="flex-1 text-sm font-semibold text-gray-800 bg-transparent outline-none" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
+                             </div>
+                             <div className="w-[1px] bg-gray-100 my-1"></div>
+                             <div className="flex-1 flex items-center gap-2">
+                                 <span className="text-[10px] font-bold text-gray-400 w-10 uppercase">Mode</span>
+                                 <select className="flex-1 text-sm font-semibold text-gray-800 bg-transparent outline-none" value={deliveryMode} onChange={e => setDeliveryMode(e.target.value)}>
+                                     <option value="Driver">Driver</option>
+                                     <option value="Lalamove">Lalamove</option>
+                                     <option value="Self Pick-up">Pick-up</option>
+                                 </select>
+                             </div>
+                          </div>
+                          
+                          {/* Contact & Phone Inline */}
+                          <div className="flex gap-4 border-b border-gray-100 py-2.5">
+                             <input type="text" className="flex-1 text-sm font-medium text-gray-800 bg-transparent outline-none placeholder-gray-400" value={custDetails.ContactPerson} onChange={(e) => handleDetailChange('ContactPerson', e.target.value)} placeholder="Contact Person" />
+                             <div className="w-[1px] bg-gray-100 my-1"></div>
+                             <input type="text" className="flex-1 text-sm font-medium text-gray-800 bg-transparent outline-none placeholder-gray-400" value={custDetails.ContactNumber} onChange={(e) => handleDetailChange('ContactNumber', e.target.value)} placeholder="Phone Number" />
+                          </div>
+
+                          {/* Address */}
+                          <div className="border-b border-gray-100 py-2.5">
+                             <input type="text" className="w-full text-sm font-medium text-gray-800 bg-transparent outline-none placeholder-gray-400" value={custDetails.DeliveryAddress} onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)} placeholder="Full Delivery Address..." />
+                          </div>
+
+                          {/* Channel */}
+                          <div className="flex items-center gap-3 py-2.5">
+                             <span className="text-[10px] font-bold text-gray-400 uppercase w-16">Channel</span>
+                             <select className="flex-1 text-sm font-semibold text-gray-800 bg-transparent outline-none" value={salesChannel} onChange={(e) => setSalesChannel(e.target.value)}>
+                                 <option>Online / FnB</option><option>Wholesale</option><option>Outlet</option>
+                             </select>
+                          </div>
                        </div>
                     </div>
                 )}
@@ -1078,7 +1149,7 @@ export default function NewOrderPage() {
                               </div>
                           )}
                       </div>
-                      <div className="flex justify-between text-xs font-black text-gray-800 px-1 uppercase tracking-widest"><span>Total:</span><span className="text-green-600 text-sm">RM {totalAmount.toFixed(2)}</span></div>
+                      <div className="flex justify-between text-xs font-black text-gray-800 px-1 uppercase tracking-widest"><span>Total Products:</span><span className="text-gray-900 text-sm">{cart.length}</span></div>
                       <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/30 active:scale-95'}`}>
                           {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & ORDER' : 'CONFIRM ORDER')}
                       </button>
@@ -1102,7 +1173,7 @@ export default function NewOrderPage() {
                           </div>
                           <div className="flex flex-col items-start leading-none">
                               <span className="text-[10px] font-bold text-gray-600 uppercase tracking-wide">View Cart</span>
-                              <span className="text-xs font-black text-green-600 mt-1">RM {totalAmount.toFixed(2)}</span>
+                              <span className="text-xs font-black text-gray-900 mt-1">{cart.length} Products</span>
                           </div>
                       </button>
                       <button 
@@ -1148,7 +1219,7 @@ export default function NewOrderPage() {
                   <div className="bg-white border-t border-gray-200 shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.05)]">
                       <div className="p-4 space-y-4" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
                           <div className="flex justify-between items-end mb-2">
-                              <div><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total</p><h3 className="text-2xl font-black text-gray-900 leading-none">RM {totalAmount.toFixed(2)}</h3></div>
+                              <div><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Products</p><h3 className="text-2xl font-black text-gray-900 leading-none">{cart.length}</h3></div>
                               <div className="bg-indigo-50 border border-indigo-100 p-2.5 rounded-xl"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} /><span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save Pattern</span></label></div>
                           </div>
                           {isRecurring && <select className="w-full mt-2 border border-indigo-200 p-3 rounded-xl text-base font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>{DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}</select>}
@@ -1165,32 +1236,33 @@ export default function NewOrderPage() {
       {/* TAB 2: ORDER HISTORY LIST */}
       {activeTab === 'list' && (
       <>
-        <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-140px)] flex flex-col relative overflow-hidden">
-           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 md:mb-6 gap-3 flex-none">
-               <div>
-                  <h2 className="text-base md:text-xl font-black text-gray-800 tracking-tight flex items-center gap-2 uppercase">
-                      <ClipboardDocumentListIcon className="w-5 h-5 md:w-7 md:h-7 text-blue-600" /> Recent Orders
-                  </h2>
-                  <div className="flex items-center gap-1.5 mt-1 ml-1">
-                      <div className={`w-2 h-2 md:w-2.5 md:h-2.5 rounded-full ${isRealtimeActive ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
-                      <span className="text-[8px] md:text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                          {isRealtimeActive ? 'Live' : 'Offline'}
-                      </span>
-                  </div>
-               </div>
-               <div className="flex w-full sm:w-auto gap-2">
-                   <button onClick={handlePullShipdayStatus} disabled={isSyncing} className="bg-blue-50 text-blue-700 font-bold p-3 rounded-xl transition-all border border-blue-200 disabled:opacity-50 shrink-0">
-                       <ArrowPathIcon className={`w-5 h-5 ${isSyncing ? 'animate-spin' : ''}`} />
-                   </button>
-                   <div className="relative w-full sm:w-64">
-                       <input type="text" placeholder="Search..." className="w-full pl-10 p-3 border border-gray-200 rounded-xl text-base md:text-sm font-medium focus:ring-2 focus:ring-blue-500 bg-gray-50 outline-none" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
-                       <span className="absolute left-3.5 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4 md:w-5 md:h-5"/></span>
-                   </div>
-               </div>
-           </div>
+      {/* TAB 2: ORDER HISTORY LIST (Minimal) */}
+      {activeTab === 'list' && (
+      <div className="animate-in fade-in h-[calc(100vh-140px)] flex flex-col relative overflow-hidden">
+         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 flex-none">
+             <div className="flex flex-wrap items-center gap-2">
+                 <input type="text" placeholder="Search orders..." className="bg-gray-50 text-sm px-4 py-2 rounded-full outline-none focus:ring-1 focus:ring-gray-300 w-full sm:w-64" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
+                 <select 
+                     className="bg-gray-50 text-sm px-4 py-2 rounded-full outline-none focus:ring-1 focus:ring-gray-300 text-gray-700 font-medium cursor-pointer"
+                     value={statusFilter}
+                     onChange={(e) => setStatusFilter(e.target.value)}
+                 >
+                     <option value="ALL">All Status</option>
+                     <option value="PENDING">Pending</option>
+                     <option value="ASSIGNED">Assigned</option>
+                     <option value="IN TRANSIT">In Transit</option>
+                     <option value="DELIVERED">Delivered</option>
+                     <option value="FAILED">Failed</option>
+                 </select>
+             </div>
+             <button onClick={handlePullShipdayStatus} disabled={isSyncing} className="text-sm font-medium text-gray-500 hover:text-black flex items-center gap-1 transition-colors">
+                 <ArrowPathIcon className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} /> Sync Shipday
+             </button>
+         </div>
 
-           <div className="md:hidden flex-1 overflow-y-auto space-y-3 custom-scrollbar pb-20">
-              {displayedHistory.map((group) => {
+         {/* Mobile History View (Minimal Rows) */}
+         <div className="md:hidden flex-1 overflow-y-auto space-y-0 custom-scrollbar pb-20">
+            {displayedHistory.map((group) => {
                    const rawStatus = getRawStatus(group.info);
                    const isSelected = selectedOrders.includes(group.info.DONumber);
                    return (
@@ -1212,31 +1284,32 @@ export default function NewOrderPage() {
                                <button onClick={() => openEditModal(group)} className="p-2 bg-gray-50 text-blue-600 rounded-lg"><PencilSquareIcon className="w-4 h-4"/></button>
                                <button onClick={() => handlePrintOrder(group.info.DONumber)} className="p-2 bg-gray-50 text-gray-600 rounded-lg"><PrinterIcon className="w-4 h-4"/></button>
                                <button onClick={() => handleSendToShipday(group.info.DONumber)} className="p-2 bg-gray-50 text-green-600 rounded-lg"><TruckIcon className="w-4 h-4"/></button>
-                               <button onClick={() => handleDeleteDO(group.info.DONumber)} className="p-2 bg-red-50 text-red-600 rounded-lg"><TrashIcon className="w-4 h-4"/></button>
-                           </div>
-                       </div>
-                   )
-              })}
-              {displayedHistory.length === 0 && <div className="text-center p-10 text-gray-400 font-bold text-sm">No orders found.</div>}
-           </div>
+                             <div className="flex gap-2" onClick={e => e.stopPropagation()}>
+                                 <button onClick={() => openEditModal(group)}><PencilSquareIcon className="w-4 h-4 hover:text-black"/></button>
+                                 <button onClick={() => handlePrintOrder(group.info.DONumber)}><PrinterIcon className="w-4 h-4 hover:text-black"/></button>
+                             </div>
+                         </div>
+                     </div>
+                 )
+            })}
+         </div>
 
-           <div className="hidden md:block flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
-               <table className="w-full text-left whitespace-nowrap min-w-[1050px]">
-                   <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
-                       <tr>
-                          <th className="p-5 w-10 text-center">
-                              <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 cursor-pointer" checked={displayedHistory.length > 0 && selectedOrders.length === displayedHistory.length} onChange={toggleSelectAll} />
-                          </th>
-                          <th className="p-5 w-32">Delivery Date</th>
-                          <th className="p-5 w-32">DO Number</th>
-                          <th className="p-5 w-[350px]">Customer Entity</th>
-                          <th className="p-5 text-center w-16">Items</th>
-                          <th className="p-5 text-center w-28">Live Status</th>
-                          <th className="p-5 text-right pr-6 w-32">Actions</th>
-                       </tr>
-                   </thead>
-                   <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
-                       {displayedHistory.map((group) => {
+         {/* Desktop Table View (Minimal Table) */}
+         <div className="hidden md:block flex-1 overflow-auto custom-scrollbar">
+             <table className="w-full text-left whitespace-nowrap text-sm">
+                 <thead className="text-gray-400 border-b border-gray-200 sticky top-0 bg-white">
+                     <tr>
+                        <th className="py-3 font-medium text-center w-10"><input type="checkbox" className="rounded text-black focus:ring-black border-gray-300" checked={displayedHistory.length > 0 && selectedOrders.length === displayedHistory.length} onChange={toggleSelectAll} /></th>
+                        <th className="py-3 font-medium cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('Delivery Date')}>Date {sortConfig.key === 'Delivery Date' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                        <th className="py-3 font-medium cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('DONumber')}>DO Number {sortConfig.key === 'DONumber' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                        <th className="py-3 font-medium cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('Customer Name')}>Customer {sortConfig.key === 'Customer Name' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                        <th className="py-3 font-medium text-center cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('Items')}>Items {sortConfig.key === 'Items' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                        <th className="py-3 font-medium cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('Status')}>Status {sortConfig.key === 'Status' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                        <th className="py-3 font-medium text-right">Actions</th>
+                     </tr>
+                 </thead>
+                 <tbody className="text-gray-700">
+                     {displayedHistory.map((group) => {
                            const rawStatus = getRawStatus(group.info);
                            const isSelected = selectedOrders.includes(group.info.DONumber);
                            return (
@@ -1265,7 +1338,7 @@ export default function NewOrderPage() {
                    </tbody>
                </table>
            </div>
-        </div>
+        </div>)}
 
         {/* 提取到外面，避免被父级 container clip */}
         {selectedOrders.length > 0 && (

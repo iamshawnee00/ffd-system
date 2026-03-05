@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import { 
@@ -112,6 +112,17 @@ export default function NewPurchasePage() {
   const [editingId, setEditingId] = useState(null);
   const [editData, setEditData] = useState({});
   const [historySearchTerm, setHistorySearchTerm] = useState('');
+
+  // History Sort & Filter State
+  const [sortConfig, setSortConfig] = useState({ key: 'Timestamp', direction: 'desc' });
+  const [columnFilters, setColumnFilters] = useState({
+      date: '',
+      supplier: '',
+      product: '',
+      qty: '',
+      cost: '',
+      invoice: ''
+  });
 
   // 1. Fetch Data & User on Load
   useEffect(() => {
@@ -289,7 +300,15 @@ export default function NewPurchasePage() {
       }
   };
 
-  // --- HELPERS ---
+  // --- HELPERS & SORTING ---
+
+  const requestSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
 
   const filteredProducts = products.filter(p => {
     if (!searchTerm) return false;
@@ -299,18 +318,60 @@ export default function NewPurchasePage() {
     return searchParts.every(part => combinedText.includes(part));
   });
 
-  const filteredPurchaseHistory = purchaseHistory.filter(item => {
-    if (!historySearchTerm) return true;
-    const searchTerms = historySearchTerm.toLowerCase().split(' ').filter(t => t);
-    
-    const dateStr = new Date(item.Timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    const combinedText = `${dateStr} ${item.Supplier || ''} ${item.ProductName || ''} ${item.ProductCode || ''} ${item.InvoiceNumber || ''}`.toLowerCase();
-    
-    return searchTerms.every(part => combinedText.includes(part));
-  });
+  const filteredPurchaseHistory = useMemo(() => {
+    let filtered = purchaseHistory.filter(item => {
+      // 1. Global Search
+      if (historySearchTerm) {
+        const searchTerms = historySearchTerm.toLowerCase().split(' ').filter(t => t);
+        const dateStr = new Date(item.Timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        const combinedText = `${dateStr} ${item.Supplier || ''} ${item.ProductName || ''} ${item.ProductCode || ''} ${item.InvoiceNumber || ''}`.toLowerCase();
+        
+        if (!searchTerms.every(part => combinedText.includes(part))) return false;
+      }
 
-  // Limit direct view to 100 items, but allow full results if searching
-  const displayedHistory = historySearchTerm ? filteredPurchaseHistory : filteredPurchaseHistory.slice(0, 100);
+      // 2. Individual Column Filters
+      if (columnFilters.date) {
+          const itemDate = new Date(item.Timestamp).toISOString().split('T')[0];
+          if (itemDate !== columnFilters.date) return false;
+      }
+      if (columnFilters.supplier && !(item.Supplier || '').toLowerCase().includes(columnFilters.supplier.toLowerCase())) return false;
+      if (columnFilters.product && !(item.ProductName || '').toLowerCase().includes(columnFilters.product.toLowerCase())) return false;
+      if (columnFilters.qty && String(item.PurchaseQty).indexOf(columnFilters.qty) === -1) return false;
+      if (columnFilters.cost && String(Number(item.CostPrice).toFixed(2)).indexOf(columnFilters.cost) === -1) return false;
+      if (columnFilters.invoice && !(item.InvoiceNumber || '').toLowerCase().includes(columnFilters.invoice.toLowerCase())) return false;
+
+      return true;
+    });
+
+    if (sortConfig.key) {
+      filtered.sort((a, b) => {
+        let aValue = a[sortConfig.key];
+        let bValue = b[sortConfig.key];
+
+        // Handle special cases for sorting
+        if (sortConfig.key === 'Timestamp') {
+          aValue = new Date(aValue).getTime();
+          bValue = new Date(bValue).getTime();
+        } else if (sortConfig.key === 'PurchaseQty' || sortConfig.key === 'CostPrice') {
+          aValue = Number(aValue);
+          bValue = Number(bValue);
+        } else if (typeof aValue === 'string') {
+          aValue = aValue.toLowerCase();
+          bValue = (bValue || '').toLowerCase();
+        }
+
+        if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return filtered;
+  }, [purchaseHistory, historySearchTerm, sortConfig, columnFilters]);
+
+  // Limit direct view to 100 items, but allow full results if searching or filtering
+  const isFilteringActive = historySearchTerm || Object.values(columnFilters).some(v => v !== '');
+  const displayedHistory = isFilteringActive ? filteredPurchaseHistory : filteredPurchaseHistory.slice(0, 100);
 
   const getStockColor = (balance) => {
     if (balance === null || balance === undefined) return 'bg-gray-100 text-gray-500'; 
@@ -318,6 +379,10 @@ export default function NewPurchasePage() {
     if (qty < 20) return 'bg-red-100 text-red-600';
     if (qty <= 50) return 'bg-orange-100 text-orange-600';
     return 'bg-green-100 text-green-600';
+  };
+
+  const handleClearFilters = () => {
+      setColumnFilters({ date: '', supplier: '', product: '', qty: '', cost: '', invoice: '' });
   };
 
   if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse">FFD SYSTEM ENGINE BOOTING...</div>;
@@ -574,7 +639,7 @@ export default function NewPurchasePage() {
              <div className="relative w-full sm:w-80">
                  <input 
                      type="text" 
-                     placeholder="Search date, product, supplier, invoice..." 
+                     placeholder="Global search any text..." 
                      className="w-full pl-10 p-3.5 border border-gray-200 rounded-2xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50/50 transition-all"
                      value={historySearchTerm}
                      onChange={(e) => setHistorySearchTerm(e.target.value)}
@@ -587,14 +652,39 @@ export default function NewPurchasePage() {
              <table className="w-full text-left whitespace-nowrap min-w-[1050px]">
                  <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
                      <tr>
-                         <th className="p-5 w-32">Date</th>
-                         <th className="p-5 w-64">Supplier</th>
-                         <th className="p-5 flex-1">Product</th>
-                         <th className="p-5 text-center w-24">Qty</th>
+                         <th className="p-5 w-32 cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('Timestamp')}>Date {sortConfig.key === 'Timestamp' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                         <th className="p-5 w-64 cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('Supplier')}>Supplier {sortConfig.key === 'Supplier' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                         <th className="p-5 flex-1 cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('ProductName')}>Product {sortConfig.key === 'ProductName' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                         <th className="p-5 text-center w-24 cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('PurchaseQty')}>Qty {sortConfig.key === 'PurchaseQty' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                          <th className="p-5 text-center w-24">UOM</th>
-                         <th className="p-5 text-right w-32">Cost (RM)</th>
-                         <th className="p-5 w-32">Invoice/Ref</th>
+                         <th className="p-5 text-right w-32 cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('CostPrice')}>Cost (RM) {sortConfig.key === 'CostPrice' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                         <th className="p-5 w-32 cursor-pointer hover:text-black transition-colors select-none" onClick={() => requestSort('InvoiceNumber')}>Invoice/Ref {sortConfig.key === 'InvoiceNumber' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                          <th className="p-5 text-right pr-6 w-32">Actions</th>
+                     </tr>
+                     {/* Column Filter Row */}
+                     <tr className="bg-white border-t border-gray-200 shadow-[0_2px_4px_rgba(0,0,0,0.02)]">
+                         <th className="p-2 pl-4">
+                             <input type="date" className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" value={columnFilters.date} onChange={e => setColumnFilters({...columnFilters, date: e.target.value})} />
+                         </th>
+                         <th className="p-2">
+                             <input type="text" placeholder="Filter..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" value={columnFilters.supplier} onChange={e => setColumnFilters({...columnFilters, supplier: e.target.value})} />
+                         </th>
+                         <th className="p-2">
+                             <input type="text" placeholder="Filter..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" value={columnFilters.product} onChange={e => setColumnFilters({...columnFilters, product: e.target.value})} />
+                         </th>
+                         <th className="p-2">
+                             <input type="text" placeholder="Qty" className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50 text-center" value={columnFilters.qty} onChange={e => setColumnFilters({...columnFilters, qty: e.target.value})} />
+                         </th>
+                         <th className="p-2"></th>
+                         <th className="p-2">
+                             <input type="text" placeholder="Cost" className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50 text-right" value={columnFilters.cost} onChange={e => setColumnFilters({...columnFilters, cost: e.target.value})} />
+                         </th>
+                         <th className="p-2">
+                             <input type="text" placeholder="Filter..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50" value={columnFilters.invoice} onChange={e => setColumnFilters({...columnFilters, invoice: e.target.value})} />
+                         </th>
+                         <th className="p-2 pr-6 text-right">
+                             <button onClick={handleClearFilters} className="text-gray-400 hover:text-red-600 font-bold uppercase tracking-widest text-[9px] bg-white border border-gray-200 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full">Clear</button>
+                         </th>
                      </tr>
                  </thead>
                  <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
@@ -712,7 +802,7 @@ export default function NewPurchasePage() {
                      ))}
                      {displayedHistory.length === 0 && (
                          <tr>
-                             <td colSpan="8" className="p-16 text-center text-gray-300 italic font-bold">No purchase records found matching your search.</td>
+                             <td colSpan="8" className="p-16 text-center text-gray-400 italic font-bold">No purchase records found matching your search.</td>
                          </tr>
                      )}
                  </tbody>

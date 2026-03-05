@@ -579,6 +579,9 @@ export default function DeliveryPage() {
                 <ArrowPathIcon className={`w-3 h-3 md:w-4 md:h-4 ${isSyncing ? 'animate-spin' : ''}`} />
                 <span>{isSyncing ? 'SYNCING...' : 'SYNC SHIPDAY'}</span>
              </button>
+             <button onClick={() => window.open(`/reports/route?date=${selectedDate}`, '_blank')} className="flex-1 sm:flex-none bg-orange-500 hover:bg-orange-600 text-white font-black py-2 px-4 rounded-full text-[10px] md:text-xs uppercase tracking-widest shadow-sm transition-all active:scale-95 flex items-center justify-center gap-2">
+                <span>🗺️</span> <span className="hidden sm:inline">Route</span><span className="sm:hidden">Route</span>
+             </button>
              <button onClick={() => window.open(`/reports/batch-do?date=${selectedDate}`, '_blank')} className="flex-1 sm:flex-none bg-purple-600 hover:bg-purple-700 text-white font-black py-2 px-4 rounded-full text-[10px] md:text-xs uppercase tracking-widest shadow-sm transition-all active:scale-95 flex items-center justify-center gap-2">
                 <span>📦</span> <span className="hidden sm:inline">All DOs</span><span className="sm:hidden">DOs</span>
              </button>
