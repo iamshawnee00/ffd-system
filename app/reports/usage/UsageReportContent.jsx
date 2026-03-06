@@ -79,11 +79,22 @@ export default function UsageReportContent() {
   return (
     <div className="bg-gray-100 min-h-screen p-4 md:p-8 print:p-0 print:bg-white text-black font-sans text-xs">
       
-       {/* Safer style injection to prevent hydration errors */}
+       {/* Safer style injection to prevent hydration errors and fix grey top space */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { size: A4; margin: 0; }
-          body { background: white; -webkit-print-color-adjust: exact; }
+          
+          /* Force overwrite global layouts to remove huge grey top space */
+          html, body, main { 
+            background: white !important; 
+            margin: 0 !important; 
+            padding: 0 !important; 
+            -webkit-print-color-adjust: exact; 
+          }
+          main {
+            padding-top: 0 !important; 
+          }
+          
           .page-break-after { page-break-after: always; }
           .page-break-after:last-child { page-break-after: auto; }
           .print-hidden { display: none !important; }
@@ -155,7 +166,7 @@ export default function UsageReportContent() {
                 
                 {/* DAILY USAGE FORM TITLE (Moved to Right) */}
                 <div className="text-right self-center">
-                    <h2 className="text-4xl font-black uppercase tracking-average leading-none">DAILY<br/>usage</h2>
+                    <h2 className="text-4xl font-black uppercase tracking-widest leading-none">DAILY<br/>usage</h2>
                 </div>
                 </div>
 
