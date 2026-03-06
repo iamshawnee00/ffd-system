@@ -636,8 +636,9 @@ export default function DeliveryPage() {
               </h3>
           </div>
 
-          <div className="p-5 md:p-6 border-b border-gray-100 bg-white relative">
-              <div className="relative w-full shadow-sm rounded-2xl">
+          <div className="p-5 md:p-6 border-b border-gray-100 bg-white flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+              {/* Search */}
+              <div className="relative w-full xl:w-96 shadow-sm rounded-2xl shrink-0">
                   <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
                   <input 
                       type="text" 
@@ -647,6 +648,32 @@ export default function DeliveryPage() {
                       onChange={(e) => setSearchTerm(e.target.value)}
                   />
               </div>
+              
+              {/* BULK ACTIONS TOOLBAR */}
+             <div className={`flex flex-wrap items-center gap-1 sm:gap-2 px-3 py-2 rounded-xl transition-all border w-full xl:w-auto justify-center xl:justify-end ${selectedDOs.size > 0 ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-gray-50 border-gray-200 opacity-60 pointer-events-none'}`}>
+                 <span className="text-[10px] sm:text-xs font-black uppercase text-blue-800 tracking-widest border-r border-blue-200/50 pr-2 sm:pr-3 mr-1 hidden sm:block">
+                     {selectedDOs.size} Selected
+                 </span>
+                 <span className="text-xs font-black text-blue-800 sm:hidden mr-1 border-r border-blue-200/50 pr-2">{selectedDOs.size}</span>
+                 
+                 <button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-1.5 p-1.5 sm:px-2 sm:py-1 rounded-lg text-blue-600 hover:bg-blue-100 transition" title="Bulk Edit">
+                     <PencilSquareIcon className="w-4 h-4 md:w-5 md:h-5"/><span className="hidden md:inline text-xs font-bold uppercase tracking-wider">Edit</span>
+                 </button>
+                 <button onClick={handleBulkPrint} className="flex items-center gap-1.5 p-1.5 sm:px-2 sm:py-1 rounded-lg text-gray-600 hover:bg-gray-200 transition" title="Batch Print">
+                     <PrinterIcon className="w-4 h-4 md:w-5 md:h-5"/><span className="hidden md:inline text-xs font-bold uppercase tracking-wider">Print</span>
+                 </button>
+                 <button onClick={sendSelectedToShipday} className="flex items-center gap-1.5 p-1.5 sm:px-2 sm:py-1 rounded-lg text-green-600 hover:bg-green-100 transition" title="Push Shipday">
+                     <TruckIcon className="w-4 h-4 md:w-5 md:h-5"/><span className="hidden md:inline text-xs font-bold uppercase tracking-wider">Shipday</span>
+                 </button>
+                 <button onClick={handleBulkDelete} className="flex items-center gap-1.5 p-1.5 sm:px-2 sm:py-1 rounded-lg text-red-600 hover:bg-red-100 transition" title="Batch Delete">
+                     <TrashIcon className="w-4 h-4 md:w-5 md:h-5"/><span className="hidden md:inline text-xs font-bold uppercase tracking-wider">Delete</span>
+                 </button>
+                 {selectedDOs.size > 0 && (
+                     <button onClick={() => setSelectedDOs(new Set())} className="ml-1 p-1.5 text-gray-400 hover:text-red-500 rounded-lg transition" title="Clear Selection">
+                         <XMarkIcon className="w-4 h-4 md:w-5 md:h-5" />
+                     </button>
+                 )}
+             </div>
           </div>
 
           <div className="border-b border-gray-100">
@@ -722,15 +749,6 @@ export default function DeliveryPage() {
               )}
           </div>
       </div>
-
-      {/* STICKY FLOATING ACTION BAR */}
-      {selectedDOs.size > 0 && (
-          <div className="fixed bottom-4 md:bottom-8 left-1/2 transform -translate-x-1/2 w-[92%] sm:w-max bg-gray-900/95 backdrop-blur-xl text-white p-3 sm:px-6 sm:py-4 rounded-2xl sm:rounded-full shadow-[0_20px_40px_rgba(0,0,0,0.4)] flex flex-col sm:flex-row items-center gap-3 sm:gap-6 z-[100] animate-in slide-in-from-bottom-10 border border-gray-700">
-              <div className="flex items-center justify-between w-full sm:w-auto sm:border-r border-gray-700 sm:pr-6 shrink-0"><div className="flex items-center gap-3"><span className="bg-blue-600 text-white w-8 h-8 rounded-full flex items-center justify-center font-black text-xs shadow-inner">{selectedDOs.size}</span><span className="font-bold text-[10px] md:text-xs uppercase tracking-widest text-gray-300">Selected</span></div><button onClick={() => setSelectedDOs(new Set())} className="sm:hidden text-gray-400 hover:text-white bg-gray-800 p-1.5 rounded-full transition"><XMarkIcon className="w-5 h-5" /></button></div>
-              <div className="flex gap-2 w-full sm:w-auto overflow-x-auto custom-scrollbar pb-1 sm:pb-0 snap-x"><button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-2 bg-gray-800 sm:bg-transparent hover:bg-white/10 px-4 py-2.5 sm:py-2 rounded-xl transition font-bold text-[10px] md:text-xs shrink-0 snap-start border border-gray-700 sm:border-none"><PencilSquareIcon className="w-4 h-4 text-blue-400" /> Edit</button><button onClick={handleBulkPrint} className="flex items-center gap-2 bg-gray-800 sm:bg-transparent hover:bg-white/10 px-4 py-2.5 sm:py-2 rounded-xl transition font-bold text-[10px] md:text-xs shrink-0 snap-start border border-gray-700 sm:border-none"><PrinterIcon className="w-4 h-4 text-gray-300" /> Print</button><button onClick={sendSelectedToShipday} className="flex items-center gap-2 bg-gray-800 sm:bg-transparent hover:bg-white/10 px-4 py-2.5 sm:py-2 rounded-xl transition font-bold text-[10px] md:text-xs shrink-0 snap-start border border-gray-700 sm:border-none"><TruckIcon className="w-4 h-4 text-green-400" /> Shipday</button><button onClick={handleBulkDelete} className="flex items-center gap-2 bg-red-900/30 sm:bg-transparent hover:bg-red-500/20 px-4 py-2.5 sm:py-2 rounded-xl transition font-bold text-[10px] md:text-xs text-red-400 hover:text-red-300 shrink-0 snap-start border border-red-900/50 sm:border-none"><TrashIcon className="w-4 h-4" /> Delete</button></div>
-              <button onClick={() => setSelectedDOs(new Set())} className="hidden sm:block text-gray-400 hover:text-white transition bg-gray-800 p-2 rounded-full hover:bg-gray-700 shrink-0"><XMarkIcon className="w-5 h-5" /></button>
-          </div>
-      )}
 
       {/* MODALS (BULK EDIT & INDIVIDUAL EDIT) */}
       {isBulkEditOpen && (
