@@ -8,7 +8,7 @@ export default function BatchDoReportContent() {
   const searchParams = useSearchParams();
   const date = searchParams.get('date');
   const driverFilter = searchParams.get('driver'); 
-  const dosFilter = searchParams.get('dos');
+  const dosParam = searchParams.get('dos'); // Added for Bulk Printing support
 
   const [doList, setDoList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -19,12 +19,10 @@ export default function BatchDoReportContent() {
 
   useEffect(() => {
     async function fetchAllDOs() {
-      // Allow fetching if EITHER a date OR specific DOs are provided
-      if (!date && !dosFilter) {
+      if (!date && !dosParam) {
         setLoading(false);
         return;
       }
-      
       setLoading(true);
       setErrorMsg(null);
 
@@ -34,20 +32,18 @@ export default function BatchDoReportContent() {
           .select('*')
           .order('DONumber');
 
-        // Apply date filter if present
         if (date) {
             query = query.eq('Delivery Date', date);
         }
 
-        // Apply driver filter if present
         if (driverFilter && driverFilter.trim() !== '') {
             query = query.eq('DriverName', driverFilter);
         }
-        
-        // Apply specific DOs filter if present
-        if (dosFilter) {
-            const doArray = dosFilter.split(',');
-            query = query.in('DONumber', doArray);
+
+        // Apply bulk printing filter if provided
+        if (dosParam) {
+            const dosArray = dosParam.split(',').map(d => d.trim());
+            query = query.in('DONumber', dosArray);
         }
 
         const { data, error } = await query;
@@ -101,14 +97,13 @@ export default function BatchDoReportContent() {
       setLoading(false);
     }
     
-    if (date || dosFilter) fetchAllDOs();
+    // Fixed dependency array size to always be 3
+    if (date || dosParam) fetchAllDOs();
     else setLoading(false);
-  }, [date, driverFilter, dosFilter]);
+  }, [date, driverFilter, dosParam]);
 
-  if (loading) return <div className="p-10 text-center text-white">Generating Batch DOs...</div>;
-  
-  // Update the fallback message to reflect both acceptable parameters
-  if (!date && !dosFilter) return <div className="p-10 text-center text-gray-400">Please provide a date parameter or select specific orders.</div>;
+  if (loading) return <div className="p-10 text-center text-white font-bold uppercase tracking-widest animate-pulse">Generating Batch DOs...</div>;
+  if (!date && !dosParam) return <div className="p-10 text-center text-gray-400">Please provide a date or DO parameters.</div>;
   
   if (errorMsg) return (
     <div className="p-10 text-center text-red-500">
@@ -116,19 +111,25 @@ export default function BatchDoReportContent() {
     </div>
   );
 
-  if (doList.length === 0) return <div className="p-10 text-center text-gray-400">No orders found for the given criteria.</div>;
+  if (doList.length === 0) return <div className="p-10 text-center text-gray-400">No orders found matching the criteria.</div>;
 
   return (
     <div className="text-black font-sans">
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           @page { size: A4; margin: 0; }
-          html, body { 
+          
+          /* Force overwrite global layouts to remove huge grey top space */
+          html, body, main { 
             background: white !important; 
             margin: 0 !important; 
             padding: 0 !important; 
             -webkit-print-color-adjust: exact;
           }
+          main {
+            padding-top: 0 !important; 
+          }
+          
           .page-break-after { 
             page-break-after: always !important; 
             display: block; 
