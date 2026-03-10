@@ -63,6 +63,9 @@ export default function StockBalancePage() {
     const [productInputs, setProductInputs] = useState({});
     const [submittingLog, setSubmittingLog] = useState(false);
 
+    // --- ALERT MUTING STATES ---
+    const [mutedAlerts, setMutedAlerts] = useState({});
+
     // --- LEDGER / TREND STATES ---
     const [ledgerProduct, setLedgerProduct] = useState(null);
     const [ledgerTransactions, setLedgerTransactions] = useState([]);
@@ -122,6 +125,26 @@ export default function StockBalancePage() {
     const fetchInventoryData = async () => {
         setLoading(true);
 
+        // --- READ MUTED ALERTS ---
+        let localMuted = {};
+        if (typeof window !== 'undefined') {
+            try {
+                const stored = localStorage.getItem('ffd_muted_alerts');
+                if (stored) {
+                    localMuted = JSON.parse(stored);
+                    let changed = false;
+                    Object.keys(localMuted).forEach(k => {
+                        if (localMuted[k].expiry < Date.now()) {
+                            delete localMuted[k];
+                            changed = true;
+                        }
+                    });
+                    if (changed) localStorage.setItem('ffd_muted_alerts', JSON.stringify(localMuted));
+                }
+            } catch(e) {}
+            setMutedAlerts(localMuted);
+        }
+
         const { data: prods, error: prodError } = await supabase
             .from('ProductMaster')
             .select('ProductCode, ProductName, Category, BaseUOM, SalesUOM, StockBalance, AllowedUOMs');
@@ -173,7 +196,9 @@ export default function StockBalancePage() {
             const currentStock = Number(p.StockBalance || 0);
 
             let status = 'Healthy';
-            if (currentStock <= 0) {
+            if (localMuted[p.ProductCode]) {
+                status = localMuted[p.ProductCode].type === 'OOS' ? 'Out of Season' : 'Acknowledged';
+            } else if (currentStock <= 0) {
                 // If we have 0 or negative stock, it's Critical IF we predict we need it tomorrow.
                 status = predictedNeed > 0 ? 'Critical' : 'Out of Stock';
             } else if (currentStock < actualTomorrow) {
@@ -400,6 +425,26 @@ export default function StockBalancePage() {
         }
     };
 
+    // --- ALERT MUTING HANDLERS ---
+    const handleMuteAlert = (productCode, type) => {
+        const expiry = type === 'OOS' 
+            ? Date.now() + (30 * 24 * 60 * 60 * 1000) // 30 days
+            : Date.now() + (24 * 60 * 60 * 1000);     // 24 hours
+        
+        const updated = { ...mutedAlerts, [productCode]: { type, expiry } };
+        localStorage.setItem('ffd_muted_alerts', JSON.stringify(updated));
+        setMutedAlerts(updated);
+        fetchInventoryData(); // Refresh UI
+    };
+
+    const handleUnmuteAlert = (productCode) => {
+        const updated = { ...mutedAlerts };
+        delete updated[productCode];
+        localStorage.setItem('ffd_muted_alerts', JSON.stringify(updated));
+        setMutedAlerts(updated);
+        fetchInventoryData(); // Refresh UI
+    };
+
     // --- CHART GENERATION ---
     const chartData = useMemo(() => {
         const dailyMap = {};
@@ -426,6 +471,8 @@ export default function StockBalancePage() {
             case 'Critical': return 'bg-red-50 text-red-600 border-red-200';
             case 'Out of Stock': return 'bg-gray-100 text-gray-500 border-gray-300';
             case 'Low': return 'bg-orange-50 text-orange-600 border-orange-200';
+            case 'Out of Season': return 'bg-slate-100 text-slate-500 border-slate-300';
+            case 'Acknowledged': return 'bg-gray-100 text-gray-500 border-gray-300';
             default: return 'bg-green-50 text-green-700 border-green-200';
         }
     };
@@ -435,7 +482,11 @@ export default function StockBalancePage() {
     };
 
     const filteredMaster = inventory.filter(p => {
-        if (statusFilter && p.status !== statusFilter) return false;
+        if (statusFilter === 'OOS' && !['Out of Stock', 'Out of Season'].includes(p.status)) return false;
+        if (statusFilter === 'Healthy' && !['Healthy', 'Acknowledged'].includes(p.status)) return false;
+        if (statusFilter === 'Critical' && p.status !== 'Critical') return false;
+        if (statusFilter === 'Low' && p.status !== 'Low') return false;
+
         if (!masterSearch) return true;
         const searchStr = `${p.ProductName || ''} ${p.ProductCode || ''}`.toLowerCase();
         return masterSearch.toLowerCase().split(' ').every(term => searchStr.includes(term));
@@ -448,10 +499,10 @@ export default function StockBalancePage() {
     });
 
     // 4 Box Health Calculations
-    const oosCount = inventory.filter(i => i.status === 'Out of Stock').length;
+    const oosCount = inventory.filter(i => i.status === 'Out of Stock' || i.status === 'Out of Season').length;
     const criticalCount = inventory.filter(i => i.status === 'Critical').length;
     const lowCount = inventory.filter(i => i.status === 'Low').length;
-    const healthyCount = inventory.filter(i => i.status === 'Healthy').length;
+    const healthyCount = inventory.filter(i => i.status === 'Healthy' || i.status === 'Acknowledged').length;
 
     if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse">ANALYZING INVENTORY...</div>;
 
@@ -494,11 +545,11 @@ export default function StockBalancePage() {
                         {/* Health Matrix (Moved Left & Compact) */}
                         <div className="grid grid-cols-2 gap-3 shrink-0">
                             <div 
-                                onClick={() => handleStatusFilterToggle('Out of Stock')}
-                                className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Out of Stock' ? 'bg-gray-100 border-gray-400 ring-2 ring-gray-400' : 'bg-white border-gray-100 hover:border-gray-300 hover:shadow-md'}`}
+                                onClick={() => handleStatusFilterToggle('OOS')}
+                                className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'OOS' ? 'bg-gray-100 border-gray-400 ring-2 ring-gray-400' : 'bg-white border-gray-100 hover:border-gray-300 hover:shadow-md'}`}
                             >
                                 <div>
-                                    <p className="text-[9px] text-gray-500 uppercase font-black tracking-widest">OOS</p>
+                                    <p className="text-[9px] text-gray-500 uppercase font-black tracking-widest">OOS / OUT SEAS</p>
                                     <h3 className="text-2xl font-black text-gray-800 mt-0.5 leading-none">{oosCount}</h3>
                                 </div>
                                 <XCircleIcon className="w-6 h-6 md:w-8 md:h-8 text-gray-300" />
@@ -531,7 +582,7 @@ export default function StockBalancePage() {
                                 className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Healthy' ? 'bg-green-50 border-green-400 ring-2 ring-green-400' : 'bg-white border-gray-100 hover:border-green-300 hover:shadow-md'}`}
                             >
                                 <div>
-                                    <p className="text-[9px] text-green-600 uppercase font-black tracking-widest">Healthy</p>
+                                    <p className="text-[9px] text-green-600 uppercase font-black tracking-widest">Healthy / NOTED</p>
                                     <h3 className="text-2xl font-black text-green-700 mt-0.5 leading-none">{healthyCount}</h3>
                                 </div>
                                 <CheckCircleIcon className="w-6 h-6 md:w-8 md:h-8 text-green-200" />
@@ -586,6 +637,18 @@ export default function StockBalancePage() {
                                                     <span className={`font-black text-xl md:text-2xl ${isSelected ? 'text-blue-900' : 'text-slate-900'}`}>{item.StockBalance} <span className="text-[10px] font-bold opacity-60">{item.displayUOM}</span></span>
                                                 </div>
                                             </div>
+                                            {/* NEW: ALERTS ACTION BAR */}
+                                            {['Critical', 'Low', 'Out of Stock'].includes(item.status) && (
+                                                <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
+                                                    <button onClick={() => handleMuteAlert(item.ProductCode, 'ACK')} className="flex-1 text-[9px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 py-1.5 rounded-lg transition-colors">✓ NOTED (24H)</button>
+                                                    <button onClick={() => handleMuteAlert(item.ProductCode, 'OOS')} className="flex-1 text-[9px] font-black bg-slate-100 hover:bg-slate-200 text-slate-600 py-1.5 rounded-lg transition-colors">❄️ OUT SEASON</button>
+                                                </div>
+                                            )}
+                                            {['Acknowledged', 'Out of Season'].includes(item.status) && (
+                                                <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
+                                                    <button onClick={() => handleUnmuteAlert(item.ProductCode)} className="flex-1 text-[9px] font-black bg-blue-50 hover:bg-blue-100 text-blue-600 py-1.5 rounded-lg transition-colors">↺ RESTORE ALERTS</button>
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })}
