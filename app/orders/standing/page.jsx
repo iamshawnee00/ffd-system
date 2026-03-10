@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 
@@ -10,14 +10,19 @@ import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabaseClient';
 
 
-
 import { 
   TrashIcon,
   PlayCircleIcon,
   ArrowPathIcon,
   BoltIcon,
   PlusCircleIcon,
-  ClipboardDocumentListIcon
+  ClipboardDocumentListIcon,
+  PencilSquareIcon,
+  XMarkIcon,
+  CheckIcon,
+  MagnifyingGlassIcon,
+  PlusIcon,
+  MinusIcon
 } from '@heroicons/react/24/outline';
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -32,10 +37,12 @@ const getLocalDateString = (date) => {
 export default function StandingOrdersPage() {
   const router = useRouter();
   const pathname = usePathname();
+  
   const [loading, setLoading] = useState(true);
   const [currentUser, setCurrentUser] = useState('');
 
   const [standingOrders, setStandingOrders] = useState([]);
+  const [products, setProducts] = useState([]);
   
   const [targetGenDate, setTargetGenDate] = useState(() => {
     const tmr = new Date();
@@ -47,6 +54,18 @@ export default function StandingOrdersPage() {
 
   const autopilotFired = useRef(false);
 
+  // Edit Modal States
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState(null);
+  const [editingItems, setEditingItems] = useState([]);
+  const [productSearchTerm, setProductSearchTerm] = useState('');
+
+  useEffect(() => {
+      if (isEditModalOpen) document.body.style.overflow = 'hidden';
+      else document.body.style.overflow = '';
+      return () => { document.body.style.overflow = ''; };
+  }, [isEditModalOpen]);
+
   useEffect(() => {
     async function loadData() {
       const { data: { session } } = await supabase.auth.getSession();
@@ -55,13 +74,19 @@ export default function StandingOrdersPage() {
         return;
       }
       const email = session.user.email || "";
-      setCurrentUser(email.split('@')[0].toUpperCase());
+      const user = email.split('@')[0].toUpperCase();
+      setCurrentUser(user);
+
+      // Fetch Products for the edit catalog
+      const { data: prodData } = await supabase.from('ProductMaster').select('ProductCode, ProductName, BaseUOM, AllowedUOMs').order('ProductName');
+      setProducts(prodData || []);
 
       const templates = await fetchStandingOrders();
 
+      // Trigger Background Autopilot (Generates ONCE for tomorrow)
       if (!autopilotFired.current) {
           autopilotFired.current = true;
-          await runBackgroundAutopilot(templates, email.split('@')[0].toUpperCase());
+          await runBackgroundAutopilot(templates, user);
       }
       
       setLoading(false);
@@ -80,6 +105,9 @@ export default function StandingOrdersPage() {
     return data || [];
   };
 
+  // ==========================================
+  // AUTOPILOT ENGINE (Runs ONCE per day)
+  // ==========================================
   const runBackgroundAutopilot = async (activeTemplates, user) => {
       if (!activeTemplates || activeTemplates.length === 0) return;
 
@@ -88,6 +116,7 @@ export default function StandingOrdersPage() {
       const targetDate = getLocalDateString(tmr);
       const dayName = DAYS_OF_WEEK[tmr.getDay()];
 
+      // Local storage lock prevents rapid duplicate execution on hot reloads
       const lockKey = `ffd_autopilot_ran_${targetDate}`;
       if (typeof window !== 'undefined' && localStorage.getItem(lockKey)) {
           return; 
@@ -99,6 +128,7 @@ export default function StandingOrdersPage() {
           return;
       }
 
+      // STRICT DB LOCK: Check exactly what orders exist for tomorrow
       const { data: existingOrders, error: lockError } = await supabase.from('Orders')
           .select('"Customer Name", SpecialNotes')
           .eq('Delivery Date', targetDate);
@@ -115,6 +145,8 @@ export default function StandingOrdersPage() {
 
       for (const template of tomorrowTemplates) {
           const cName = String(template.CustomerName).toUpperCase().trim();
+          
+          // If this customer already has an auto-generated order for tomorrow, SKIP IT to prevent duplicates.
           if (existingCustomers.has(cName)) continue; 
 
           const dateStr = targetDate.replaceAll('-', '').slice(2);
@@ -164,8 +196,8 @@ export default function StandingOrdersPage() {
       if (typeof window !== 'undefined') localStorage.setItem(lockKey, 'true');
 
       if (generatedCount > 0) {
-          setAutopilotMessage(`Autopilot generated ${generatedCount} DOs for tomorrow.`);
-          setTimeout(() => setAutopilotMessage(''), 5000);
+          setAutopilotMessage(`Autopilot successfully generated ${generatedCount} regular orders for tomorrow.`);
+          setTimeout(() => setAutopilotMessage(''), 8000);
       }
   };
 
@@ -260,16 +292,96 @@ export default function StandingOrdersPage() {
   };
 
   const deletePattern = async (id) => {
-      if (!confirm("Permanently delete this weekly pattern?")) return;
+      if (!confirm("Permanently delete this weekly template?")) return;
       const { error } = await supabase.from('StandingOrders').delete().eq('id', id);
       if (!error) fetchStandingOrders();
   };
 
+  // ==========================================
+  // EDIT TEMPLATE LOGIC
+  // ==========================================
+  const openEditModal = (template) => {
+      setEditingTemplate({ ...template });
+      setEditingItems(template.Items ? [...template.Items] : []);
+      setProductSearchTerm('');
+      setIsEditModalOpen(true);
+  };
+
+  const handleEditItemChange = (index, field, value) => {
+      setEditingItems(prev => {
+          const newItems = [...prev];
+          newItems[index] = { ...newItems[index], [field]: value };
+          
+          if (field === 'OrderItems') {
+              const matched = products.find(p => p.ProductName === value);
+              if (matched) {
+                  newItems[index].ProductCode = matched.ProductCode;
+                  newItems[index].UOM = matched.BaseUOM;
+              }
+          }
+          return newItems;
+      });
+  };
+
+  const handleDeleteItem = (index) => {
+      setEditingItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAddItem = (product) => {
+      const newItem = {
+          ProductCode: product.ProductCode,
+          OrderItems: product.ProductName,
+          Quantity: 1,
+          UOM: product.BaseUOM,
+          Price: 0,
+          Replacement: "" 
+      };
+      setEditingItems([...editingItems, newItem]);
+      setProductSearchTerm('');
+  };
+
+  const saveEditedTemplate = async () => {
+      if (!confirm("Save changes to this template?")) return;
+      try {
+          const payload = {
+              ...editingTemplate,
+              Items: editingItems
+          };
+
+          const { error } = await supabase
+              .from('StandingOrders')
+              .update(payload)
+              .eq('id', editingTemplate.id);
+
+          if (error) throw error;
+          
+          alert("Template updated successfully.");
+          setIsEditModalOpen(false);
+          fetchStandingOrders();
+      } catch(e) {
+          alert("Error saving template.");
+          console.error(e);
+      }
+  };
+
+  const filteredModalProducts = useMemo(() => products.filter(p => {
+      if (!productSearchTerm) return false;
+      const searchTerms = productSearchTerm.toLowerCase().split(' ').filter(Boolean);
+      const combinedText = `${p.ProductName} ${p.ProductCode}`.toLowerCase();
+      return searchTerms.every(term => combinedText.includes(term));
+  }), [products, productSearchTerm]);
+
   if (loading) return <div className="h-screen flex items-center justify-center text-gray-400 font-black animate-pulse uppercase tracking-widest">Waking up Engine...</div>;
 
   return (
-    <div className="p-4 md:p-8 bg-gray-50 min-h-screen text-slate-800 font-sans relative">
+    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-40 md:pb-32 font-sans relative">
       
+      <style jsx global>{`
+        input, select, textarea { font-size: 16px !important; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+      `}</style>
+
       {autopilotMessage && (
           <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-[500] bg-green-600 text-white px-6 py-3 rounded-full shadow-2xl font-black text-xs uppercase tracking-widest flex items-center gap-2 animate-in fade-in slide-in-from-top-10">
               <BoltIcon className="w-5 h-5" />
@@ -278,12 +390,12 @@ export default function StandingOrdersPage() {
       )}
 
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight uppercase text-indigo-900">Order Management</h1>
-          <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mt-1">Manage single-session and historical orders</p>
-        </div>
-        <div className="text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm">
+      <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"> 
+         <div>
+             <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight uppercase leading-none">Order Management</h1> 
+             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-2">Manage single-session and historical orders</p> 
+         </div>
+         <div className="text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm">
              User: {currentUser}
          </div>
       </div>
@@ -303,18 +415,18 @@ export default function StandingOrdersPage() {
 
       <div className="animate-in fade-in duration-300 space-y-6">
           {/* GENERATOR WIDGET */}
-          <div className="bg-gradient-to-r from-blue-700 to-indigo-800 rounded-[2.5rem] p-6 md:p-8 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6 overflow-hidden relative">
-              <div className="absolute top-0 right-0 p-10 opacity-10 pointer-events-none">
+          <div className="bg-gradient-to-r from-blue-700 to-indigo-800 rounded-[2.5rem] p-6 md:p-8 shadow-2xl flex flex-col xl:flex-row items-center justify-between gap-6 overflow-hidden relative">
+              <div className="absolute top-0 right-0 p-10 opacity-10 pointer-events-none hidden md:block">
                   <PlayCircleIcon className="w-48 h-48 text-white transform rotate-12" />
               </div>
-              <div className="text-white z-10 w-full md:w-auto">
+              <div className="text-white z-10 w-full xl:w-auto">
                   <h2 className="text-xl md:text-2xl font-black flex items-center gap-3 uppercase tracking-tight">
                       <PlayCircleIcon className="w-8 h-8"/> Auto-Generate Orders
                   </h2>
-                  <p className="text-blue-200 font-medium mt-2 text-sm max-w-md">Select an upcoming date to instantly generate real Delivery Orders from your active templates.</p>
+                  <p className="text-blue-200 font-medium mt-2 text-sm max-w-md">Select a date to manually force-generate Delivery Orders from your active templates.</p>
               </div>
               
-              <div className="flex flex-col sm:flex-row items-center gap-4 w-full md:w-auto z-10 bg-white/10 p-2 rounded-3xl backdrop-blur-sm border border-white/20">
+              <div className="flex flex-col sm:flex-row items-center gap-4 w-full xl:w-auto z-10 bg-white/10 p-2 rounded-3xl backdrop-blur-sm border border-white/20">
                   <div className="flex flex-col px-4 w-full sm:w-auto">
                       <span className="text-[9px] font-black text-blue-200 uppercase tracking-widest mb-1">Target Date ({getTargetDayName()})</span>
                       <input 
@@ -351,7 +463,7 @@ export default function StandingOrdersPage() {
                       {standingOrders.map(t => (
                           <div key={t.id} className={`p-5 rounded-3xl border transition-all relative group ${t.Status === 'Active' ? 'bg-white border-gray-200 shadow-sm hover:border-indigo-300' : 'bg-gray-50 border-gray-200 opacity-60'}`}>
                               <div className="flex justify-between items-start mb-3">
-                                  <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest border ${t.DeliveryDay === 'Monday' ? 'bg-blue-50 text-blue-600 border-blue-200' : t.DeliveryDay === 'Friday' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-purple-50 text-purple-600 border-purple-200'}`}>
+                                  <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border shadow-sm ${t.DeliveryDay === 'Monday' ? 'bg-blue-50 text-blue-600 border-blue-200' : t.DeliveryDay === 'Friday' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-purple-50 text-purple-600 border-purple-200'}`}>
                                       Every {t.DeliveryDay}
                                   </span>
                                   <span className={`text-[9px] font-black uppercase tracking-widest ${t.Status === 'Active' ? 'text-green-500' : 'text-gray-400'}`}>{t.Status}</span>
@@ -359,11 +471,12 @@ export default function StandingOrdersPage() {
                               <h4 className="font-black text-gray-800 uppercase leading-tight mb-1 pr-8">{t.CustomerName}</h4>
                               <p className="text-xs text-gray-500 font-medium mb-4 truncate max-w-full">{t.DeliveryAddress}</p>
                               
-                              <div className="flex gap-2">
-                                  <div className="flex-1 py-2 bg-indigo-50 text-indigo-700 font-bold rounded-xl text-[10px] uppercase tracking-widest flex items-center justify-center">
+                              <div className="flex gap-2 border-t border-gray-100 pt-4 mt-auto">
+                                  <div className="flex-1 py-2.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-bold rounded-xl text-[10px] uppercase tracking-widest flex items-center justify-center shadow-sm">
                                       {t.Items?.length || 0} Items
                                   </div>
-                                  <button onClick={() => deletePattern(t.id)} className="p-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition shadow-sm"><TrashIcon className="w-4 h-4"/></button>
+                                  <button onClick={() => openEditModal(t)} className="p-2.5 bg-gray-50 hover:bg-blue-50 text-blue-600 rounded-xl transition shadow-sm border border-gray-200"><PencilSquareIcon className="w-5 h-5"/></button>
+                                  <button onClick={() => deletePattern(t.id)} className="p-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-5 h-5"/></button>
                               </div>
                           </div>
                       ))}
@@ -375,6 +488,93 @@ export default function StandingOrdersPage() {
           </div>
       </div>
 
+      {/* ==========================================
+          EDIT TEMPLATE MODAL
+          ========================================== */}
+      {isEditModalOpen && editingTemplate && (
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-t-3xl sm:rounded-[2.5rem] w-full max-w-5xl p-5 sm:p-8 shadow-2xl flex flex-col h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[95vh] animate-in slide-in-from-bottom-full sm:zoom-in duration-300 border-t sm:border border-gray-100">
+                <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4 shrink-0" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
+                    <div><h2 className="text-lg md:text-2xl font-black text-gray-800 uppercase leading-none">Edit Template</h2></div>
+                    <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                </div>
+                
+                <div className="overflow-y-auto flex-1 custom-scrollbar px-1 pb-20">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 shrink-0 bg-gray-50/50 p-6 rounded-3xl border border-gray-100 text-xs font-bold uppercase shadow-inner">
+                        <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Customer</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs" value={editingTemplate.CustomerName} onChange={e => setEditingTemplate({...editingTemplate, CustomerName: e.target.value})} /></div>
+                        <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Address</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-medium text-base md:text-xs" value={editingTemplate.DeliveryAddress} onChange={e => setEditingTemplate({...editingTemplate, DeliveryAddress: e.target.value})} /></div>
+                        <div><label className="block text-[9px] text-gray-400 mb-1 ml-1">Phone</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs" value={editingTemplate.ContactNumber || ''} onChange={e => setEditingTemplate({...editingTemplate, ContactNumber: e.target.value})} /></div>
+                        <div>
+                            <label className="block text-[9px] text-gray-400 mb-1 ml-1">Generate On</label>
+                            <select className="w-full p-3 border border-gray-200 bg-indigo-50 text-indigo-800 rounded-2xl outline-none font-black text-base md:text-xs uppercase" value={editingTemplate.DeliveryDay} onChange={e => setEditingTemplate({...editingTemplate, DeliveryDay: e.target.value})}>
+                                {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-[9px] text-gray-400 mb-1 ml-1">Status</label>
+                            <select className={`w-full p-3 border border-gray-200 rounded-2xl outline-none font-black text-base md:text-xs uppercase bg-white`} value={editingTemplate.Status} onChange={e => setEditingTemplate({...editingTemplate, Status: e.target.value})}>
+                                <option value="Active">Active</option>
+                                <option value="Inactive">Inactive</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        {/* MOBILE ITEM CARDS */}
+                        <div className="md:hidden space-y-4">
+                            {editingItems.map((item, idx) => (
+                                <div key={idx} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm relative">
+                                    <button onClick={() => handleDeleteItem(idx)} className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-red-500 bg-gray-50 rounded-lg"><TrashIcon className="w-5 h-5"/></button>
+                                    <div className="text-xs font-black uppercase text-gray-800 pr-10 mb-4">{item.OrderItems}</div>
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center bg-gray-50 border rounded-xl p-1.5">
+                                            <button onClick={() => handleEditItemChange(idx, 'Quantity', Math.max(0, Number(item.Quantity)-1))} className="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm active:scale-90"><MinusIcon className="w-5 h-5"/></button>
+                                            <span className="w-12 text-center text-lg font-black">{item.Quantity}</span>
+                                            <button onClick={() => handleEditItemChange(idx, 'Quantity', Number(item.Quantity)+1)} className="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm active:scale-90"><PlusIcon className="w-5 h-5"/></button>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-1">
+                                            <span className="text-[10px] font-black text-gray-400 uppercase">{item.UOM}</span>
+                                            <input type="number" step="0.01" className="w-24 p-2 border border-gray-200 rounded-xl text-right font-black text-base" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} />
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {/* DESKTOP TABLE */}
+                        <div className="hidden md:block overflow-auto border border-gray-100 rounded-3xl bg-white shadow-inner">
+                            <table className="w-full text-left text-xs whitespace-nowrap"><thead className="bg-gray-100/50 font-black text-gray-500 sticky top-0 z-10 text-[10px] uppercase tracking-widest border-b border-gray-100"><tr><th className="p-4 pl-6">Catalog Item</th><th className="p-4 w-24 text-center">Qty</th><th className="p-4 w-28 text-center">UOM</th><th className="p-4 w-32 text-right">Price</th><th className="p-4 w-12 pr-6"></th></tr></thead><tbody className="divide-y divide-gray-50 font-bold text-gray-700">{editingItems.map((item, idx) => (<tr key={idx} className="hover:bg-gray-50/50 transition-colors"><td className="p-3 pl-6"><select className="w-full p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" value={item.OrderItems} onChange={e => handleEditItemChange(idx, 'OrderItems', e.target.value)}><option value={item.OrderItems}>{item.OrderItems}</option>{products.filter(p => p.ProductName !== item.OrderItems).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}</select></td><td className="p-3 text-center"><input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black outline-none shadow-sm focus:ring-2 focus:ring-indigo-500" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td><td className="p-3 text-center"><select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-indigo-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>{(() => {const matchedProd = products.find(p => p.ProductCode === item.ProductCode);const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);})()}</select></td><td className="p-3 text-right font-black text-indigo-600"><input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right font-black outline-none shadow-sm focus:ring-2 focus:ring-indigo-500" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} /></td><td className="p-3 text-center pr-6"><button onClick={() => handleDeleteItem(idx)} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-4 h-4" /></button></td></tr>))}</tbody></table>
+                        </div>
+                    </div>
+
+                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-indigo-100 shadow-sm relative mt-6">
+                        <label className="block text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-2 ml-1">Add Product to Template</label>
+                        <div className="flex gap-2 relative">
+                            <span className="absolute left-3 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4 sm:w-5 sm:h-5"/></span>
+                            <input type="text" placeholder="Search catalog..." className="w-full pl-9 p-3 border border-gray-200 bg-gray-50 rounded-xl text-xs font-bold outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500 transition-all" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
+                        </div>
+                        {productSearchTerm && (
+                            <div className="absolute left-4 right-4 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-48 overflow-y-auto z-20 custom-scrollbar divide-y divide-gray-50">
+                                {filteredModalProducts.map(p => (
+                                    <div key={p.ProductCode} onClick={() => handleAddItem(p)} className="p-3 hover:bg-indigo-50 cursor-pointer flex justify-between items-center group/add text-[10px] sm:text-xs uppercase font-black">
+                                        <div>{p.ProductName} <span className="text-[9px] text-gray-400 ml-2 font-mono">{p.ProductCode}</span></div>
+                                        <span className="bg-indigo-600 text-white p-1 rounded flex items-center justify-center font-black shadow-sm"><PlusIcon className="w-3 h-3"/></span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div className="flex justify-end gap-3 mt-auto shrink-0 pt-6 border-t border-gray-100 bg-white" style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
+                    <button onClick={() => setIsEditModalOpen(false)} className="flex-1 px-8 py-5 bg-gray-100 text-gray-600 font-black rounded-2xl transition active:scale-95 uppercase text-xs tracking-widest border border-gray-200">Cancel</button>
+                    <button onClick={saveEditedTemplate} className="flex-[2] px-10 py-5 bg-indigo-600 text-white font-black rounded-2xl shadow-xl active:scale-95 uppercase text-xs tracking-widest flex items-center justify-center gap-2 shadow-indigo-600/30">
+                        <CheckIcon className="w-5 h-5" strokeWidth={3} /> Save Template
+                    </button>
+                </div>
+            </div>
+          </div>
+      )}
     </div>
   );
 }
