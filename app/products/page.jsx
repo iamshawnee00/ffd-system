@@ -1,11 +1,93 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import { MagnifyingGlassIcon, PlusIcon, PencilSquareIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { 
+  MagnifyingGlassIcon, 
+  PlusIcon, 
+  PencilSquareIcon, 
+  TrashIcon,
+  CalendarIcon,
+  CubeIcon
+} from '@heroicons/react/24/outline';
+
+// ==========================================
+// MOCK AVAILABILITY CALENDAR DATA
+// ==========================================
+const parseAvailability = (str) => str.replace(/\s/g, '').split('').map(c => c === '1');
+
+const MOCK_CALENDAR = [
+  {
+    product: 'Apples',
+    color: '#EF4444', // Red
+    origins: [
+      { name: 'FRANCE',      data: "1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111" },
+      { name: 'ITALY',       data: "1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111" },
+      { name: 'GERMANY',     data: "1111 1111 1111 1100 0000 0000 0000 0000 1111 1111 1111 1111" },
+      { name: 'UK',          data: "1111 1111 1111 1111 1111 1111 1100 0000 1111 1111 1111 1111" },
+      { name: 'SOUTH AFRICA',data: "0000 0000 0000 1111 1111 1111 1111 1111 0000 0000 0000 0000" },
+      { name: 'POLAND',      data: "1111 1111 1111 0000 0000 0000 0000 0000 0000 1111 1111 1111" },
+      { name: 'SPAIN',       data: "1111 1111 1111 0000 0000 0000 0000 0000 0000 1111 1111 1111" },
+      { name: 'NEW ZEALAND', data: "0000 0000 0000 0000 1111 1111 1111 1111 1111 0000 0000 0000" },
+    ]
+  },
+  {
+    product: 'Avocados',
+    color: '#856635', // Olive Brown
+    origins: [
+      { name: 'PERU',         data: "0000 0000 0000 1111 1111 1111 1111 1111 0000 0000 0000 0000" },
+      { name: 'SOUTH AFRICA', data: "0000 0000 0000 1111 1111 1111 1111 1111 1111 1100 0000 0000" },
+      { name: 'KENYA',        data: "0000 0000 0000 1111 1111 1111 0000 0000 0000 0000 0000 0000" },
+      { name: 'SPAIN',        data: "1111 1111 1111 0000 0000 0000 0000 0000 0000 1111 1111 1111" },
+    ]
+  },
+  {
+    product: 'Bananas',
+    color: '#EAB308', // Yellow
+    origins: [
+      { name: 'BELIZE',       data: "1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111" },
+      { name: 'COSTA RICA',   data: "1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111" },
+      { name: 'COLOMBIA',     data: "1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111 1111" }
+    ]
+  },
+  {
+    product: 'Blueberries',
+    color: '#1E3A8A', // Dark Blue
+    origins: [
+      { name: 'IRELAND',      data: "0000 0000 0000 0000 0000 0000 1111 1111 0000 0000 0000 0000" },
+      { name: 'UK',           data: "0000 0000 0000 0000 0000 0000 1111 1111 0000 0000 0000 0000" },
+      { name: 'POLAND',       data: "0000 0000 0000 0000 0000 1111 1111 1111 0000 0000 0000 0000" },
+      { name: 'ARGENTINA',    data: "0000 0000 0000 0000 0000 0000 0000 0000 1111 1111 1111 1111" },
+      { name: 'CHILE',        data: "1111 1111 1111 0000 0000 0000 0000 0000 0000 1111 1111 1111" },
+      { name: 'MOROCCO',      data: "0000 1111 1111 1111 1111 0000 0000 0000 0000 0000 0000 0000" }
+    ]
+  },
+  {
+    product: 'Cherries',
+    color: '#7F1D1D', // Dark Red
+    origins: [
+      { name: 'UK',           data: "0000 0000 0000 0000 0000 0000 1111 1111 0000 0000 0000 0000" },
+      { name: 'BULGARIA',     data: "0000 0000 0000 0000 1111 1111 1111 0000 0000 0000 0000 0000" },
+      { name: 'SPAIN',        data: "0000 0000 0000 1111 1111 1111 1111 1111 1111 0000 0000 0000" },
+      { name: 'SOUTH AFRICA', data: "0000 0000 0000 0000 0000 0000 0000 0000 0000 0000 1111 1111" },
+      { name: 'ARGENTINA',    data: "1111 0000 0000 0000 0000 0000 0000 0000 0000 1111 1111 1111" }
+    ]
+  },
+  {
+    product: 'Citrus',
+    color: '#F97316', // Orange
+    origins: [
+      { name: 'SPAIN',        data: "1111 1111 1111 1111 1111 0000 0000 0000 0000 0000 1111 1111" },
+      { name: 'MOROCCO',      data: "1111 1111 1111 1111 1111 0000 0000 0000 0000 0000 1111 1111" },
+      { name: 'SOUTH AFRICA', data: "0000 0000 0000 0000 1111 1111 1111 1111 1111 1111 0000 0000" },
+      { name: 'ARGENTINA',    data: "0000 0000 0000 0000 1111 1111 1111 1111 1111 0000 0000 0000" }
+    ]
+  }
+];
 
 export default function ProductManagementPage() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('masterlist'); // 'masterlist' | 'calendar'
   
   // Global Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -281,8 +363,27 @@ export default function ProductManagementPage() {
           </button>
         </div>
 
-        {/* FILTERS & SEARCH */}
-        <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-140px)] min-h-[500px]">
+        {/* TABS */}
+        <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200">
+            <button 
+                onClick={() => setActiveTab('masterlist')} 
+                className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'masterlist' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+            >
+                <CubeIcon className="w-5 h-5" /> Product Masterlist
+            </button>
+            <button 
+                onClick={() => setActiveTab('calendar')} 
+                className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'calendar' ? 'bg-orange-500 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+            >
+                <CalendarIcon className="w-5 h-5" /> Availability Calendar
+            </button>
+        </div>
+
+        {/* ==========================================
+            TAB 1: PRODUCT MASTERLIST
+            ========================================== */}
+        {activeTab === 'masterlist' && (
+        <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-180px)] min-h-[500px]">
             <div className="flex flex-col sm:flex-row gap-4 mb-6 flex-none">
               <div className="relative flex-1">
                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -388,6 +489,65 @@ export default function ProductManagementPage() {
                 </table>
             </div>
         </div>
+        )}
+
+        {/* ==========================================
+            TAB 2: AVAILABILITY CALENDAR
+            ========================================== */}
+        {activeTab === 'calendar' && (
+        <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-180px)] min-h-[500px] animate-in fade-in">
+            <div className="mb-6 flex-none">
+                <h2 className="text-xl font-black text-gray-800 tracking-tight">Global Availability Calendar</h2>
+                <p className="text-xs text-gray-500 font-bold uppercase tracking-widest mt-1">Seasonal sourcing matrix by country of origin</p>
+            </div>
+            
+            <div className="flex-1 overflow-auto custom-scrollbar border border-gray-200 rounded-2xl relative">
+                <table className="w-full text-left border-collapse min-w-[1200px] text-xs">
+                    <thead className="bg-gray-50 text-[10px] font-black text-gray-500 uppercase tracking-widest sticky top-0 z-20 shadow-sm">
+                        <tr>
+                            <th rowSpan={2} className="p-4 bg-gray-50 sticky left-0 z-30 border-r border-gray-200 w-32 border-b">Product</th>
+                            <th rowSpan={2} className="p-4 bg-gray-50 sticky left-32 z-30 border-r border-gray-200 w-40 text-right border-b">Origin</th>
+                            {['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'].map(m => (
+                                <th key={m} colSpan={4} className="p-2 text-center border-r border-gray-200 bg-gray-100">{m}</th>
+                            ))}
+                        </tr>
+                        <tr className="bg-white border-b border-gray-200">
+                            {Array.from({length: 12}).map((_, mi) => (
+                                [1,2,3,4].map(w => (
+                                    <th key={`${mi}-${w}`} className="p-1 text-center border-r border-gray-200 text-[8px] text-gray-400 bg-gray-50">{w}</th>
+                                ))
+                            ))}
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 font-medium">
+                        {MOCK_CALENDAR.map(cat => (
+                            cat.origins.map((org, idx) => (
+                                <tr key={`${cat.product}-${org.name}`} className="hover:bg-orange-50/30 transition-colors">
+                                    {idx === 0 && (
+                                        <td rowSpan={cat.origins.length} className="p-3 bg-white sticky left-0 z-10 border-r border-gray-200 align-top shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                                            <span className="font-black text-sm uppercase tracking-tight" style={{color: cat.color}}>{cat.product}</span>
+                                        </td>
+                                    )}
+                                    <td className="p-2 pr-4 bg-white sticky left-32 z-10 border-r border-gray-200 text-right font-black text-[10px] text-gray-600 uppercase shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                                        {org.name}
+                                    </td>
+                                    {parseAvailability(org.data).map((isActive, wIdx) => (
+                                        <td key={wIdx} className="p-[2px] border-r border-gray-100/50 text-center">
+                                            <div 
+                                                className="w-full h-4 rounded-sm transition-colors" 
+                                                style={{ backgroundColor: isActive ? cat.color : 'transparent' }}
+                                                title={isActive ? `${cat.product} from ${org.name}` : ''}
+                                            ></div>
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        )}
 
         {/* --- MODAL (POPUP) --- */}
         {isModalOpen && (
