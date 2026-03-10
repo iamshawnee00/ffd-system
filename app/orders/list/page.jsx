@@ -10,7 +10,6 @@ import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabaseClient';
 
 
-
 import { 
   PencilSquareIcon, 
   TrashIcon,
@@ -49,7 +48,7 @@ const getStatusColor = (rawStatus) => {
 };
 
 export default function OrderListPage() {
-  // 1. Data States (Moved to top to prevent Hook order errors)
+  // 1. Data States
   const [orderHistory, setOrderHistory] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -370,15 +369,20 @@ export default function OrderListPage() {
       window.open(`/orders/${doNumber}/print`, '_blank');
   };
 
-  // Fuzzy search for list
+  // Fuzzy search for list (Updated to include products inside the order)
   const filteredOrderHistory = useMemo(() => orderHistory.filter(group => {
       const rawStatus = getRawStatus(group.info);
       const displayStatus = formatDisplayStatus(rawStatus);
       
       if (statusFilter !== 'ALL' && displayStatus !== statusFilter) return false;
       if (!historySearchTerm) return true;
+
       const terms = historySearchTerm.toLowerCase().split(' ').filter(Boolean);
-      const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${displayStatus}`.toLowerCase();
+      
+      // Combine DO Number, Customer Name, Date, Status, and all product names/codes in this order
+      const itemsText = group.items.map(item => `${item["Order Items"] || ''} ${item["Product Code"] || ''}`).join(' ');
+      const searchStr = `${group.info.DONumber} ${group.info["Customer Name"]} ${group.info["Delivery Date"]} ${displayStatus} ${itemsText}`.toLowerCase();
+      
       return terms.every(t => searchStr.includes(t));
   }), [orderHistory, historySearchTerm, statusFilter]);
 
@@ -471,13 +475,13 @@ export default function OrderListPage() {
              <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
                  <div className="relative flex-1 sm:w-64 sm:flex-none">
                      <span className="absolute left-3 top-2.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4" /></span>
-                     <input type="text" placeholder="Search orders..." className="bg-gray-50 text-sm pl-9 pr-4 py-2 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500 w-full font-medium" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
+                     <input type="text" placeholder="Search orders or products..." className="bg-gray-50 text-sm pl-9 pr-4 py-2 rounded-xl border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500 w-full font-medium" value={historySearchTerm} onChange={(e) => setHistorySearchTerm(e.target.value)} />
                  </div>
                  <select className="bg-gray-50 border border-gray-200 text-sm px-4 py-2 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 text-gray-700 font-bold cursor-pointer" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
                      <option value="ALL">All Status</option>
                      <option value="PENDING">Pending</option>
                      <option value="ASSIGNED">Assigned</option>
-                     <option value="IN TRANSIT">In Transit</option>
+                     <option value="IN TRANSIT">IN TRANSIT</option>
                      <option value="DELIVERED">Delivered</option>
                      <option value="FAILED">Failed</option>
                  </select>
@@ -645,7 +649,7 @@ export default function OrderListPage() {
                 </div>
                 
                 <div className="overflow-y-auto flex-1 custom-scrollbar px-1 pb-20">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6 shrink-0 bg-gray-50/50 p-6 rounded-3xl border border-gray-100 text-xs font-bold uppercase shadow-inner">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 shrink-0 bg-gray-50/50 p-6 rounded-3xl border border-gray-100 text-xs font-bold uppercase shadow-inner">
                         <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Customer</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs" value={editingOrder["Customer Name"]} onChange={e => setEditingOrder({...editingOrder, "Customer Name": e.target.value})} /></div>
                         <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Address</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-medium text-base md:text-xs" value={editingOrder["Delivery Address"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Address": e.target.value})} /></div>
                         <div><label className="block text-[9px] text-gray-400 mb-1 ml-1">Phone</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs" value={editingOrder["Contact Number"] || ''} onChange={e => setEditingOrder({...editingOrder, "Contact Number": e.target.value})} /></div>
@@ -659,32 +663,17 @@ export default function OrderListPage() {
                             {editingItems.map((item, idx) => (
                                 <div key={idx} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm relative">
                                     <button onClick={() => handleDeleteItem(idx)} className="absolute top-3 right-3 p-1.5 text-gray-400 hover:text-red-500 bg-gray-50 rounded-lg"><TrashIcon className="w-5 h-5"/></button>
-                                    
-                                    <div className="pr-8 mb-3">
-                                        <select className="w-full p-2 border-none bg-transparent text-base md:text-xs font-black uppercase outline-none focus:ring-2 focus:ring-blue-500 -ml-2" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}>
-                                            <option value={item["Order Items"]}>{item["Order Items"]}</option>
-                                            {products.filter(p => p.ProductName !== item["Order Items"]).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}
-                                        </select>
-                                    </div>
-                                    
-                                    <div className="flex items-center gap-2 mb-3">
-                                        <div className="flex items-center bg-gray-50 border rounded-xl p-1.5 flex-1">
+                                    <div className="text-xs font-black uppercase text-gray-800 pr-10 mb-4">{item["Order Items"]}</div>
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center bg-gray-50 border rounded-xl p-1.5">
                                             <button onClick={() => handleEditItemChange(idx, 'Quantity', Math.max(0, Number(item.Quantity)-1))} className="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm active:scale-90"><MinusIcon className="w-5 h-5"/></button>
                                             <span className="w-12 text-center text-lg font-black">{item.Quantity}</span>
                                             <button onClick={() => handleEditItemChange(idx, 'Quantity', Number(item.Quantity)+1)} className="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm active:scale-90"><PlusIcon className="w-5 h-5"/></button>
                                         </div>
-                                        <select className="w-24 p-3 border border-gray-200 rounded-xl text-center font-bold uppercase text-base outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
-                                            {(() => {
-                                                const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);
-                                                const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];
-                                                return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);
-                                            })()}
-                                        </select>
-                                    </div>
-
-                                    <div className="flex flex-col items-end gap-1 border-t border-gray-50 pt-3">
-                                        <span className="text-[10px] font-black text-gray-400 uppercase">PRICE (RM)</span>
-                                        <input type="number" step="0.01" className="w-32 p-2 border border-gray-200 rounded-xl text-right font-black text-base shadow-sm" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} />
+                                        <div className="flex flex-col items-end gap-1">
+                                            <span className="text-[10px] font-black text-gray-400 uppercase">{item.UOM}</span>
+                                            <input type="number" step="0.01" className="w-24 p-2 border border-gray-200 rounded-xl text-right font-black text-base" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} />
+                                        </div>
                                     </div>
                                 </div>
                             ))}
@@ -692,7 +681,7 @@ export default function OrderListPage() {
 
                         {/* DESKTOP TABLE */}
                         <div className="hidden md:block overflow-auto border border-gray-100 rounded-3xl bg-white shadow-inner">
-                            <table className="w-full text-left text-xs whitespace-nowrap"><thead className="bg-gray-100/50 font-black text-gray-500 sticky top-0 z-10 text-[10px] uppercase tracking-widest border-b border-gray-100"><tr><th className="p-4 pl-6">Catalog Item</th><th className="p-4 w-24 text-center">Qty</th><th className="p-4 w-28 text-center">UOM</th><th className="p-4 w-32 text-right">Price</th><th className="p-4 w-12 pr-6"></th></tr></thead><tbody className="divide-y divide-gray-50 font-bold text-gray-700">{editingItems.map((item, idx) => (<tr key={idx} className="hover:bg-gray-50/50 transition-colors"><td className="p-3 pl-6"><select className="w-full p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}><option value={item["Order Items"]}>{item["Order Items"]}</option>{products.filter(p => p.ProductName !== item["Order Items"]).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}</select></td><td className="p-3 text-center"><input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td><td className="p-3 text-center"><select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>{(() => {const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);})()}</select></td><td className="p-3 text-right font-black text-blue-600"><input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} /></td><td className="p-3 text-center pr-6"><button onClick={() => handleDeleteItem(idx)} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-4 h-4" /></button></td></tr>))}</tbody></table>
+                            <table className="w-full text-left text-xs whitespace-nowrap"><thead className="bg-gray-100/50 font-black text-gray-500 sticky top-0 z-10 text-[10px] uppercase tracking-widest border-b border-gray-100"><tr><th className="p-4 pl-6">Catalog Item</th><th className="p-4 w-24 text-center">Qty</th><th className="p-4 w-28 text-center">UOM</th><th className="p-4 w-32 text-right">Price</th><th className="p-4 w-12 pr-6"></th></tr></thead><tbody className="divide-y divide-gray-50 font-bold text-gray-700">{editingItems.map((item, idx) => (<tr key={idx} className="hover:bg-gray-50/50 transition-colors"><td className="p-3 pl-6"><select className="w-full p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}><option value={item["Order Items"]}>{item["Order Items"]}</option>{products.filter(p => p.ProductName !== item["Order Items"]).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}</select></td><td className="p-3 text-center"><input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black outline-none shadow-sm focus:ring-2 focus:ring-blue-500" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td><td className="p-3 text-center"><select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>{(() => {const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);})()}</select></td><td className="p-3 text-right font-black text-blue-600"><input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right font-black outline-none shadow-sm focus:ring-2 focus:ring-blue-500" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} /></td><td className="p-3 text-center pr-6"><button onClick={() => handleDeleteItem(idx)} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-4 h-4" /></button></td></tr>))}</tbody></table>
                         </div>
                     </div>
 

@@ -1,14 +1,13 @@
 'use client';
 import React, { useState, useEffect, useMemo } from 'react';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 
 // ==================================================================
 // ⚠️ 重要提示：当您将此代码复制回本地项目时，请取消注释以下三行真实的导入，
 // 并删除下方的 MOCK API 部分！
 // ==================================================================
 import { supabase } from '../../lib/supabaseClient';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-
 
 
 import { 
@@ -88,6 +87,7 @@ export default function NewOrderPage() {
   const pathname = usePathname();
 
   // 4. Effects
+  // Body Scroll Lock for Mobile Cart
   useEffect(() => {
       if (isMobileCartOpen) {
           document.body.style.overflow = 'hidden';
@@ -97,6 +97,7 @@ export default function NewOrderPage() {
       return () => { document.body.style.overflow = ''; };
   }, [isMobileCartOpen]);
 
+  // INITIAL DATA FETCH
   useEffect(() => {
     async function loadData() {
       try {
@@ -203,7 +204,7 @@ export default function NewOrderPage() {
         qty: qty,
         uom: uom,
         price: price, 
-        notes: '',
+        notes: '', // Notes field initialized here
         isReplacement: inputs.replacement || false
       };
       return [...prevCart, newItem];
@@ -227,7 +228,17 @@ export default function NewOrderPage() {
     }).filter(item => item.qty > 0));
   };
 
-  const removeFromCart = (cartId) => setCart(cart.filter(item => item.cartId !== cartId));
+  // Helper to update notes for a specific cart item
+  const updateCartNote = (cartId, note) => {
+    setCart(prevCart => prevCart.map(item => {
+      if (item.cartId === cartId) {
+        return { ...item, notes: note };
+      }
+      return item;
+    }));
+  };
+
+  const removeFromCart = (cartId) => setCart(filter(item => item.cartId !== cartId));
 
   const handleSubmitOrder = async () => {
     if (!selectedCustomerValue || !deliveryDate || cart.length === 0) {
@@ -269,7 +280,7 @@ export default function NewOrderPage() {
             "UOM": item.uom,
             "Price": item.isReplacement ? 0 : item.price,
             "Replacement": repVal,
-            "SpecialNotes": item.notes,
+            "SpecialNotes": item.notes, // Maps directly to DB SpecialNotes
             "LoggedBy": currentUser
         };
     });
@@ -332,7 +343,7 @@ export default function NewOrderPage() {
   if (loading) return <div className="p-10 flex items-center justify-center h-screen font-black text-gray-300 animate-pulse uppercase">Booting New Order Engine...</div>;
 
   return (
-    <div className="p-3 md:p-8 max-w-full overflow-x-clip min-h-screen bg-gray-50/50 pb-40 md:pb-32 font-sans relative">
+    <div className="p-3 md:p-8 max-w-full min-h-screen bg-gray-50/50 pb-40 md:pb-32 font-sans relative">
       
       <style jsx global>{`
         input, select, textarea { font-size: 16px !important; }
@@ -365,7 +376,8 @@ export default function NewOrderPage() {
           </Link>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in duration-300">
+      {/* GRID CONTAINER - Removed items-start so columns stretch, allowing inner sticky div to track full height */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in duration-300 relative">
         <div className="lg:col-span-2 space-y-4 md:space-y-6">
           
           {/* Customer Selection Box */}
@@ -457,7 +469,7 @@ export default function NewOrderPage() {
                 ))}
              </div>
 
-             <div className="sticky top-[0px] z-20 bg-gray-50/90 backdrop-blur-md py-1">
+             <div className="sticky top-0 md:top-[72px] z-10 bg-gray-50/90 backdrop-blur-md py-2 -mx-3 px-3 md:mx-0 md:px-0">
                 <div className="relative shadow-sm rounded-xl overflow-hidden">
                     <input type="text" placeholder="Search catalog..." className="w-full pl-10 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 text-base md:text-sm font-bold bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
                     <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
@@ -488,16 +500,18 @@ export default function NewOrderPage() {
           </div>
         </div>
 
-        {/* Desktop Cart Column */}
-        <div className="hidden lg:block lg:col-span-1 self-start sticky top-4">
-           <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-6rem)] min-h-[500px]">
-              <div className="flex justify-between items-center mb-6">
+        {/* Desktop Cart Column (Grid Item wrapper without sticky) */}
+        <div className="hidden lg:block lg:col-span-1 relative">
+           {/* Inner container applying sticky logic perfectly inside the stretched grid item */}
+           <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-2rem)] sticky top-4 z-10">
+              <div className="flex justify-between items-center mb-6 shrink-0">
                  <h2 className="text-lg font-black text-gray-800 tracking-tight uppercase">Cart Summary</h2>
                  <span className="bg-green-100 text-green-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{cart.length} items</span>
               </div>
-              <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-1">
-                  {cart.length === 0 ? <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">Cart is empty</div> : cart.map((item) => (
-                    <div key={item.cartId} className="p-3 bg-gray-50/80 border border-gray-100 rounded-xl relative group">
+              
+              <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-2 min-h-0">
+                  {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">Cart is empty</div> : cart.map((item) => (
+                    <div key={item.cartId} className="p-3 bg-gray-50/80 border border-gray-100 rounded-xl relative group shrink-0">
                         <div className="flex justify-between items-start mb-1">
                             <div className="pr-6 text-[10px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
                             <button onClick={() => removeFromCart(item.cartId)} className="text-gray-400 hover:text-red-500 absolute top-2 right-2"><XMarkIcon className="w-4 h-4" /></button>
@@ -507,10 +521,21 @@ export default function NewOrderPage() {
                              <span className="text-[9px] font-black text-gray-500 ml-1 mr-auto">{item.uom}</span>
                              {item.isReplacement ? <span className="text-[8px] font-black text-white bg-red-400 px-2 py-1 rounded shadow-sm">REP</span> : <span className="text-[10px] font-black text-gray-700 bg-white border border-gray-200 px-2 py-1 rounded">RM {(item.price || 0).toFixed(2)}</span>}
                         </div>
+                        {/* Notes Input */}
+                        <div className="mt-2 pt-2 border-t border-gray-200/50">
+                            <input 
+                                type="text" 
+                                placeholder="Add note (e.g. masak sikit)..." 
+                                className="w-full bg-white border border-gray-200 text-[10px] p-2 rounded-lg outline-none focus:border-green-400 focus:ring-1 focus:ring-green-400 transition-all text-gray-700 placeholder-gray-400"
+                                value={item.notes || ''}
+                                onChange={(e) => updateCartNote(item.cartId, e.target.value)}
+                            />
+                        </div>
                     </div>
                   ))}
               </div>
-              <div className="mt-auto pt-4 border-t border-gray-100 space-y-4">
+              
+              <div className="mt-auto pt-4 border-t border-gray-100 space-y-4 shrink-0 bg-white">
                   <div className="bg-indigo-50/50 border border-indigo-100 p-3 rounded-2xl">
                       <label className="flex items-center gap-2 cursor-pointer mb-2">
                           <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
@@ -533,6 +558,89 @@ export default function NewOrderPage() {
            </div>
         </div>
       </div>
+
+      {/* Mobile Cart Floating Bar */}
+      {!isMobileCartOpen && (
+          <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-[200] animate-in slide-in-from-bottom-2" style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
+              <div className="flex items-center justify-between gap-3 max-w-lg mx-auto">
+                  <button onClick={() => setIsMobileCartOpen(true)} className="flex items-center justify-center gap-3 bg-gray-50 px-4 py-3.5 rounded-xl border border-gray-200 flex-1 active:bg-gray-100 transition-colors">
+                      <div className="relative">
+                          <ShoppingCartIcon className="w-6 h-6 text-gray-700" />
+                          {cart.length > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full shadow-sm">
+                                  {cart.length}
+                              </span>
+                          )}
+                      </div>
+                      <div className="flex flex-col items-start leading-none">
+                          <span className="text-[10px] font-bold text-gray-600 uppercase tracking-wide">View Cart</span>
+                          <span className="text-xs font-black text-gray-900 mt-1">{cart.length} Products</span>
+                      </div>
+                  </button>
+                  <button 
+                      onClick={handleSubmitOrder} 
+                      disabled={submitting || cart.length === 0} 
+                      className={`text-white font-black py-3.5 px-6 rounded-xl shadow-lg transition active:scale-95 text-xs uppercase tracking-widest flex-1 ${submitting || cart.length === 0 ? 'bg-gray-300 shadow-none' : 'bg-green-600 hover:bg-green-700'}`}
+                  >
+                      {submitting ? 'PROCESSING...' : 'CONFIRM'}
+                  </button>
+              </div>
+          </div>
+      )}
+
+      {/* Mobile Cart Modal */}
+      {isMobileCartOpen && (
+           <div className="lg:hidden fixed inset-0 bg-white z-[300] flex flex-col h-[100dvh] w-screen overflow-hidden animate-in slide-in-from-bottom-full duration-300">
+              <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50 shrink-0" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
+                  <div className="flex items-center gap-2"><ShoppingCartIcon className="w-6 h-6 text-green-600" /><h2 className="text-base font-black text-gray-800 uppercase tracking-tight">Review Cart</h2></div>
+                  <button onClick={() => setIsMobileCartOpen(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><XMarkIcon className="w-5 h-5"/></button>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-100/50 custom-scrollbar pb-24">
+                  {cart.map((item) => (
+                      <div key={item.cartId} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 relative">
+                          <button onClick={() => removeFromCart(item.cartId)} className="absolute top-3 right-3 text-gray-300 hover:text-red-500 p-1"><XMarkIcon className="w-4 h-4" /></button>
+                          <div className="text-xs font-black uppercase text-gray-800 pr-8 mb-3">{item.ProductName}</div>
+                          <div className="flex items-center justify-between">
+                              <div className="flex items-center bg-gray-50 border border-gray-200 rounded-lg p-1">
+                                  <button onClick={() => updateCartQty(item.cartId, -1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><MinusIcon className="w-4 h-4"/></button>
+                                  <span className="w-8 text-center text-sm font-black">{item.qty}</span>
+                                  <button onClick={() => updateCartQty(item.cartId, 1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><PlusIcon className="w-4 h-4"/></button>
+                              </div>
+                              <div className="flex flex-col items-end">
+                                  <span className="text-[10px] font-black text-gray-500 uppercase mx-2 mb-1">{item.uom}</span>
+                                  {item.isReplacement ? <span className="text-[9px] font-black text-white bg-red-400 px-2 py-1 rounded shadow-sm">REP</span> : <span className="text-[11px] font-black text-gray-700 bg-gray-50 border border-gray-200 px-2 py-1 rounded">RM {(item.price * item.qty).toFixed(2)}</span>}
+                              </div>
+                          </div>
+                          {/* Notes Input Mobile */}
+                          <div className="mt-3 pt-3 border-t border-gray-100">
+                              <input 
+                                  type="text" 
+                                  placeholder="Add special note (optional)..." 
+                                  className="w-full bg-gray-50 border border-gray-200 text-xs p-2.5 rounded-xl outline-none focus:ring-2 focus:ring-green-400 transition-all text-gray-700 placeholder-gray-400 font-medium"
+                                  value={item.notes || ''}
+                                  onChange={(e) => updateCartNote(item.cartId, e.target.value)}
+                              />
+                          </div>
+                      </div>
+                  ))}
+                  {cart.length === 0 && <div className="text-center p-10 text-gray-400 font-bold italic text-sm">Cart is empty</div>}
+              </div>
+
+              <div className="bg-white border-t border-gray-200 shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.05)]">
+                  <div className="p-4 space-y-4" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
+                      <div className="flex justify-between items-end mb-2">
+                          <div><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Products</p><h3 className="text-2xl font-black text-gray-900 leading-none">{cart.length}</h3></div>
+                          <div className="bg-indigo-50 border border-indigo-100 p-2.5 rounded-xl"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} /><span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save Pattern</span></label></div>
+                      </div>
+                      {isRecurring && <select className="w-full mt-2 border border-indigo-200 p-3 rounded-xl text-base font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>{DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}</select>}
+                      <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 active:scale-95'}`}>
+                          {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & SUBMIT' : 'SUBMIT ORDER')}
+                      </button>
+                  </div>
+              </div>
+           </div>
+      )}
     </div>
   );
 }

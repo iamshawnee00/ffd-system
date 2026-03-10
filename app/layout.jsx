@@ -22,7 +22,8 @@ function LayoutContent({ children }) {
   // If Client Portal or Login page, return without the Sidebar
   if (isClientPortal || isLogin) {
     return (
-      <main className="w-full bg-gray-50 min-h-screen overflow-x-hidden">
+      // Changed overflow-x-hidden to overflow-x-clip to fix sticky positioning globally
+      <main className="w-full bg-gray-50 min-h-screen overflow-x-clip">
         {children}
       </main>
     );
@@ -43,7 +44,8 @@ function LayoutContent({ children }) {
         <Sidebar />
       </div>
       
-      <main className="flex-1 w-full bg-gray-100 min-h-screen overflow-x-hidden md:pt-0 pt-[72px]">
+      {/* Changed overflow-x-hidden to overflow-x-clip to fix sticky positioning globally */}
+      <main className="flex-1 w-full bg-gray-100 min-h-screen overflow-x-clip md:pt-0 pt-[72px]">
         {children}
       </main>
     </div>
