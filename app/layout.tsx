@@ -11,18 +11,16 @@ const poppins = Poppins({
   variable: '--font-poppins',
 });
 
-function LayoutContent({ children }) {
+function LayoutContent({ children }: { children: React.ReactNode }) {
   const { isCollapsed } = useSidebar();
   const pathname = usePathname();
 
-  // Hide sidebar completely on these paths
+  // Check if the user is in the Client Portal
   const isClientPortal = pathname.startsWith('/client-portal');
-  const isLogin = pathname === '/login';
 
-  // If Client Portal or Login page, return without the Sidebar
-  if (isClientPortal || isLogin) {
+  // If Client Portal, return without the Sidebar
+  if (isClientPortal) {
     return (
-      // Changed overflow-x-hidden to overflow-x-clip to fix sticky positioning globally
       <main className="w-full bg-gray-50 min-h-screen overflow-x-clip">
         {children}
       </main>
@@ -44,15 +42,18 @@ function LayoutContent({ children }) {
         <Sidebar />
       </div>
       
-      {/* Changed overflow-x-hidden to overflow-x-clip to fix sticky positioning globally */}
-      <main className="flex-1 w-full bg-gray-100 min-h-screen overflow-x-clip md:pt-0 pt-[72px]">
+      <main className="flex-1 w-full bg-gray-100 min-h-screen overflow-x-clip">
         {children}
       </main>
     </div>
   );
 }
 
-export default function RootLayout({ children }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
       <body className={poppins.className}>

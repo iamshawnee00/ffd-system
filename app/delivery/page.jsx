@@ -467,6 +467,27 @@ export default function DeliveryPage() {
       setEditingItems(prev => prev.filter((_, i) => i !== index));
   };
 
+  const handleAddItem = (product) => {
+    const newItem = {
+      id: `new-${Date.now()}`, 
+      DONumber: editingOrder.DONumber,
+      "Delivery Date": editingOrder["Delivery Date"],
+      "Customer Name": editingOrder["Customer Name"],
+      "Delivery Address": editingOrder["Delivery Address"],
+      "Contact Person": editingOrder["Contact Person"],
+      "Contact Number": editingOrder["Contact Number"],
+      Status: formatDisplayStatus(getRawStatus(editingOrder)),
+      "Product Code": product.ProductCode,
+      "Order Items": product.ProductName,
+      Quantity: 1,
+      UOM: product.BaseUOM,
+      Price: 0,
+      Replacement: "" 
+    };
+    setEditingItems([...editingItems, newItem]);
+    setProductSearchTerm('');
+  };
+
   const saveEditedOrder = async () => {
       if (!confirm("Save changes?")) return;
       try {
@@ -565,7 +586,7 @@ export default function DeliveryPage() {
   };
 
   return (
-    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32 animate-in fade-in duration-300">
+    <div className="p-3 md:p-8 max-w-full min-h-screen bg-gray-50/50 pb-32 font-sans relative overflow-x-clip">
       
       {/* HEADER & ACTIONS */}
       <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -627,16 +648,16 @@ export default function DeliveryPage() {
           </div>
       </div>
 
-      {/* ORDERS LIST SECTION */}
-      <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 overflow-hidden flex flex-col">
-          <div className="p-5 md:p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-50/50 gap-4">
+      {/* ORDERS LIST SECTION: Fixed Height Box to trigger internal scrolling ("slider"), made 50% longer */}
+      <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 flex flex-col relative overflow-hidden h-[85vh] min-h-[750px]">
+          <div className="p-5 md:p-6 border-b border-gray-100 flex flex-col md:flex-row justify-between items-start md:items-center bg-gray-50/50 gap-4 shrink-0">
               <h3 className="text-base md:text-lg font-black text-gray-800 flex items-center gap-3 uppercase tracking-tight">
                   Pipeline for <span className="text-blue-600">{formatDateLabel(selectedDate)}</span>
                   <span className="bg-gray-200 text-gray-600 text-[10px] md:text-xs px-2.5 py-1 rounded-full font-black">{filteredGroupedOrders.length}</span>
               </h3>
           </div>
 
-          <div className="p-5 md:p-6 border-b border-gray-100 bg-white flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+          <div className="p-5 md:p-6 border-b border-gray-100 bg-white flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 shrink-0 z-10 relative">
               {/* Search */}
               <div className="relative w-full xl:w-96 shadow-sm rounded-2xl shrink-0">
                   <span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
@@ -676,7 +697,7 @@ export default function DeliveryPage() {
              </div>
           </div>
 
-          <div className="border-b border-gray-100">
+          <div className="border-b border-gray-100 shrink-0">
               <button onClick={() => setIsUsageExpanded(!isUsageExpanded)} className="w-full flex justify-between items-center px-5 md:px-6 py-4 text-purple-700 font-bold bg-purple-50 hover:bg-purple-100 transition-colors text-xs md:text-sm uppercase tracking-widest">
                   <span className="flex items-center gap-2">📋 Daily Production Usage Summary</span>
                   <span>{isUsageExpanded ? '▲' : '▼'}</span>
@@ -695,8 +716,8 @@ export default function DeliveryPage() {
               )}
           </div>
 
-          {/* DESKTOP TABLE VIEW */}
-          <div className="hidden md:block overflow-x-auto flex-1 custom-scrollbar">
+          {/* DESKTOP TABLE VIEW: Scrolls internally within the constrained parent box */}
+          <div className="hidden md:block overflow-auto flex-1 custom-scrollbar bg-white">
               <table className="w-full text-left min-w-[1050px]">
                   <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
                       <tr>
@@ -728,14 +749,14 @@ export default function DeliveryPage() {
               </table>
           </div>
 
-          {/* MOBILE CARD VIEW */}
-          <div className="md:hidden flex flex-col gap-3 p-3 bg-gray-50/50 pb-20">
+          {/* MOBILE CARD VIEW: Scrolls internally within the constrained parent box */}
+          <div className="md:hidden flex flex-col gap-3 p-3 bg-gray-50/50 pb-20 overflow-y-auto flex-1 custom-scrollbar">
               {filteredGroupedOrders.length > 0 && (<div className="flex items-center gap-3 px-3 py-2 bg-white rounded-xl shadow-sm border border-gray-100"><input type="checkbox" onChange={handleSelectAll} checked={selectedDOs.size > 0 && selectedDOs.size === filteredGroupedOrders.length} className="w-5 h-5 rounded text-blue-600 border-gray-300" /><span className="text-xs font-black text-gray-500 uppercase tracking-widest">Select All Today</span></div>)}
               {filteredGroupedOrders.length === 0 ? (<div className="p-10 text-center text-gray-400 italic font-bold bg-white rounded-2xl border border-dashed border-gray-200">No orders scheduled.</div>) : (filteredGroupedOrders.map(group => {
                       const rawStatus = getRawStatus(group.info);
                       const isSelected = selectedDOs.has(group.info.DONumber);
                       return (
-                          <div key={group.info.DONumber} className={`rounded-2xl p-4 transition-all relative border ${isSelected ? 'bg-blue-50/50 border-blue-400 shadow-md ring-1 ring-blue-400' : 'bg-white border-gray-100 shadow-sm hover:border-blue-200'}`} onClick={() => handleCheckbox(group.info.DONumber)}>
+                          <div key={group.info.DONumber} className={`rounded-2xl p-4 transition-all relative border shrink-0 ${isSelected ? 'bg-blue-50/50 border-blue-400 shadow-md ring-1 ring-blue-400' : 'bg-white border-gray-100 shadow-sm hover:border-blue-200'}`} onClick={() => handleCheckbox(group.info.DONumber)}>
                               <div className="flex justify-between items-start mb-3">
                                   <div className="flex flex-col gap-1.5"><span className="font-mono text-[10px] font-black text-green-700 bg-green-100 px-2 py-1 rounded border border-green-200 w-fit">{group.info.DONumber}</span><span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase border w-fit ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></div>
                                   <input type="checkbox" className="w-6 h-6 rounded-full text-blue-600 border-gray-300 pointer-events-none mt-1" checked={isSelected} readOnly />
@@ -752,27 +773,102 @@ export default function DeliveryPage() {
 
       {/* MODALS (BULK EDIT & INDIVIDUAL EDIT) */}
       {isBulkEditOpen && (
-          <div className="fixed inset-0 bg-black/60 z-[110] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm"><div className="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-lg p-6 sm:p-8 shadow-2xl flex flex-col animate-in slide-in-from-bottom-10 sm:zoom-in duration-200 border-t border-gray-100 sm:border max-h-[90dvh]"><div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4 shrink-0"><div><h2 className="text-lg md:text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit</h2><p className="text-[10px] md:text-xs text-gray-400 font-bold mt-1">Applying to <span className="text-blue-600">{selectedDOs.size}</span> orders.</p></div><button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button></div><div className="space-y-4 mb-6 overflow-y-auto custom-scrollbar px-1"><div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100"><label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">New Delivery Date</label><input type="date" className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-bold text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryDate} onChange={e => setBulkEditData({...bulkEditData, deliveryDate: e.target.value})} /></div><div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Assign Driver</label><input list="modal-drivers" placeholder="Type driver name..." className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={bulkEditData.driverName} onChange={e => setBulkEditData({...bulkEditData, driverName: e.target.value})} /><datalist id="modal-drivers"><option value="Ali" /><option value="Muthu" /><option value="Ah Meng" /><option value="Lalamove" /></datalist></div><div className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Delivery Mode</label><select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryMode} onChange={e => setBulkEditData({...bulkEditData, deliveryMode: e.target.value})}><option value="">-- No Change --</option><option value="Driver">Driver</option><option value="Lalamove">Lalamove</option><option value="Self Pick-up">Self Pick-up</option></select></div><div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Status</label><select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={bulkEditData.status} onChange={e => setBulkEditData({...bulkEditData, status: e.target.value})}><option value="">-- No Change --</option><option value="PENDING">PENDING</option><option value="ASSIGNED">ASSIGNED</option><option value="IN TRANSIT">IN TRANSIT</option><option value="DELIVERED">DELIVERED</option><option value="FAILED">FAILED</option><option value="CANCELLED">CANCELLED</option></select></div></div></div><div className="flex justify-end gap-3 pt-4 border-t border-gray-100 shrink-0 pb-4 sm:pb-0"><button onClick={() => setIsBulkEditOpen(false)} className="flex-1 sm:flex-none px-6 py-4 sm:py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button><button onClick={handleBulkEditSave} className="flex-1 sm:flex-none px-8 py-4 sm:py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-xs uppercase tracking-widest">Apply to {selectedDOs.size}</button></div></div></div>
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden">
+            <div className="bg-white rounded-[2.5rem] w-full max-w-lg shadow-2xl flex flex-col animate-in zoom-in duration-200 border border-gray-100 max-h-[90vh] overflow-hidden">
+                <div className="flex justify-between items-center p-6 border-b border-gray-100 shrink-0 bg-white">
+                    <div>
+                        <h2 className="text-lg md:text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit</h2>
+                        <p className="text-[10px] md:text-xs text-gray-400 font-bold mt-1">Applying to <span className="text-blue-600">{selectedDOs.size}</span> orders.</p>
+                    </div>
+                    <button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                </div>
+                
+                <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0 custom-scrollbar bg-white">
+                    <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">New Delivery Date</label>
+                        <input type="date" className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-bold text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryDate} onChange={e => setBulkEditData({...bulkEditData, deliveryDate: e.target.value})} />
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Assign Driver</label>
+                        <input list="modal-drivers" placeholder="Type driver name..." className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={bulkEditData.driverName} onChange={e => setBulkEditData({...bulkEditData, driverName: e.target.value})} />
+                        <datalist id="modal-drivers"><option value="Ali" /><option value="Muthu" /><option value="Ah Meng" /><option value="Lalamove" /></datalist>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                            <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Delivery Mode</label>
+                            <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={bulkEditData.deliveryMode} onChange={e => setBulkEditData({...bulkEditData, deliveryMode: e.target.value})}>
+                                <option value="">-- No Change --</option><option value="Driver">Driver</option><option value="Lalamove">Lalamove</option><option value="Self Pick-up">Self Pick-up</option>
+                            </select>
+                        </div>
+                        <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                            <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Status</label>
+                            <select className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold text-base md:text-xs focus:ring-2 focus:ring-blue-500" value={bulkEditData.status} onChange={e => setBulkEditData({...bulkEditData, status: e.target.value})}>
+                                <option value="">-- No Change --</option><option value="PENDING">PENDING</option><option value="ASSIGNED">ASSIGNED</option><option value="IN TRANSIT">IN TRANSIT</option><option value="DELIVERED">DELIVERED</option><option value="FAILED">FAILED</option><option value="CANCELLED">CANCELLED</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <div className="flex justify-end gap-3 p-5 border-t border-gray-100 shrink-0 bg-gray-50">
+                    <button onClick={() => setIsBulkEditOpen(false)} className="flex-1 sm:flex-none px-6 py-4 sm:py-3 bg-white border border-gray-200 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
+                    <button onClick={handleBulkEditSave} className="flex-1 sm:flex-none px-8 py-4 sm:py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-xs uppercase tracking-widest">Apply to {selectedDOs.size}</button>
+                </div>
+            </div>
+          </div>
       )}
 
+      {/* EDIT INDIVIDUAL ORDER MODAL */}
       {isEditModalOpen && editingOrder && (
-          <div className="fixed inset-0 bg-black/60 z-[110] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
-            <div className="bg-white rounded-t-3xl sm:rounded-[2.5rem] w-full max-w-5xl p-5 sm:p-8 shadow-2xl flex flex-col h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[95vh] animate-in slide-in-from-bottom-full sm:zoom-in duration-300 border-t sm:border border-gray-100">
-                <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4 shrink-0" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
-                    <div><h2 className="text-lg md:text-2xl font-black text-gray-800 uppercase flex items-center gap-2">Edit DO <span className="text-blue-600 font-mono">{editingOrder.DONumber}</span></h2></div>
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 md:p-8 backdrop-blur-sm overflow-hidden">
+            <div className="bg-white rounded-[2rem] w-full max-w-5xl shadow-2xl flex flex-col max-h-[90vh] animate-in zoom-in duration-200 border border-gray-100 overflow-hidden">
+                
+                {/* Header - Fixed */}
+                <div className="flex justify-between items-center px-6 py-5 border-b border-gray-100 shrink-0 bg-white">
+                    <div><h2 className="text-lg md:text-xl font-black text-gray-800 uppercase flex items-center gap-2">Edit DO <span className="text-blue-600 font-mono">{editingOrder.DONumber}</span></h2></div>
                     <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar px-1 pb-20">
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 shrink-0 bg-gray-50/50 p-6 rounded-3xl border border-gray-100 text-xs font-bold uppercase shadow-inner">
-                        <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Customer</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs" value={editingOrder["Customer Name"]} onChange={e => setEditingOrder({...editingOrder, "Customer Name": e.target.value})} /></div>
-                        <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Address</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-medium text-base md:text-xs" value={editingOrder["Delivery Address"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Address": e.target.value})} /></div>
-                        <div><label className="block text-[9px] text-gray-400 mb-1 ml-1">Phone</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs" value={editingOrder["Contact Number"] || ''} onChange={e => setEditingOrder({...editingOrder, "Contact Number": e.target.value})} /></div>
-                        <div><label className="block text-[9px] text-gray-400 mb-1 ml-1">Date</label><input type="date" className="w-full p-3 border border-gray-200 bg-blue-50 text-blue-800 rounded-2xl outline-none font-black text-base md:text-xs" value={editingOrder["Delivery Date"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Date": e.target.value})} /></div>
-                        <div><label className="block text-[9px] text-gray-400 mb-1 ml-1">Status</label><select className={`w-full p-3 border rounded-2xl outline-none font-black text-base md:text-xs uppercase shadow-sm ${getStatusColor(getRawStatus(editingOrder))}`} value={formatDisplayStatus(getRawStatus(editingOrder))} onChange={e => setEditingOrder({...editingOrder, Status: e.target.value})}><option value="PENDING">PENDING</option><option value="ASSIGNED">ASSIGNED</option><option value="IN TRANSIT">IN TRANSIT</option><option value="DELIVERED">DELIVERED</option><option value="FAILED">FAILED</option></select></div>
+                {/* Customer Info - Fixed */}
+                <div className="px-6 py-5 shrink-0 bg-gray-50/50 border-b border-gray-100">
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-xs font-bold uppercase">
+                        <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Customer</label><input className="w-full p-2.5 border border-gray-200 bg-white rounded-xl outline-none font-black text-sm" value={editingOrder["Customer Name"]} onChange={e => setEditingOrder({...editingOrder, "Customer Name": e.target.value})} /></div>
+                        <div className="md:col-span-3"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Address</label><input className="w-full p-2.5 border border-gray-200 bg-white rounded-xl outline-none font-medium text-sm" value={editingOrder["Delivery Address"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Address": e.target.value})} /></div>
+                        <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Phone</label><input className="w-full p-2.5 border border-gray-200 bg-white rounded-xl outline-none font-black text-sm" value={editingOrder["Contact Number"] || ''} onChange={e => setEditingOrder({...editingOrder, "Contact Number": e.target.value})} /></div>
+                        <div><label className="block text-[9px] text-gray-400 mb-1 ml-1">Date</label><input type="date" className="w-full p-2.5 border border-gray-200 bg-blue-50 text-blue-800 rounded-xl outline-none font-black text-sm" value={editingOrder["Delivery Date"]} onChange={e => setEditingOrder({...editingOrder, "Delivery Date": e.target.value})} /></div>
+                        <div>
+                            <label className="block text-[9px] text-gray-400 mb-1 ml-1">Mode</label>
+                            <select className="w-full p-2.5 border border-gray-200 bg-white rounded-xl outline-none font-black text-sm uppercase shadow-sm" value={editingOrder["Delivery Mode"] || 'Driver'} onChange={e => setEditingOrder({...editingOrder, "Delivery Mode": e.target.value})}>
+                                <option value="Driver">Driver</option>
+                                <option value="Lalamove">Lalamove</option>
+                                <option value="Self Pick-up">Self Pick-up</option>
+                            </select>
+                        </div>
+                        <div><label className="block text-[9px] text-gray-400 mb-1 ml-1">Status</label><select className={`w-full p-2.5 border rounded-xl outline-none font-black text-sm uppercase shadow-sm ${getStatusColor(getRawStatus(editingOrder))}`} value={formatDisplayStatus(getRawStatus(editingOrder))} onChange={e => setEditingOrder({...editingOrder, Status: e.target.value})}><option value="PENDING">PENDING</option><option value="ASSIGNED">ASSIGNED</option><option value="IN TRANSIT">IN TRANSIT</option><option value="DELIVERED">DELIVERED</option><option value="FAILED">FAILED</option></select></div>
                     </div>
+                </div>
 
-                    <div className="space-y-4">
+                {/* Product List - Scrollable */}
+                <div className="flex-1 overflow-y-auto p-0 bg-white custom-scrollbar min-h-0">
+                    <div className="p-6">
+                        {/* Add New Product Section */}
+                        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-blue-100 shadow-sm relative mb-6">
+                            <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-2 ml-1">Add New Product</label>
+                            <div className="flex gap-2 relative">
+                                <span className="absolute left-3 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4 sm:w-5 sm:h-5"/></span>
+                                <input type="text" placeholder="Search catalog..." className="w-full pl-9 p-3 border border-gray-200 bg-gray-50 rounded-xl text-xs font-bold outline-none focus:bg-white focus:ring-2 focus:ring-blue-500 transition-all" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
+                            </div>
+                            {productSearchTerm && (
+                                <div className="absolute left-4 right-4 mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-48 overflow-y-auto z-20 custom-scrollbar divide-y divide-gray-50">
+                                    {products.filter(p => `${p.ProductName} ${p.ProductCode}`.toLowerCase().includes(productSearchTerm.toLowerCase())).map(p => (
+                                        <div key={p.ProductCode} onClick={() => handleAddItem(p)} className="p-3 hover:bg-blue-50 cursor-pointer flex justify-between items-center group/add text-[10px] sm:text-xs uppercase font-black">
+                                            <div>{p.ProductName} <span className="text-[9px] text-gray-400 ml-2 font-mono">{p.ProductCode}</span></div>
+                                            <span className="bg-blue-600 text-white p-1 rounded flex items-center justify-center font-black shadow-sm"><PlusIcon className="w-3 h-3"/></span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
                         {/* MOBILE ITEM CARDS */}
                         <div className="md:hidden space-y-4">
                             {editingItems.map((item, idx) => (
@@ -786,8 +882,14 @@ export default function DeliveryPage() {
                                             <button onClick={() => handleEditItemChange(idx, 'Quantity', Number(item.Quantity)+1)} className="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm active:scale-90"><PlusIcon className="w-5 h-5"/></button>
                                         </div>
                                         <div className="flex flex-col items-end gap-1">
-                                            <span className="text-[10px] font-black text-gray-400 uppercase">{item.UOM}</span>
-                                            <input type="number" step="0.01" className="w-24 p-2 border border-gray-200 rounded-xl text-right font-black text-base" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} />
+                                            <select className="w-24 p-2 border border-gray-200 rounded-xl text-center font-bold uppercase text-xs outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
+                                                {(() => {
+                                                    const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);
+                                                    const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];
+                                                    return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);
+                                                })()}
+                                            </select>
+                                            <input type="number" step="0.01" className="w-24 p-2 border border-gray-200 rounded-xl text-right font-black text-base mt-1" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} />
                                         </div>
                                     </div>
                                 </div>
@@ -795,18 +897,60 @@ export default function DeliveryPage() {
                         </div>
 
                         {/* DESKTOP TABLE */}
-                        <div className="hidden md:block overflow-auto border border-gray-100 rounded-3xl bg-white shadow-inner">
-                            <table className="w-full text-left text-xs whitespace-nowrap"><thead className="bg-gray-100/50 font-black text-gray-500 sticky top-0 z-10 text-[10px] uppercase tracking-widest border-b border-gray-100"><tr><th className="p-4 pl-6">Catalog Item</th><th className="p-4 w-24 text-center">Qty</th><th className="p-4 w-28 text-center">UOM</th><th className="p-4 w-32 text-right">Price</th><th className="p-4 w-12 pr-6"></th></tr></thead><tbody className="divide-y divide-gray-50 font-bold text-gray-700">{editingItems.map((item, idx) => (<tr key={idx} className="hover:bg-gray-50/50 transition-colors"><td className="p-3 pl-6"><select className="w-full p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}><option value={item["Order Items"]}>{item["Order Items"]}</option>{products.filter(p => p.ProductName !== item["Order Items"]).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}</select></td><td className="p-3 text-center"><input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} /></td><td className="p-3 text-center uppercase text-gray-500">{item.UOM}</td><td className="p-3 text-right font-black text-blue-600"><input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} /></td><td className="p-3 text-center pr-6"><button onClick={() => handleDeleteItem(idx)} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-4 h-4" /></button></td></tr>))}</tbody></table>
+                        <div className="hidden md:block w-full">
+                            <table className="w-full text-left text-xs whitespace-nowrap">
+                                <thead className="bg-gray-50 font-black text-gray-500 text-[10px] uppercase tracking-widest border-b border-gray-200 sticky top-0 z-10 shadow-sm">
+                                    <tr>
+                                        <th className="p-4 pl-6">Catalog Item</th>
+                                        <th className="p-4 w-24 text-center">Qty</th>
+                                        <th className="p-4 w-28 text-center">UOM</th>
+                                        <th className="p-4 w-32 text-right">Price</th>
+                                        <th className="p-4 w-12 pr-6"></th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-100 font-bold text-gray-700">
+                                    {editingItems.map((item, idx) => (
+                                        <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                                            <td className="p-3 pl-6">
+                                                <select className="w-full p-2.5 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500 bg-white" value={item["Order Items"]} onChange={e => handleEditItemChange(idx, 'Order Items', e.target.value)}>
+                                                    <option value={item["Order Items"]}>{item["Order Items"]}</option>
+                                                    {products.filter(p => p.ProductName !== item["Order Items"]).map(p => <option key={p.ProductCode} value={p.ProductName}>{p.ProductName}</option>)}
+                                                </select>
+                                            </td>
+                                            <td className="p-3 text-center">
+                                                <input type="number" className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-black outline-none focus:ring-2 focus:ring-blue-500 bg-white" value={item.Quantity} onChange={e => handleEditItemChange(idx, 'Quantity', e.target.value)} />
+                                            </td>
+                                            <td className="p-3 text-center">
+                                                <select className="w-full p-2.5 border border-gray-200 rounded-xl text-center font-bold uppercase outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm" value={item.UOM} onChange={e => handleEditItemChange(idx, 'UOM', e.target.value)}>
+                                                    {(() => {
+                                                        const matchedProd = products.find(p => p.ProductCode === item["Product Code"]);
+                                                        const uoms = matchedProd && matchedProd.AllowedUOMs ? matchedProd.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [item.UOM, 'KG', 'CTN', 'PCS'];
+                                                        return Array.from(new Set([item.UOM, ...uoms])).filter(Boolean).map(u => <option key={u} value={u}>{u}</option>);
+                                                    })()}
+                                                </select>
+                                            </td>
+                                            <td className="p-3 text-right">
+                                                <input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-xl text-right font-black text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 bg-white" value={item.Price} onChange={e => handleEditItemChange(idx, 'Price', e.target.value)} />
+                                            </td>
+                                            <td className="p-3 text-center pr-6">
+                                                <button onClick={() => handleDeleteItem(idx)} className="p-2.5 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-4 h-4" /></button>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>
 
-                <div className="flex justify-end gap-3 mt-auto shrink-0 pt-6 border-t border-gray-100 bg-white" style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}>
-                    <button onClick={() => setIsEditModalOpen(false)} className="flex-1 px-8 py-5 bg-gray-100 text-gray-600 font-black rounded-2xl transition active:scale-95 uppercase text-xs tracking-widest border border-gray-200">Abort</button>
-                    <button onClick={saveEditedOrder} className="flex-[2] px-10 py-5 bg-blue-600 text-white font-black rounded-2xl shadow-xl active:scale-95 uppercase text-xs tracking-widest flex items-center justify-center gap-2 shadow-blue-600/30">
-                        <CheckIcon className="w-5 h-5" strokeWidth={3} /> Commit Changes
+                {/* Footer - Fixed */}
+                <div className="p-5 border-t border-gray-100 bg-gray-50 shrink-0 flex justify-end gap-3">
+                    <button onClick={() => setIsEditModalOpen(false)} className="px-6 md:px-8 py-3 md:py-3.5 bg-white border border-gray-200 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
+                    <button onClick={saveEditedOrder} className="px-6 md:px-10 py-3 md:py-3.5 bg-blue-600 text-white font-black rounded-xl shadow-md active:scale-95 uppercase text-xs tracking-widest flex items-center justify-center gap-2 hover:bg-blue-700">
+                        <CheckIcon className="w-5 h-5" strokeWidth={3} /> Save Changes
                     </button>
                 </div>
+
             </div>
           </div>
       )}
