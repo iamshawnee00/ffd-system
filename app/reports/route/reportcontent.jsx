@@ -176,7 +176,9 @@ export default function RouteReportContent() {
                     </tr>
                 </thead>
                 <tbody>
-                    {group.orders.map((o, i) => (
+                    {group.orders.map((o, i) => {
+                        const isConsignment = String(o.DONumber).startsWith('CSGN');
+                        return (
                         <tr key={o.DONumber} className="border-b border-black break-inside-avoid">
                             <td className="py-1 px-2 text-center border-r border-black bg-white align-middle"></td>
                             <td className="py-1 px-2 border-r border-black align-middle">
@@ -184,7 +186,10 @@ export default function RouteReportContent() {
                             </td>
                             <td className="py-2 px-3 border-r border-black align-middle">
                                 <div className="flex justify-between items-center gap-2">
-                                    <div className="font-black uppercase text-[12.5px] leading-tight text-black">{o["Customer Name"]}</div>
+                                    <div>
+                                        <div className="font-black uppercase text-[12.5px] leading-tight text-black">{o["Customer Name"]}</div>
+                                        {isConsignment && <div className="text-[8px] font-black text-orange-600 uppercase tracking-widest mt-0.5">Consignment Drop (No DO)</div>}
+                                    </div>
                                     <div className="text-[10px] font-bold whitespace-nowrap bg-gray-100 px-2 py-0.5 rounded border border-gray-200">
                                         {o.itemCount} {o.itemCount === 1 ? 'Item' : 'Items'}
                                     </div>
@@ -197,7 +202,7 @@ export default function RouteReportContent() {
                                 <div className="w-5 h-5 border-2 border-gray-400 rounded-sm mx-auto"></div>
                             </td>
                         </tr>
-                    ))}
+                    )})}
                 </tbody>
             </table>
          </div>

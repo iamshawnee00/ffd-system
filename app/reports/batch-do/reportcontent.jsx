@@ -52,8 +52,11 @@ export default function BatchDoReportContent() {
           setErrorMsg(error.message);
           setDoList([]);
         } else if (data) {
+          // EXCLUDE ALL CONSIGNMENT ORDERS FROM BATCH DO PRINTING (unless explicitly passed via exact URL dosParam)
+          const filteredData = dosParam ? data : data.filter(row => !String(row.DONumber).startsWith('CSGN-'));
+
           const grouped = {};
-          data.forEach(row => {
+          filteredData.forEach(row => {
             if (!grouped[row.DONumber]) {
               grouped[row.DONumber] = {
                 info: row,

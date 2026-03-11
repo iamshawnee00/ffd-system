@@ -3,12 +3,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 
-// ==================================================================
-// ⚠️ 重要提示：当您将此代码复制回本地项目时，请取消注释以下两行真实的导入，
-// 并删除下方的 MOCK API 部分！
-// ==================================================================
+// Use actual Supabase client
 import { supabase } from '../../lib/supabaseClient';
-
 
 import { 
   TrashIcon,
@@ -43,6 +39,7 @@ export default function StandingOrdersPage() {
 
   const [standingOrders, setStandingOrders] = useState([]);
   const [products, setProducts] = useState([]);
+  const [customers, setCustomers] = useState([]);
   
   const [targetGenDate, setTargetGenDate] = useState(() => {
     const tmr = new Date();
@@ -54,7 +51,7 @@ export default function StandingOrdersPage() {
 
   const autopilotFired = useRef(false);
 
-  // Edit Modal States
+  // Edit/Add Modal States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [editingItems, setEditingItems] = useState([]);
@@ -81,6 +78,10 @@ export default function StandingOrdersPage() {
       const { data: prodData } = await supabase.from('ProductMaster').select('ProductCode, ProductName, BaseUOM, AllowedUOMs').order('ProductName');
       setProducts(prodData || []);
 
+      // Fetch Customers for auto-fill selection
+      const { data: custData } = await supabase.from('Customers').select('*').order('CompanyName');
+      setCustomers(custData || []);
+
       const templates = await fetchStandingOrders();
 
       // Trigger Background Autopilot (Generates ONCE for tomorrow)
@@ -95,14 +96,27 @@ export default function StandingOrdersPage() {
   }, [router]);
 
   const fetchStandingOrders = async () => {
+    // Fetch directly without order to avoid schema case-sensitivity errors, then sort in memory
     const { data, error } = await supabase
         .from('StandingOrders')
-        .select('*')
-        .order('CreatedAt', { ascending: false });
+        .select('*');
     
-    if (error) console.error("Error fetching standing orders:", error);
-    else setStandingOrders(data || []);
-    return data || [];
+    if (error) {
+        console.error("Error fetching standing orders:", error);
+        alert("Database Error: Could not load templates. " + error.message);
+        setStandingOrders([]);
+        return [];
+    }
+
+    // Safe in-memory sorting by creation date (newest first)
+    const sortedData = (data || []).sort((a, b) => {
+        const timeA = new Date(a.created_at || a.CreatedAt || 0).getTime();
+        const timeB = new Date(b.created_at || b.CreatedAt || 0).getTime();
+        return timeB - timeA;
+    });
+
+    setStandingOrders(sortedData);
+    return sortedData;
   };
 
   // ==========================================
@@ -116,19 +130,18 @@ export default function StandingOrdersPage() {
       const targetDate = getLocalDateString(tmr);
       const dayName = DAYS_OF_WEEK[tmr.getDay()];
 
-      // Local storage lock prevents rapid duplicate execution on hot reloads
       const lockKey = `ffd_autopilot_ran_${targetDate}`;
       if (typeof window !== 'undefined' && localStorage.getItem(lockKey)) {
           return; 
       }
 
-      const tomorrowTemplates = activeTemplates.filter(t => t.DeliveryDay === dayName && t.Status === 'Active');
+      // Supports multi-day strings like "Monday, Wednesday"
+      const tomorrowTemplates = activeTemplates.filter(t => (t.DeliveryDay || '').includes(dayName) && t.Status === 'Active');
       if (tomorrowTemplates.length === 0) {
           if (typeof window !== 'undefined') localStorage.setItem(lockKey, 'true');
           return;
       }
 
-      // STRICT DB LOCK: Check exactly what orders exist for tomorrow
       const { data: existingOrders, error: lockError } = await supabase.from('Orders')
           .select('"Customer Name", SpecialNotes')
           .eq('Delivery Date', targetDate);
@@ -146,11 +159,12 @@ export default function StandingOrdersPage() {
       for (const template of tomorrowTemplates) {
           const cName = String(template.CustomerName).toUpperCase().trim();
           
-          // If this customer already has an auto-generated order for tomorrow, SKIP IT to prevent duplicates.
           if (existingCustomers.has(cName)) continue; 
 
+          const isConsign = template.IsConsignment === true;
+          const prefix = isConsign ? 'CSGN' : 'DO';
           const dateStr = targetDate.replaceAll('-', '').slice(2);
-          const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+          const doNumber = `${prefix}-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
           const occurrenceMap = {};
           
           const orderRows = (template.Items || []).map(item => {
@@ -179,7 +193,7 @@ export default function StandingOrdersPage() {
                   "UOM": item.UOM,
                   "Price": item.Price,
                   "Replacement": repVal,
-                  "SpecialNotes": "AUTO-GENERATED STANDING ORDER",
+                  "SpecialNotes": isConsign ? "AUTO-GENERATED CONSIGNMENT" : "AUTO-GENERATED STANDING ORDER",
                   "LoggedBy": "SYSTEM_AUTOPILOT"
               };
           });
@@ -196,7 +210,7 @@ export default function StandingOrdersPage() {
       if (typeof window !== 'undefined') localStorage.setItem(lockKey, 'true');
 
       if (generatedCount > 0) {
-          setAutopilotMessage(`Autopilot successfully generated ${generatedCount} regular orders for tomorrow.`);
+          setAutopilotMessage(`Autopilot successfully generated ${generatedCount} orders for tomorrow.`);
           setTimeout(() => setAutopilotMessage(''), 8000);
       }
   };
@@ -210,7 +224,8 @@ export default function StandingOrdersPage() {
 
   const handleGenerateAutos = async () => {
       const dayName = getTargetDayName();
-      const matchingTemplates = standingOrders.filter(t => t.DeliveryDay === dayName && t.Status === 'Active');
+      // Supports multi-day strings like "Monday, Wednesday"
+      const matchingTemplates = standingOrders.filter(t => (t.DeliveryDay || '').includes(dayName) && t.Status === 'Active');
       
       if (matchingTemplates.length === 0) {
           return alert(`No active standing orders found scheduled for ${dayName}.`);
@@ -245,8 +260,10 @@ export default function StandingOrdersPage() {
               continue;
           }
 
+          const isConsign = template.IsConsignment === true;
+          const prefix = isConsign ? 'CSGN' : 'DO';
           const dateStr = targetGenDate.replaceAll('-', '').slice(2);
-          const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+          const doNumber = `${prefix}-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
           const occurrenceMap = {};
           const orderRows = (template.Items || []).map(item => {
@@ -276,7 +293,7 @@ export default function StandingOrdersPage() {
                   "UOM": item.UOM,
                   "Price": item.Price,
                   "Replacement": repVal,
-                  "SpecialNotes": "AUTO-GENERATED STANDING ORDER",
+                  "SpecialNotes": isConsign ? "AUTO-GENERATED CONSIGNMENT" : "AUTO-GENERATED STANDING ORDER",
                   "LoggedBy": currentUser
               };
           });
@@ -287,7 +304,7 @@ export default function StandingOrdersPage() {
           }
       }
 
-      alert(`Manual Generation Complete!\n\n✅ Created: ${successCount} DOs\n⏭️ Skipped (Already Exist): ${skippedCount}`);
+      alert(`Manual Generation Complete!\n\n✅ Created: ${successCount} DOs/Routes\n⏭️ Skipped (Already Exist): ${skippedCount}`);
       setIsGenerating(false);
   };
 
@@ -298,13 +315,58 @@ export default function StandingOrdersPage() {
   };
 
   // ==========================================
-  // EDIT TEMPLATE LOGIC
+  // EDIT / ADD TEMPLATE LOGIC
   // ==========================================
+  const openAddModal = () => {
+      setEditingTemplate({
+          CustomerName: '',
+          DeliveryAddress: '',
+          ContactPerson: '',
+          ContactNumber: '',
+          DeliveryDay: '', // Default empty so user can select
+          DeliveryMode: 'Driver',
+          Status: 'Active',
+          IsConsignment: false,
+          Items: []
+      });
+      setEditingItems([]);
+      setProductSearchTerm('');
+      setIsEditModalOpen(true);
+  };
+
   const openEditModal = (template) => {
       setEditingTemplate({ ...template });
       setEditingItems(template.Items ? [...template.Items] : []);
       setProductSearchTerm('');
       setIsEditModalOpen(true);
+  };
+
+  const handleCustomerSelectChange = (e) => {
+      const val = e.target.value;
+      const newTemplate = { ...editingTemplate, CustomerName: val };
+      
+      const matchedCust = customers.find(c => {
+          const cName = c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName;
+          return cName.toUpperCase() === val.toUpperCase();
+      });
+
+      if (matchedCust) {
+          newTemplate.DeliveryAddress = matchedCust.DeliveryAddress || '';
+          newTemplate.ContactPerson = matchedCust.ContactPerson || '';
+          newTemplate.ContactNumber = matchedCust.ContactNumber || '';
+      }
+      
+      setEditingTemplate(newTemplate);
+  };
+
+  const toggleDeliveryDay = (day) => {
+      let currentDays = editingTemplate.DeliveryDay ? editingTemplate.DeliveryDay.split(',').map(d => d.trim()).filter(Boolean) : [];
+      if (currentDays.includes(day)) {
+          currentDays = currentDays.filter(d => d !== day);
+      } else {
+          currentDays.push(day);
+      }
+      setEditingTemplate({ ...editingTemplate, DeliveryDay: currentDays.join(', ') });
   };
 
   const handleEditItemChange = (index, field, value) => {
@@ -341,21 +403,33 @@ export default function StandingOrdersPage() {
   };
 
   const saveEditedTemplate = async () => {
+      if (!editingTemplate.CustomerName) return alert("Customer Name is required.");
+      if (!editingTemplate.DeliveryDay) return alert("Please select at least one Generate On day.");
       if (!confirm("Save changes to this template?")) return;
+      
       try {
           const payload = {
               ...editingTemplate,
+              CustomerName: editingTemplate.CustomerName.toUpperCase(),
               Items: editingItems
           };
 
-          const { error } = await supabase
-              .from('StandingOrders')
-              .update(payload)
-              .eq('id', editingTemplate.id);
-
-          if (error) throw error;
+          if (editingTemplate.id) {
+              // Update existing
+              const { error } = await supabase
+                  .from('StandingOrders')
+                  .update(payload)
+                  .eq('id', editingTemplate.id);
+              if (error) throw error;
+          } else {
+              // Insert new
+              const { error } = await supabase
+                  .from('StandingOrders')
+                  .insert([payload]);
+              if (error) throw error;
+          }
           
-          alert("Template updated successfully.");
+          alert("Template saved successfully.");
           setIsEditModalOpen(false);
           fetchStandingOrders();
       } catch(e) {
@@ -454,20 +528,39 @@ export default function StandingOrdersPage() {
                       <h3 className="font-black text-gray-800 uppercase tracking-tight text-lg flex items-center gap-2">
                           <ArrowPathIcon className="w-6 h-6 text-indigo-600" /> Active Templates
                       </h3>
-                      <p className="text-[10px] text-gray-400 mt-1 uppercase font-bold tracking-wider">Note: Templates are created via the "Save Pattern" checkbox when submitting a New Order.</p>
+                      <p className="text-[10px] text-gray-400 mt-1 uppercase font-bold tracking-wider">Note: Templates generate routes dynamically based on their target day.</p>
                   </div>
+                  <button 
+                      onClick={openAddModal}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-2.5 px-4 rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-2 text-[10px] sm:text-xs uppercase tracking-widest shrink-0"
+                  >
+                      <PlusIcon className="w-4 h-4" /> <span className="hidden sm:inline">New Template</span>
+                  </button>
               </div>
 
               <div className="flex-1 overflow-auto custom-scrollbar pr-2">
                   <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {standingOrders.map(t => (
+                      {standingOrders.map(t => {
+                          const daysArr = t.DeliveryDay ? t.DeliveryDay.split(',').map(d=>d.trim()).filter(Boolean) : [];
+                          return (
                           <div key={t.id} className={`p-5 rounded-3xl border transition-all relative group ${t.Status === 'Active' ? 'bg-white border-gray-200 shadow-sm hover:border-indigo-300' : 'bg-gray-50 border-gray-200 opacity-60'}`}>
-                              <div className="flex justify-between items-start mb-3">
-                                  <span className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest border shadow-sm ${t.DeliveryDay === 'Monday' ? 'bg-blue-50 text-blue-600 border-blue-200' : t.DeliveryDay === 'Friday' ? 'bg-green-50 text-green-600 border-green-200' : 'bg-purple-50 text-purple-600 border-purple-200'}`}>
-                                      Every {t.DeliveryDay}
-                                  </span>
-                                  <span className={`text-[9px] font-black uppercase tracking-widest ${t.Status === 'Active' ? 'text-green-500' : 'text-gray-400'}`}>{t.Status}</span>
+                              <div className="flex flex-wrap gap-1 mb-3 pr-16">
+                                  {daysArr.map(day => (
+                                      <span key={day} className="px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest border shadow-sm bg-indigo-50 text-indigo-600 border-indigo-200">
+                                          {day.substring(0,3)}
+                                      </span>
+                                  ))}
+                                  {t.IsConsignment && (
+                                      <span className="bg-orange-100 text-orange-700 border border-orange-200 px-2 py-1 rounded-lg text-[8px] font-black uppercase tracking-widest shadow-sm">Consignment</span>
+                                  )}
                               </div>
+                              
+                              <div className="absolute top-5 right-5">
+                                  {!t.IsConsignment && (
+                                      <span className={`text-[9px] font-black uppercase tracking-widest ${t.Status === 'Active' ? 'text-green-500' : 'text-gray-400'}`}>{t.Status}</span>
+                                  )}
+                              </div>
+
                               <h4 className="font-black text-gray-800 uppercase leading-tight mb-1 pr-8">{t.CustomerName}</h4>
                               <p className="text-xs text-gray-500 font-medium mb-4 truncate max-w-full">{t.DeliveryAddress}</p>
                               
@@ -479,7 +572,7 @@ export default function StandingOrdersPage() {
                                   <button onClick={() => deletePattern(t.id)} className="p-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl transition shadow-sm border border-red-100"><TrashIcon className="w-5 h-5"/></button>
                               </div>
                           </div>
-                      ))}
+                      )})}
                       {standingOrders.length === 0 && (
                           <div className="col-span-full py-20 text-center text-gray-400 italic font-bold">No standing orders found.</div>
                       )}
@@ -489,33 +582,62 @@ export default function StandingOrdersPage() {
       </div>
 
       {/* ==========================================
-          EDIT TEMPLATE MODAL
+          EDIT / ADD TEMPLATE MODAL
           ========================================== */}
       {isEditModalOpen && editingTemplate && (
           <div className="fixed inset-0 bg-black/60 z-[110] flex items-end sm:items-center justify-center sm:p-4 backdrop-blur-sm">
             <div className="bg-white rounded-t-3xl sm:rounded-[2.5rem] w-full max-w-5xl p-5 sm:p-8 shadow-2xl flex flex-col h-[100dvh] sm:h-auto max-h-[100dvh] sm:max-h-[95vh] animate-in slide-in-from-bottom-full sm:zoom-in duration-300 border-t sm:border border-gray-100">
                 <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4 shrink-0" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
-                    <div><h2 className="text-lg md:text-2xl font-black text-gray-800 uppercase leading-none">Edit Template</h2></div>
+                    <div><h2 className="text-lg md:text-2xl font-black text-gray-800 uppercase leading-none">{editingTemplate.id ? 'Edit Template' : 'New Template'}</h2></div>
                     <button onClick={() => setIsEditModalOpen(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
                 </div>
                 
                 <div className="overflow-y-auto flex-1 custom-scrollbar px-1 pb-20">
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 shrink-0 bg-gray-50/50 p-6 rounded-3xl border border-gray-100 text-xs font-bold uppercase shadow-inner">
-                        <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Customer</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs" value={editingTemplate.CustomerName} onChange={e => setEditingTemplate({...editingTemplate, CustomerName: e.target.value})} /></div>
+                        <div className="md:col-span-2">
+                            <label className="block text-[9px] text-gray-400 mb-1 ml-1">Customer</label>
+                            <input 
+                                list="template-customer-list"
+                                className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs focus:ring-2 focus:ring-indigo-500" 
+                                value={editingTemplate.CustomerName} 
+                                onChange={handleCustomerSelectChange} 
+                                placeholder="TYPE TO SELECT OR ADD CUSTOMER..." 
+                            />
+                            <datalist id="template-customer-list">
+                                {customers.map(c => {
+                                    const cName = c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName;
+                                    return <option key={c.id} value={cName} />;
+                                })}
+                            </datalist>
+                        </div>
                         <div className="md:col-span-2"><label className="block text-[9px] text-gray-400 mb-1 ml-1">Address</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-medium text-base md:text-xs" value={editingTemplate.DeliveryAddress} onChange={e => setEditingTemplate({...editingTemplate, DeliveryAddress: e.target.value})} /></div>
                         <div><label className="block text-[9px] text-gray-400 mb-1 ml-1">Phone</label><input className="w-full p-3 border border-gray-200 bg-white rounded-2xl outline-none font-black text-base md:text-xs" value={editingTemplate.ContactNumber || ''} onChange={e => setEditingTemplate({...editingTemplate, ContactNumber: e.target.value})} /></div>
-                        <div>
-                            <label className="block text-[9px] text-gray-400 mb-1 ml-1">Generate On</label>
-                            <select className="w-full p-3 border border-gray-200 bg-indigo-50 text-indigo-800 rounded-2xl outline-none font-black text-base md:text-xs uppercase" value={editingTemplate.DeliveryDay} onChange={e => setEditingTemplate({...editingTemplate, DeliveryDay: e.target.value})}>
-                                {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
-                            </select>
+                        
+                        <div className="md:col-span-3">
+                            <label className="block text-[9px] text-gray-400 mb-1 ml-1">Generate On (Multi-Select)</label>
+                            <div className="flex flex-wrap gap-2 mt-1">
+                                {DAYS_OF_WEEK.map(d => {
+                                    const isActive = (editingTemplate.DeliveryDay || '').includes(d);
+                                    return (
+                                        <button 
+                                            key={d} 
+                                            type="button"
+                                            onClick={() => toggleDeliveryDay(d)}
+                                            className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all shadow-sm ${isActive ? 'bg-indigo-600 text-white border border-indigo-700' : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-100'}`}
+                                        >
+                                            {d.substring(0,3)}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         </div>
-                        <div>
-                            <label className="block text-[9px] text-gray-400 mb-1 ml-1">Status</label>
-                            <select className={`w-full p-3 border border-gray-200 rounded-2xl outline-none font-black text-base md:text-xs uppercase bg-white`} value={editingTemplate.Status} onChange={e => setEditingTemplate({...editingTemplate, Status: e.target.value})}>
-                                <option value="Active">Active</option>
-                                <option value="Inactive">Inactive</option>
-                            </select>
+
+                        <div className="md:col-span-2">
+                            <label className="block text-[9px] text-gray-400 mb-1 ml-1">Order Type</label>
+                            <label className="flex items-center gap-3 cursor-pointer bg-white border border-gray-200 p-3 rounded-2xl">
+                                <input type="checkbox" className="w-5 h-5 text-orange-600 rounded border-gray-300 focus:ring-orange-500" checked={editingTemplate.IsConsignment || false} onChange={e => setEditingTemplate({...editingTemplate, IsConsignment: e.target.checked})} />
+                                <span className="text-[10px] font-black text-gray-800 uppercase tracking-widest leading-tight">Consignment Outlet <span className="block text-[8px] font-bold text-orange-500 mt-0.5">Appears on Route Masterlist. Skips Bulk DO Printing.</span></span>
+                            </label>
                         </div>
                     </div>
 
