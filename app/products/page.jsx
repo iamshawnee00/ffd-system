@@ -45,6 +45,13 @@ export default function ProductManagementPage() {
   const [conversionFactors, setConversionFactors] = useState({});
 
   // ==========================================
+  // BULK ACTIONS STATE
+  // ==========================================
+  const [selectedProducts, setSelectedProducts] = useState([]);
+  const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
+  const [bulkEditData, setBulkEditData] = useState({ Category: '', origin: '' });
+
+  // ==========================================
   // CALENDAR STATES & CLOUD LOGIC
   // ==========================================
   const [calendarData, setCalendarData] = useState([]);
@@ -169,7 +176,10 @@ export default function ProductManagementPage() {
       await supabase.from('UOM_Conversions').delete().eq('ProductCode', code);
       const { error } = await supabase.from('ProductMaster').delete().eq('ProductCode', code);
       if (error) alert('Error deleting: ' + error.message);
-      else loadAllData();
+      else {
+          setSelectedProducts(prev => prev.filter(c => c !== code));
+          loadAllData();
+      }
     }
   };
 
@@ -274,6 +284,70 @@ export default function ProductManagementPage() {
       }
       return filtered;
   }, [products, searchTerm, selectedCategory, columnFilters, sortConfig]);
+
+  // ==========================================
+  // BULK ACTIONS LOGIC
+  // ==========================================
+  const toggleSelectAll = () => {
+    if (selectedProducts.length === filteredAndSortedProducts.length) {
+        setSelectedProducts([]);
+    } else {
+        setSelectedProducts(filteredAndSortedProducts.map(p => p.ProductCode));
+    }
+  };
+
+  const toggleProductSelection = (code) => {
+    setSelectedProducts(prev => 
+        prev.includes(code) ? prev.filter(c => c !== code) : [...prev, code]
+    );
+  };
+
+  const handleBulkDelete = async () => {
+      if (!confirm(`Are you sure you want to permanently delete ${selectedProducts.length} selected products?`)) return;
+      try {
+          await supabase.from('UOM_Conversions').delete().in('ProductCode', selectedProducts);
+          const { error } = await supabase.from('ProductMaster').delete().in('ProductCode', selectedProducts);
+          
+          if (error) {
+              alert("Error deleting products: " + error.message);
+          } else {
+              setSelectedProducts([]);
+              loadAllData();
+          }
+      } catch(e) {
+          console.error(e);
+      }
+  };
+
+  const handleBulkEditSave = async () => {
+      const updates = {};
+      if (bulkEditData.Category) updates.Category = bulkEditData.Category.toUpperCase().trim();
+      if (bulkEditData.origin) updates.origin = bulkEditData.origin.toUpperCase().trim();
+
+      if (Object.keys(updates).length === 0) return alert("No fields to update.");
+      if (!confirm(`Apply changes to ${selectedProducts.length} products?`)) return;
+
+      updates.updated_at = new Date().toISOString();
+
+      try {
+          const { error } = await supabase
+              .from('ProductMaster')
+              .update(updates)
+              .in('ProductCode', selectedProducts);
+          
+          if (error) {
+              alert("Bulk update failed: " + error.message);
+          } else {
+              alert("Bulk update successful!");
+              setIsBulkEditOpen(false);
+              setSelectedProducts([]);
+              setBulkEditData({ Category: '', origin: '' });
+              loadAllData();
+          }
+      } catch(e) {
+          console.error(e);
+      }
+  };
 
   // ==========================================
   // CALENDAR CRUD (SUPABASE SYNC)
@@ -417,21 +491,43 @@ export default function ProductManagementPage() {
             ========================================== */}
         {activeTab === 'masterlist' && (
         <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-180px)] min-h-[500px] animate-in fade-in">
-            <div className="flex flex-col sm:flex-row gap-4 mb-6 flex-none">
-              <div className="relative flex-1">
-                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><MagnifyingGlassIcon className="w-5 h-5 text-gray-400" /></div>
-                 <input type="text" placeholder="Search by name or code..." className="w-full pl-12 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-xs font-bold" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+            <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-6 gap-4 flex-none">
+              
+              <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+                  <div className="relative flex-1 sm:w-64 sm:flex-none">
+                     <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><MagnifyingGlassIcon className="w-5 h-5 text-gray-400" /></div>
+                     <input type="text" placeholder="Search by name or code..." className="w-full pl-12 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-xs font-bold" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                  </div>
+                  <div className="w-full sm:w-64">
+                     <select className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-xs font-bold text-gray-700 uppercase" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>{filterCategories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  </div>
               </div>
-              <div className="w-full sm:w-64">
-                 <select className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-xs font-bold text-gray-700 uppercase" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>{filterCategories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+
+              {/* Bulk Actions Toolbar */}
+              <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto justify-end">
+                  <div className={`flex items-center gap-1 sm:gap-2 px-3 py-1.5 rounded-xl transition-all border ${selectedProducts.length > 0 ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-gray-50 border-gray-200 opacity-60 pointer-events-none'}`}>
+                      <span className="text-[10px] sm:text-xs font-black uppercase text-blue-800 tracking-widest border-r border-blue-200/50 pr-2 sm:pr-3 mr-1 hidden sm:block">
+                          {selectedProducts.length} Selected
+                      </span>
+                      <span className="text-xs font-black text-blue-800 sm:hidden mr-1 border-r border-blue-200/50 pr-2">{selectedProducts.length}</span>
+                      
+                      <button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-1.5 p-1.5 sm:px-2 sm:py-1 rounded-lg text-blue-600 hover:bg-blue-100 transition" title="Bulk Edit">
+                          <PencilSquareIcon className="w-4 h-4 md:w-5 md:h-5"/><span className="hidden md:inline text-xs font-bold uppercase tracking-wider">Edit</span>
+                      </button>
+                      <button onClick={handleBulkDelete} className="flex items-center gap-1.5 p-1.5 sm:px-2 sm:py-1 rounded-lg text-red-600 hover:bg-red-100 transition" title="Batch Delete">
+                          <TrashIcon className="w-4 h-4 md:w-5 md:h-5"/><span className="hidden md:inline text-xs font-bold uppercase tracking-wider">Delete</span>
+                      </button>
+                  </div>
               </div>
+
             </div>
 
             <div className="flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
                 <table className="w-full text-left whitespace-nowrap min-w-[1000px]">
                   <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
                     <tr>
-                      <th className="p-4 pl-6 cursor-pointer hover:text-black select-none" onClick={() => requestSort('ProductCode')}>Code {sortConfig.key === 'ProductCode' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                      <th className="p-4 text-center w-12"><input type="checkbox" className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-gray-300 cursor-pointer" checked={filteredAndSortedProducts.length > 0 && selectedProducts.length === filteredAndSortedProducts.length} onChange={toggleSelectAll} /></th>
+                      <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('ProductCode')}>Code {sortConfig.key === 'ProductCode' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                       <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('ProductName')}>Product Name {sortConfig.key === 'ProductName' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                       <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('Category')}>Category {sortConfig.key === 'Category' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                       <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('origin')}>Origin {sortConfig.key === 'origin' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
@@ -441,7 +537,8 @@ export default function ProductManagementPage() {
                       <th className="p-4 text-right pr-6">Actions</th>
                     </tr>
                     <tr className="bg-white border-t border-gray-200 shadow-[0_2px_4px_rgba(0,0,0,0.02)]">
-                        <th className="p-2 pl-4"><input type="text" placeholder="Filter Code..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.code} onChange={e => setColumnFilters({...columnFilters, code: e.target.value})} /></th>
+                        <th className="p-2 pl-4"></th>
+                        <th className="p-2"><input type="text" placeholder="Filter Code..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.code} onChange={e => setColumnFilters({...columnFilters, code: e.target.value})} /></th>
                         <th className="p-2"><input type="text" placeholder="Filter Name..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.name} onChange={e => setColumnFilters({...columnFilters, name: e.target.value})} /></th>
                         <th className="p-2"><input type="text" placeholder="Filter Category..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.category} onChange={e => setColumnFilters({...columnFilters, category: e.target.value})} /></th>
                         <th className="p-2"><input type="text" placeholder="Filter Origin..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.origin} onChange={e => setColumnFilters({...columnFilters, origin: e.target.value})} /></th>
@@ -459,19 +556,24 @@ export default function ProductManagementPage() {
                           const d = new Date(dStr);
                           if (!isNaN(d)) formattedDate = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit' });
                       }
+                      const isSelected = selectedProducts.includes(p.ProductCode);
+
                       return (
-                      <tr key={p.ProductCode || p.id} className="hover:bg-green-50/30 transition-colors group/row">
-                        <td className="p-4 pl-6"><span className="font-mono text-[10px] font-black text-gray-500 bg-gray-100 px-2.5 py-1 rounded border border-gray-200">{p.ProductCode}</span></td>
+                      <tr key={p.ProductCode || p.id} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-green-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleProductSelection(p.ProductCode)}>
+                        <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input type="checkbox" className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-gray-300 cursor-pointer" checked={isSelected} onChange={() => toggleProductSelection(p.ProductCode)} />
+                        </td>
+                        <td className="p-4"><span className="font-mono text-[10px] font-black text-gray-500 bg-gray-100 px-2.5 py-1 rounded border border-gray-200">{p.ProductCode}</span></td>
                         <td className="p-4 font-black text-gray-800 uppercase">{p.ProductName}</td>
                         <td className="p-4"><span className="text-[9px] font-black px-2.5 py-1 rounded-md uppercase bg-blue-50 text-blue-600 border border-blue-100 tracking-widest">{p.Category}</span></td>
                         <td className="p-4 font-medium text-gray-600 uppercase text-xs">{p.origin || '-'}</td>
                         <td className="p-4 text-center font-black text-gray-700">{p.BaseUOM}</td>
                         <td className="p-4 text-[10px] text-gray-500 font-medium whitespace-normal leading-tight max-w-[200px]">{p.AllowedUOMs}</td>
                         <td className="p-4 font-mono text-[10px] text-gray-400 font-medium">{formattedDate}</td>
-                        <td className="p-4 text-right pr-6"><div className="flex justify-end gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity"><button onClick={() => openEditModal(p)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Edit Product"><PencilSquareIcon className="w-5 h-5" /></button><button onClick={() => handleDelete(p.ProductName, p.ProductCode)} className="p-1.5 text-red-600 hover:bg-red-100 rounded-lg transition" title="Delete Product"><TrashIcon className="w-5 h-5" /></button></div></td>
+                        <td className="p-4 text-right pr-6" onClick={(e) => e.stopPropagation()}><div className="flex justify-end gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity"><button onClick={() => openEditModal(p)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Edit Product"><PencilSquareIcon className="w-5 h-5" /></button><button onClick={() => handleDelete(p.ProductName, p.ProductCode)} className="p-1.5 text-red-600 hover:bg-red-100 rounded-lg transition" title="Delete Product"><TrashIcon className="w-5 h-5" /></button></div></td>
                       </tr>
                     )})}
-                    {filteredAndSortedProducts.length === 0 && <tr><td colSpan="8" className="p-16 text-center text-gray-400 italic font-bold">No products found matching your search or filters.</td></tr>}
+                    {filteredAndSortedProducts.length === 0 && <tr><td colSpan="9" className="p-16 text-center text-gray-400 italic font-bold">No products found matching your search or filters.</td></tr>}
                   </tbody>
                 </table>
             </div>
@@ -585,6 +687,53 @@ export default function ProductManagementPage() {
                 </table>
             </div>
         </div>
+        )}
+
+        {/* BULK EDIT MODAL */}
+        {isBulkEditOpen && (
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden">
+            <div className="bg-white rounded-[2.5rem] w-full max-w-lg shadow-2xl flex flex-col animate-in zoom-in duration-200 border border-gray-100 max-h-[90vh] overflow-hidden">
+                <div className="flex justify-between items-center p-6 border-b border-gray-100 shrink-0 bg-white">
+                    <div>
+                        <h2 className="text-lg md:text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit Products</h2>
+                        <p className="text-[10px] md:text-xs text-gray-400 font-bold mt-1">Applying to <span className="text-blue-600">{selectedProducts.length}</span> items.</p>
+                    </div>
+                    <button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                </div>
+                
+                <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0 custom-scrollbar bg-white">
+                    <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+                        <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-2">Override Category</label>
+                        <input 
+                            type="text" 
+                            list="bulk-categories" 
+                            className="w-full p-3 border border-blue-200 bg-white rounded-xl outline-none font-bold uppercase text-base md:text-xs focus:ring-2 focus:ring-blue-500" 
+                            value={bulkEditData.Category} 
+                            onChange={e => setBulkEditData({...bulkEditData, Category: e.target.value})} 
+                            placeholder="-- Leave blank for no change --"
+                        />
+                        <datalist id="bulk-categories">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist>
+                    </div>
+                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Override Origin</label>
+                        <input 
+                            type="text" 
+                            list="bulk-origins" 
+                            className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-bold uppercase text-base md:text-xs focus:ring-2 focus:ring-green-500" 
+                            value={bulkEditData.origin} 
+                            onChange={e => setBulkEditData({...bulkEditData, origin: e.target.value})} 
+                            placeholder="-- Leave blank for no change --"
+                        />
+                        <datalist id="bulk-origins">{uniqueOrigins.map(o => <option key={o} value={o} />)}</datalist>
+                    </div>
+                </div>
+                
+                <div className="flex justify-end gap-3 p-5 border-t border-gray-100 shrink-0 bg-gray-50">
+                    <button onClick={() => setIsBulkEditOpen(false)} className="flex-1 sm:flex-none px-6 py-4 sm:py-3 bg-white border border-gray-200 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
+                    <button onClick={handleBulkEditSave} className="flex-1 sm:flex-none px-8 py-4 sm:py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-xs uppercase tracking-widest">Apply to {selectedProducts.length}</button>
+                </div>
+            </div>
+          </div>
         )}
 
         {/* MODAL (MASTERLIST) */}
