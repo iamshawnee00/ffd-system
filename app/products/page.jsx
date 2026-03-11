@@ -29,7 +29,7 @@ export default function ProductManagementPage() {
   // Column Filters & Sorting
   const [sortConfig, setSortConfig] = useState({ key: 'ProductName', direction: 'asc' });
   const [columnFilters, setColumnFilters] = useState({
-      code: '', name: '', category: '', baseUom: '', allowedUoms: '', lastUpdate: ''
+      code: '', name: '', category: '', origin: '', baseUom: '', allowedUoms: '', lastUpdate: ''
   });
   
   // Modal State
@@ -38,7 +38,7 @@ export default function ProductManagementPage() {
 
   // Form State
   const [formData, setFormData] = useState({
-    ProductCode: '', ProductName: '', Category: '', 
+    ProductCode: '', ProductName: '', Category: '', origin: '', 
     AllowedUOMs: 'KG', BaseUOM: 'KG', SalesUOM: 'KG', PurchaseUOM: 'KG'      
   });
 
@@ -130,10 +130,10 @@ export default function ProductManagementPage() {
     e.preventDefault();
     const cleanedAllowed = formData.AllowedUOMs.toUpperCase().split(',').map(u => u.trim()).join(',');
     
-    // ADDED BACK: updated_at for tracking modifications
     const cleanedData = {
         ...formData,
         Category: formData.Category.toUpperCase().trim(),
+        origin: formData.origin ? formData.origin.toUpperCase().trim() : '',
         AllowedUOMs: cleanedAllowed,
         SalesUOM: formData.SalesUOM || formData.BaseUOM,
         PurchaseUOM: formData.PurchaseUOM || formData.BaseUOM,
@@ -175,7 +175,7 @@ export default function ProductManagementPage() {
 
   const openAddModal = () => {
     setEditingProduct(null);
-    setFormData({ ProductCode: '', ProductName: '', Category: '', AllowedUOMs: 'KG', BaseUOM: 'KG', SalesUOM: 'KG', PurchaseUOM: 'KG' });
+    setFormData({ ProductCode: '', ProductName: '', Category: '', origin: '', AllowedUOMs: 'KG', BaseUOM: 'KG', SalesUOM: 'KG', PurchaseUOM: 'KG' });
     setConversionFactors({});
     setIsModalOpen(true);
   };
@@ -183,8 +183,14 @@ export default function ProductManagementPage() {
   const openEditModal = async (product) => {
     setEditingProduct(product);
     setFormData({
-      ProductCode: product.ProductCode, ProductName: product.ProductName, Category: product.Category || 'VEGE',
-      AllowedUOMs: product.AllowedUOMs || 'KG', BaseUOM: product.BaseUOM || 'KG', SalesUOM: product.SalesUOM || product.BaseUOM || 'KG', PurchaseUOM: product.PurchaseUOM || product.BaseUOM || 'KG'
+      ProductCode: product.ProductCode, 
+      ProductName: product.ProductName, 
+      Category: product.Category || 'VEGE',
+      origin: product.origin || '',
+      AllowedUOMs: product.AllowedUOMs || 'KG', 
+      BaseUOM: product.BaseUOM || 'KG', 
+      SalesUOM: product.SalesUOM || product.BaseUOM || 'KG', 
+      PurchaseUOM: product.PurchaseUOM || product.BaseUOM || 'KG'
     });
     const { data: convs } = await supabase.from('UOM_Conversions').select('ConversionUOM, Factor').eq('ProductCode', product.ProductCode);
     const factors = {};
@@ -205,12 +211,19 @@ export default function ProductManagementPage() {
   }, [products]);
   const filterCategories = ['All', ...uniqueCategories];
 
+  const uniqueOrigins = useMemo(() => {
+      const orgs = new Set(products.map(p => p.origin).filter(Boolean));
+      // Fallback defaults if empty
+      ['MALAYSIA', 'CHINA', 'THAILAND', 'AUSTRALIA', 'SPAIN', 'SOUTH AFRICA'].forEach(o => orgs.add(o));
+      return Array.from(orgs).sort();
+  }, [products]);
+
   const requestSort = (key) => {
     let direction = 'asc';
     if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
     setSortConfig({ key, direction });
   };
-  const handleClearFilters = () => setColumnFilters({ code: '', name: '', category: '', baseUom: '', allowedUoms: '', lastUpdate: '' });
+  const handleClearFilters = () => setColumnFilters({ code: '', name: '', category: '', origin: '', baseUom: '', allowedUoms: '', lastUpdate: '' });
 
   const filteredAndSortedProducts = useMemo(() => {
       let filtered = products.filter(p => {
@@ -221,10 +234,11 @@ export default function ProductManagementPage() {
           const matchesColCode = !columnFilters.code || (p.ProductCode || '').toLowerCase().includes(columnFilters.code.toLowerCase());
           const matchesColName = !columnFilters.name || (p.ProductName || '').toLowerCase().includes(columnFilters.name.toLowerCase());
           const matchesColCat = !columnFilters.category || (p.Category || '').toLowerCase().includes(columnFilters.category.toLowerCase());
+          const matchesColOrigin = !columnFilters.origin || (p.origin || '').toLowerCase().includes(columnFilters.origin.toLowerCase());
           const matchesColBase = !columnFilters.baseUom || (p.BaseUOM || '').toLowerCase().includes(columnFilters.baseUom.toLowerCase());
           const matchesColAllow = !columnFilters.allowedUoms || (p.AllowedUOMs || '').toLowerCase().includes(columnFilters.allowedUoms.toLowerCase());
 
-          // New Filter Logic for Date
+          // Filter Logic for Date
           let matchesColLastUpdate = true;
           if (columnFilters.lastUpdate) {
               const dStr = p.updated_at || p.created_at || p.Timestamp;
@@ -235,14 +249,13 @@ export default function ProductManagementPage() {
                   if (isNaN(pDate)) {
                       matchesColLastUpdate = false;
                   } else {
-                      // Format to local YYYY-MM-DD for exact match against input[type="date"]
                       const pDateStr = `${pDate.getFullYear()}-${String(pDate.getMonth() + 1).padStart(2, '0')}-${String(pDate.getDate()).padStart(2, '0')}`;
                       matchesColLastUpdate = pDateStr === columnFilters.lastUpdate;
                   }
               }
           }
 
-          return matchesSearch && matchesCategory && matchesColCode && matchesColName && matchesColCat && matchesColBase && matchesColAllow && matchesColLastUpdate;
+          return matchesSearch && matchesCategory && matchesColCode && matchesColName && matchesColCat && matchesColOrigin && matchesColBase && matchesColAllow && matchesColLastUpdate;
       });
 
       if (sortConfig.key) {
@@ -394,7 +407,7 @@ export default function ProductManagementPage() {
         </div>
 
         {/* TABS */}
-        <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200">
+        <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200 custom-scrollbar">
             <button onClick={() => setActiveTab('masterlist')} className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'masterlist' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}><CubeIcon className="w-5 h-5" /> Product Masterlist</button>
             <button onClick={() => setActiveTab('calendar')} className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'calendar' ? 'bg-orange-500 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}><CalendarIcon className="w-5 h-5" /> Availability Calendar</button>
         </div>
@@ -421,6 +434,7 @@ export default function ProductManagementPage() {
                       <th className="p-4 pl-6 cursor-pointer hover:text-black select-none" onClick={() => requestSort('ProductCode')}>Code {sortConfig.key === 'ProductCode' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                       <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('ProductName')}>Product Name {sortConfig.key === 'ProductName' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                       <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('Category')}>Category {sortConfig.key === 'Category' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
+                      <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('origin')}>Origin {sortConfig.key === 'origin' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                       <th className="p-4 text-center cursor-pointer hover:text-black select-none" onClick={() => requestSort('BaseUOM')}>Base UOM {sortConfig.key === 'BaseUOM' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                       <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('AllowedUOMs')}>Allowed UOMs {sortConfig.key === 'AllowedUOMs' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
                       <th className="p-4 cursor-pointer hover:text-black select-none" onClick={() => requestSort('lastUpdate')}>Last Update {sortConfig.key === 'lastUpdate' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : ''}</th>
@@ -430,6 +444,7 @@ export default function ProductManagementPage() {
                         <th className="p-2 pl-4"><input type="text" placeholder="Filter Code..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.code} onChange={e => setColumnFilters({...columnFilters, code: e.target.value})} /></th>
                         <th className="p-2"><input type="text" placeholder="Filter Name..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.name} onChange={e => setColumnFilters({...columnFilters, name: e.target.value})} /></th>
                         <th className="p-2"><input type="text" placeholder="Filter Category..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.category} onChange={e => setColumnFilters({...columnFilters, category: e.target.value})} /></th>
+                        <th className="p-2"><input type="text" placeholder="Filter Origin..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.origin} onChange={e => setColumnFilters({...columnFilters, origin: e.target.value})} /></th>
                         <th className="p-2"><input type="text" placeholder="Filter UOM..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50 text-center" value={columnFilters.baseUom} onChange={e => setColumnFilters({...columnFilters, baseUom: e.target.value})} /></th>
                         <th className="p-2"><input type="text" placeholder="Filter Allowed..." className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.allowedUoms} onChange={e => setColumnFilters({...columnFilters, allowedUoms: e.target.value})} /></th>
                         <th className="p-2"><input type="date" className="w-full p-2 rounded-lg border border-gray-200 text-[10px] font-bold normal-case outline-none focus:ring-2 focus:ring-green-500 bg-gray-50" value={columnFilters.lastUpdate} onChange={e => setColumnFilters({...columnFilters, lastUpdate: e.target.value})} /></th>
@@ -449,13 +464,14 @@ export default function ProductManagementPage() {
                         <td className="p-4 pl-6"><span className="font-mono text-[10px] font-black text-gray-500 bg-gray-100 px-2.5 py-1 rounded border border-gray-200">{p.ProductCode}</span></td>
                         <td className="p-4 font-black text-gray-800 uppercase">{p.ProductName}</td>
                         <td className="p-4"><span className="text-[9px] font-black px-2.5 py-1 rounded-md uppercase bg-blue-50 text-blue-600 border border-blue-100 tracking-widest">{p.Category}</span></td>
+                        <td className="p-4 font-medium text-gray-600 uppercase text-xs">{p.origin || '-'}</td>
                         <td className="p-4 text-center font-black text-gray-700">{p.BaseUOM}</td>
                         <td className="p-4 text-[10px] text-gray-500 font-medium whitespace-normal leading-tight max-w-[200px]">{p.AllowedUOMs}</td>
                         <td className="p-4 font-mono text-[10px] text-gray-400 font-medium">{formattedDate}</td>
                         <td className="p-4 text-right pr-6"><div className="flex justify-end gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity"><button onClick={() => openEditModal(p)} className="p-1.5 text-blue-600 hover:bg-blue-100 rounded-lg transition" title="Edit Product"><PencilSquareIcon className="w-5 h-5" /></button><button onClick={() => handleDelete(p.ProductName, p.ProductCode)} className="p-1.5 text-red-600 hover:bg-red-100 rounded-lg transition" title="Delete Product"><TrashIcon className="w-5 h-5" /></button></div></td>
                       </tr>
                     )})}
-                    {filteredAndSortedProducts.length === 0 && <tr><td colSpan="7" className="p-16 text-center text-gray-400 italic font-bold">No products found matching your search or filters.</td></tr>}
+                    {filteredAndSortedProducts.length === 0 && <tr><td colSpan="8" className="p-16 text-center text-gray-400 italic font-bold">No products found matching your search or filters.</td></tr>}
                   </tbody>
                 </table>
             </div>
@@ -586,8 +602,9 @@ export default function ProductManagementPage() {
                         <div className="col-span-1"><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Code</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 bg-gray-50 font-mono text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all font-bold" value={formData.ProductCode} onChange={(e) => setFormData({...formData, ProductCode: e.target.value})} required disabled={!!editingProduct} placeholder="e.g. A001" /></div>
                         <div className="col-span-1 md:col-span-2"><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Product Name</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black text-gray-800 uppercase focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.ProductName} onChange={(e) => setFormData({...formData, ProductName: e.target.value})} required placeholder="e.g. AUSTRALIAN CARROTS" /></div>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Category</label><input type="text" list="modal-categories" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black uppercase bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.Category} onChange={(e) => setFormData({...formData, Category: e.target.value})} placeholder="TYPE OR SELECT CATEGORY..." required /><datalist id="modal-categories">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist></div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Category</label><input type="text" list="modal-categories" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black uppercase bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.Category} onChange={(e) => setFormData({...formData, Category: e.target.value})} placeholder="CATEGORY..." required /><datalist id="modal-categories">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist></div>
+                        <div><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Origin</label><input type="text" list="modal-origins" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black uppercase bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.origin} onChange={(e) => setFormData({...formData, origin: e.target.value})} placeholder="e.g. MALAYSIA" /><datalist id="modal-origins">{uniqueOrigins.map(o => <option key={o} value={o} />)}</datalist></div>
                         <div><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Allowed UOMs</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-bold uppercase focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" placeholder="e.g. KG, PKT, CTN" value={formData.AllowedUOMs} onChange={(e) => setFormData({...formData, AllowedUOMs: e.target.value})} required /></div>
                     </div>
                 </div>

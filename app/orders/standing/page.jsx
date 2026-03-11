@@ -167,7 +167,20 @@ export default function StandingOrdersPage() {
           const doNumber = `${prefix}-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
           const occurrenceMap = {};
           
-          const orderRows = (template.Items || []).map(item => {
+          // Inject a dummy item if it's a consignment with no products
+          let itemsToProcess = template.Items || [];
+          if (isConsign && itemsToProcess.length === 0) {
+              itemsToProcess = [{
+                  ProductCode: 'CSGN-DROP',
+                  OrderItems: 'CONSIGNMENT DROP (ROUTE ONLY)',
+                  Quantity: 0,
+                  UOM: 'TRIP',
+                  Price: 0,
+                  Replacement: ""
+              }];
+          }
+
+          const orderRows = itemsToProcess.map(item => {
               let baseRep = item.Replacement || "";
               const key = `${item.ProductCode}_${baseRep}`;
               let repVal = baseRep;
@@ -266,7 +279,21 @@ export default function StandingOrdersPage() {
           const doNumber = `${prefix}-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
           const occurrenceMap = {};
-          const orderRows = (template.Items || []).map(item => {
+
+          // Inject a dummy item if it's a consignment with no products
+          let itemsToProcess = template.Items || [];
+          if (isConsign && itemsToProcess.length === 0) {
+              itemsToProcess = [{
+                  ProductCode: 'CSGN-DROP',
+                  OrderItems: 'CONSIGNMENT DROP (ROUTE ONLY)',
+                  Quantity: 0,
+                  UOM: 'TRIP',
+                  Price: 0,
+                  Replacement: ""
+              }];
+          }
+
+          const orderRows = itemsToProcess.map(item => {
               let baseRep = item.Replacement || "";
               const key = `${item.ProductCode}_${baseRep}`;
               let repVal = baseRep;
@@ -405,14 +432,30 @@ export default function StandingOrdersPage() {
   const saveEditedTemplate = async () => {
       if (!editingTemplate.CustomerName) return alert("Customer Name is required.");
       if (!editingTemplate.DeliveryDay) return alert("Please select at least one Generate On day.");
+      
+      // Only enforce products if it's NOT a consignment order
+      if (!editingTemplate.IsConsignment && editingItems.length === 0) {
+          return alert("Regular templates require at least one product. (Consignments can be empty).");
+      }
+
       if (!confirm("Save changes to this template?")) return;
       
       try {
+          // STRICT PAYLOAD: Strip out DB generated fields, and append LoggedBy for better auditing
           const payload = {
-              ...editingTemplate,
               CustomerName: editingTemplate.CustomerName.toUpperCase(),
-              Items: editingItems
+              DeliveryAddress: editingTemplate.DeliveryAddress || '',
+              ContactPerson: editingTemplate.ContactPerson || '',
+              ContactNumber: editingTemplate.ContactNumber || '',
+              DeliveryDay: editingTemplate.DeliveryDay || '',
+              DeliveryMode: editingTemplate.DeliveryMode || 'Driver',
+              Status: editingTemplate.Status || 'Active',
+              IsConsignment: editingTemplate.IsConsignment || false,
+              Items: editingItems,
+              LoggedBy: currentUser
           };
+
+          let dbError;
 
           if (editingTemplate.id) {
               // Update existing
@@ -420,21 +463,25 @@ export default function StandingOrdersPage() {
                   .from('StandingOrders')
                   .update(payload)
                   .eq('id', editingTemplate.id);
-              if (error) throw error;
+              dbError = error;
           } else {
               // Insert new
               const { error } = await supabase
                   .from('StandingOrders')
                   .insert([payload]);
-              if (error) throw error;
+              dbError = error;
+          }
+          
+          if (dbError) {
+              throw new Error(dbError.message || JSON.stringify(dbError));
           }
           
           alert("Template saved successfully.");
           setIsEditModalOpen(false);
           fetchStandingOrders();
       } catch(e) {
-          alert("Error saving template.");
-          console.error(e);
+          alert("Database Error:\n" + e.message);
+          console.error("Save Error Details:", e);
       }
   };
 
@@ -670,7 +717,7 @@ export default function StandingOrdersPage() {
                     </div>
 
                     <div className="bg-white p-4 sm:p-5 rounded-2xl border border-indigo-100 shadow-sm relative mt-6">
-                        <label className="block text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-2 ml-1">Add Product to Template</label>
+                        <label className="block text-[10px] font-black text-indigo-500 uppercase tracking-widest mb-2 ml-1">Add Product to Template {editingTemplate.IsConsignment && <span className="text-gray-400 font-medium normal-case tracking-normal">(Optional for Consignments)</span>}</label>
                         <div className="flex gap-2 relative">
                             <span className="absolute left-3 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4 sm:w-5 sm:h-5"/></span>
                             <input type="text" placeholder="Search catalog..." className="w-full pl-9 p-3 border border-gray-200 bg-gray-50 rounded-xl text-xs font-bold outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500 transition-all" value={productSearchTerm} onChange={e => setProductSearchTerm(e.target.value)} />
