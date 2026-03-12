@@ -139,6 +139,8 @@ export default function ProductManagementPage() {
     
     const cleanedData = {
         ...formData,
+        ProductCode: formData.ProductCode.toUpperCase().trim(),
+        ProductName: formData.ProductName.toUpperCase().trim(),
         Category: formData.Category.toUpperCase().trim(),
         origin: formData.origin ? formData.origin.toUpperCase().trim() : '',
         AllowedUOMs: cleanedAllowed,
