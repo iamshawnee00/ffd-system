@@ -7,7 +7,6 @@ import { useSearchParams } from 'next/navigation';
 export default function UsageReportContent() {
   const searchParams = useSearchParams();
   const date = searchParams.get('date');
-  // We are focusing only on daily usage as requested, so 'type' is ignored for now.
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -26,7 +25,6 @@ export default function UsageReportContent() {
       console.log(`Fetching DAILY usage for ${date}`);
 
       // Fetch Orders for the specific date using exact match
-      // Using select('*') to avoid potential column name mismatches compared to Batch DO which works
       const { data, error } = await supabase
         .from('Orders')
         .select('*') 
@@ -38,14 +36,14 @@ export default function UsageReportContent() {
       } else if (data) {
         console.log(`Fetched ${data.length} rows`);
         
-        // Map to flat structure for display
+        // Map to flat structure for display and FORCE UPPERCASE for all text fields
         const usageList = data.map((row, index) => ({
             id: index,
-            // Ensure we access properties that might have spaces safely
-            description: row["Order Items"], 
+            // Automatically convert any small letters to uppercase for the report
+            description: String(row["Order Items"] || "").toUpperCase(), 
             qty: Number(row.Quantity || 0),
-            uom: row.UOM,
-            customer: row["Customer Name"]
+            uom: String(row.UOM || "").toUpperCase(),
+            customer: String(row["Customer Name"] || "").toUpperCase()
         }));
         
         // Sort by Description (A-Z) so similar items are grouped visually
@@ -126,14 +124,14 @@ export default function UsageReportContent() {
           {items.map((item, idx) => (
             <div key={idx} className="bg-white p-4 rounded-lg shadow border border-gray-100 flex flex-col gap-2">
               <div className="flex justify-between items-start">
-                <span className="font-bold text-sm text-gray-800">{item.description}</span>
-                <span className="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5 rounded">
+                <span className="font-bold text-sm text-gray-800 uppercase">{item.description}</span>
+                <span className="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5 rounded uppercase">
                   {item.qty} {item.uom}
                 </span>
               </div>
               <div className="text-xs text-gray-500 border-t pt-2 mt-1">
                 <span className="font-semibold text-gray-400 uppercase text-[10px] block mb-0.5">Customer</span>
-                {item.customer}
+                <span className="uppercase">{item.customer}</span>
               </div>
             </div>
           ))}
@@ -197,10 +195,10 @@ export default function UsageReportContent() {
                     {pageItems.map((item, index) => (
                         <tr key={index} className="border-b border-gray-300 h-5">
                         <td className="py-1 px-1 text-center border-r border-gray-300 font-bold">{items.indexOf(item) + 1}</td>
-                        <td className="py-1 px-2 border-r border-gray-300 font-bold truncate">{item.description}</td>
+                        <td className="py-1 px-2 border-r border-gray-300 font-bold truncate uppercase">{item.description}</td>
                         <td className="py-1 px-1 text-center border-r border-gray-300 font-bold">{item.qty}</td>
                         <td className="py-1 px-1 text-center border-r border-gray-300 uppercase">{item.uom}</td>
-                        <td className="py-1 px-2 truncate font-medium text-gray-700">{item.customer}</td>
+                        <td className="py-1 px-2 truncate font-medium text-gray-700 uppercase">{item.customer}</td>
                         </tr>
                     ))}
                     {/* Filler Rows */}

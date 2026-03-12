@@ -557,7 +557,8 @@ export default function QuickPastePage() {
               price: price, 
               productCode: bestProduct ? bestProduct.ProductCode : '',
               notes: '',
-              showNotes: false // UI toggle state
+              showNotes: false, // UI toggle state
+              isReplacement: false // Supports Replacement tagging
           });
       }
 
@@ -682,10 +683,24 @@ export default function QuickPastePage() {
       const dateStr = deliveryDate.replaceAll('-', '').slice(2);
       const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+      const occurrenceMap = {};
+
       const orderRows = validItems.map(item => {
           const prod = products.find(p => p.ProductCode === item.productCode);
           // Only save the user-entered notes. Remove the "Pasted: " raw line part.
           const finalNotes = item.notes ? item.notes.trim() : '';
+
+          // Determine replacement tag to prevent duplicate key conflicts in Supabase
+          let baseRep = item.isReplacement ? "YES" : (Number(item.price) === 0 ? "FOC" : "");
+          const key = `${item.productCode}_${baseRep}`;
+          let repVal = baseRep;
+          
+          if (occurrenceMap[key]) {
+              repVal = baseRep + " ".repeat(occurrenceMap[key]);
+              occurrenceMap[key]++;
+          } else {
+              occurrenceMap[key] = 1;
+          }
           
           return {
               "Timestamp": new Date(),
@@ -701,7 +716,8 @@ export default function QuickPastePage() {
               "Order Items": prod.ProductName,
               "Quantity": item.qty,
               "UOM": item.uom,
-              "Price": item.price || 0,
+              "Price": item.isReplacement ? 0 : (Number(item.price) || 0),
+              "Replacement": repVal,
               "LoggedBy": currentUser,
               "SpecialNotes": finalNotes
           };
@@ -759,7 +775,7 @@ export default function QuickPastePage() {
       }
   };
   const removeOrderItem = (id) => setParsedOrderItems(prev => prev.filter(item => item.id !== id));
-  const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: 'Manual Entry', qty: 1, uom: 'KG', price: 0, productCode: '', notes: '', showNotes: false }]);
+  const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: 'Manual Entry', qty: 1, uom: 'KG', price: 0, productCode: '', notes: '', showNotes: false, isReplacement: false }]);
   
   const updatePriceItem = (id, field, value) => {
       setParsedPriceItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
@@ -916,7 +932,7 @@ export default function QuickPastePage() {
 
                           {/* ITEMS LIST */}
                           {parsedOrderItems.map((item) => (
-                              <div key={item.id} className="flex flex-col bg-white p-3 rounded-xl border border-gray-200 shadow-sm hover:border-blue-300 transition">
+                              <div key={item.id} className={`flex flex-col p-3 rounded-xl border shadow-sm transition ${item.isReplacement ? 'bg-orange-50 border-orange-200' : 'bg-white border-gray-200 hover:border-blue-300'}`}>
                                   <div className="flex flex-col lg:flex-row gap-3 lg:gap-2 items-start lg:items-center w-full">
                                       {/* Original Text */}
                                       <div className="w-full lg:w-1/5 text-[10px] text-gray-500 italic truncate" title={item.rawLine}>
@@ -952,11 +968,30 @@ export default function QuickPastePage() {
                                                   })()}
                                               </select>
                                           </div>
-                                          <div className="flex-1 lg:w-20">
+                                          
+                                          {/* Price & Replacement Toggle */}
+                                          <div className="flex-1 lg:w-20 flex flex-col items-center">
                                               <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1 text-center">PRICE</span>
-                                              <input type="number" step="0.01" className="w-full p-2.5 border border-gray-200 rounded-lg text-[10px] md:text-xs font-black text-center focus:ring-2 focus:ring-blue-500" value={item.price} onChange={e => updateOrderItem(item.id, 'price', e.target.value)} />
+                                              <input 
+                                                  type="number" step="0.01" 
+                                                  className="w-full p-2.5 border border-gray-200 rounded-lg text-[10px] md:text-xs font-black text-center focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:text-gray-400" 
+                                                  value={item.isReplacement ? 0 : item.price} 
+                                                  onChange={e => updateOrderItem(item.id, 'price', e.target.value)} 
+                                                  disabled={item.isReplacement}
+                                              />
+                                              <label className="flex items-center gap-1 mt-1.5 cursor-pointer">
+                                                  <input 
+                                                      type="checkbox" 
+                                                      checked={item.isReplacement || false} 
+                                                      onChange={e => updateOrderItem(item.id, 'isReplacement', e.target.checked)}
+                                                      className="w-3 h-3 text-orange-500 rounded border-gray-300 focus:ring-orange-500"
+                                                  />
+                                                  <span className="text-[9px] font-black text-orange-600 uppercase tracking-widest">Replace</span>
+                                              </label>
                                           </div>
-                                          <div className="w-auto flex justify-end gap-1 pb-1.5 lg:pb-0">
+                                          
+                                          {/* Actions */}
+                                          <div className="w-auto flex justify-end gap-1 pb-1.5 lg:pb-0 self-start lg:self-auto pt-4 lg:pt-0">
                                               <button 
                                                   onClick={() => updateOrderItem(item.id, 'showNotes', !item.showNotes)} 
                                                   className={`p-1.5 rounded-lg transition ${item.showNotes || item.notes ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'}`}
