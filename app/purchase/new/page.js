@@ -215,6 +215,17 @@ export default function NewPurchasePage() {
 
     setSubmitting(true);
 
+    const finalSupplier = selectedSupplier.toUpperCase().trim();
+
+    // --- NEW: Add Supplier to database if it doesn't exist ---
+    const supplierExists = suppliers.some(s => s.SupplierName.toUpperCase() === finalSupplier);
+    if (!supplierExists) {
+        const { error: suppErr } = await supabase.from('Suppliers').insert([{ SupplierName: finalSupplier }]);
+        if (!suppErr) {
+            setSuppliers(prev => [...prev, { SupplierName: finalSupplier }].sort((a, b) => a.SupplierName.localeCompare(b.SupplierName)));
+        }
+    }
+
     const now = new Date();
     const [year, month, day] = purchaseDate.split('-');
 
@@ -226,7 +237,7 @@ export default function NewPurchasePage() {
         "Timestamp": rowDate.toISOString(), 
         "ProductCode": item.ProductCode,
         "ProductName": item.ProductName,
-        "Supplier": selectedSupplier,
+        "Supplier": finalSupplier,
         "PurchaseQty": item.qty,
         "PurchaseUOM": item.uom,
         "CostPrice": item.cost,
@@ -267,10 +278,21 @@ export default function NewPurchasePage() {
           return alert("Please fill in all required fields.");
       }
 
+      const finalSupplier = editData.Supplier.toUpperCase().trim();
+
+      // --- NEW: Add Supplier if it doesn't exist during history edit ---
+      const supplierExists = suppliers.some(s => s.SupplierName.toUpperCase() === finalSupplier);
+      if (!supplierExists) {
+          const { error: suppErr } = await supabase.from('Suppliers').insert([{ SupplierName: finalSupplier }]);
+          if (!suppErr) {
+              setSuppliers(prev => [...prev, { SupplierName: finalSupplier }].sort((a, b) => a.SupplierName.localeCompare(b.SupplierName)));
+          }
+      }
+
       const { error } = await supabase
           .from('Purchase')
           .update({
-              Supplier: editData.Supplier,
+              Supplier: finalSupplier,
               ProductCode: editData.ProductCode,
               ProductName: editData.ProductName,
               PurchaseQty: Number(editData.PurchaseQty),
@@ -698,14 +720,19 @@ export default function NewPurchasePage() {
                              {/* Supplier */}
                              <td className="p-4">
                                  {editingId === item.id ? (
-                                     <select 
-                                        className="p-2 border border-purple-200 rounded-xl outline-none focus:ring-2 focus:ring-purple-500 w-full font-black uppercase text-xs shadow-sm"
-                                        value={editData.Supplier}
-                                        onChange={e => setEditData({...editData, Supplier: e.target.value})}
-                                     >
-                                        <option value="">Select...</option>
-                                        {suppliers.map(s => <option key={s.SupplierName} value={s.SupplierName}>{s.SupplierName}</option>)}
-                                     </select>
+                                     <>
+                                         <input 
+                                            list="edit-supplier-list"
+                                            type="text"
+                                            className="p-2 border border-purple-200 rounded-xl outline-none focus:ring-2 focus:ring-purple-500 w-full font-black uppercase text-xs shadow-sm"
+                                            value={editData.Supplier}
+                                            onChange={e => setEditData({...editData, Supplier: e.target.value})}
+                                            placeholder="Supplier Name..."
+                                         />
+                                         <datalist id="edit-supplier-list">
+                                             {suppliers.map(s => <option key={s.SupplierName} value={s.SupplierName} />)}
+                                         </datalist>
+                                     </>
                                  ) : (
                                      <span className="font-black text-gray-800 uppercase">{item.Supplier}</span>
                                  )}
