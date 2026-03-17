@@ -56,6 +56,11 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        {/* 原生 App 体验：强制视口不可缩放，适配刘海屏及状态栏 */}
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0, viewport-fit=cover" />
+        <meta name="theme-color" content="#0F172A" />
+      </head>
       <body className={poppins.className}>
         <SidebarProvider>
           <LayoutContent>{children}</LayoutContent>

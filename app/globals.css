@@ -50,3 +50,31 @@ body {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ==========================================
+   NATIVE APP FEEL TWEAKS (原生 App 体验优化)
+   ========================================== */
+html, body {
+  /* 1. 防止整个页面出现网页特有的上下拉“橡皮筋”回弹效果 */
+  overscroll-behavior-y: none;
+  
+  /* 2. 禁用双指缩放 (Pinch-to-zoom) */
+  touch-action: pan-x pan-y;
+  
+  /* 3. 全局禁用长按选中文本 (就像真正的 App 一样) */
+  -webkit-user-select: none;
+  user-select: none;
+  
+  /* 4. 消除手机端点击按钮时出现的默认蓝色半透明高亮 */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 允许在输入框中正常选中文本和光标移动 */
+input, textarea, select {
+  -webkit-user-select: auto;
+  user-select: auto;
+}
+
+/* iPhone 刘海屏 / 底部黑条安全区域 (Safe Area) 适配 */
+.safe-pt { padding-top: env(safe-area-inset-top); }
+.safe-pb { padding-bottom: env(safe-area-inset-bottom); }

@@ -284,21 +284,48 @@ export default function DeliveryPage() {
   };
 
   const handlePrintOrder = (doNumber) => {
-      window.open(`/orders/${doNumber}/print`, '_blank');
+        window.open(`/orders/print.html?do=${doNumber}`, '_blank');
   };
 
+  // FRONTEND ONLY: Send to Shipday
   const handleSendToShipday = async (group) => {
       const doNumber = group.info.DONumber;
       if (!confirm(`Push order ${doNumber} to Shipday delivery?`)) return;
       try {
-          const res = await fetch('/api/shipday', {
+          const apiKey = process.env.NEXT_PUBLIC_SHIPDAY_API_KEY;
+          if (!apiKey) return alert("Missing NEXT_PUBLIC_SHIPDAY_API_KEY in your .env.local file.");
+
+          const shipdayPayload = {
+              orderNumber: group.info.DONumber,
+              customerName: group.info["Customer Name"],
+              customerAddress: group.info["Delivery Address"],
+              customerPhoneNumber: group.info["Contact Number"] || "",
+              restaurantName: "Fresher Farm Direct",
+              restaurantAddress: "Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, 68100 Batu Caves, Selangor",
+              orderItem: group.items.map(item => ({
+                  name: item["Order Items"],
+                  unitPrice: Number(item.Price || 0),
+                  quantity: Number(item.Quantity || 0)
+              })),
+              totalOrderCost: group.items.reduce((sum, item) => sum + (Number(item.Price || 0) * Number(item.Quantity || 0)), 0),
+              orderItemsText: group.items.map(item => `${item.Quantity} ${item.UOM} x ${item["Order Items"]}`).join(', ')
+          };
+
+          const res = await fetch('https://api.shipday.com/orders', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ order: group }) 
+              headers: {
+                  'Authorization': `Basic ${apiKey}`,
+                  'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(shipdayPayload)
           });
-          const result = await res.json();
-          if (res.ok && result.success) alert(`Success! Sent ${doNumber} to Shipday.`);
-          else alert(`Failed to send ${doNumber} to Shipday. Message: ${result.message}`);
+          
+          if (res.ok) {
+              alert(`Success! Sent ${doNumber} to Shipday.`);
+          } else {
+              const result = await res.json();
+              alert(`Failed to send ${doNumber} to Shipday. Message: ${result.message || 'Unknown error'}`);
+          }
       } catch (err) {
           alert("Server connection error.");
       }
@@ -349,6 +376,7 @@ export default function DeliveryPage() {
       }
   };
 
+  // FRONTEND ONLY: Bulk send to Shipday
   const sendSelectedToShipday = async () => {
     if (selectedDOs.size === 0) return alert("Select orders to send.");
     if (!confirm(`Send ${selectedDOs.size} orders to Shipday?`)) return;
@@ -356,19 +384,45 @@ export default function DeliveryPage() {
     setIsBulkSending(true);
     let successCount = 0;
     const doNumbers = Array.from(selectedDOs);
+    const apiKey = process.env.NEXT_PUBLIC_SHIPDAY_API_KEY;
+
+    if (!apiKey) {
+        alert("Missing NEXT_PUBLIC_SHIPDAY_API_KEY in your .env.local file.");
+        setIsBulkSending(false);
+        return;
+    }
 
     for (const doNum of doNumbers) {
       const group = groupedOrders.find(g => g.info.DONumber === doNum);
       if (!group) continue;
 
       try {
-          const res = await fetch('/api/shipday', {
+          const shipdayPayload = {
+              orderNumber: group.info.DONumber,
+              customerName: group.info["Customer Name"],
+              customerAddress: group.info["Delivery Address"],
+              customerPhoneNumber: group.info["Contact Number"] || "",
+              restaurantName: "Fresher Farm Direct",
+              restaurantAddress: "Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, 68100 Batu Caves, Selangor",
+              orderItem: group.items.map(item => ({
+                  name: item["Order Items"],
+                  unitPrice: Number(item.Price || 0),
+                  quantity: Number(item.Quantity || 0)
+              })),
+              totalOrderCost: group.items.reduce((sum, item) => sum + (Number(item.Price || 0) * Number(item.Quantity || 0)), 0),
+              orderItemsText: group.items.map(item => `${item.Quantity} ${item.UOM} x ${item["Order Items"]}`).join(', ')
+          };
+
+          const res = await fetch('https://api.shipday.com/orders', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ order: group })
+              headers: {
+                  'Authorization': `Basic ${apiKey}`,
+                  'Content-Type': 'application/json'
+              },
+              body: JSON.stringify(shipdayPayload)
           });
-          const result = await res.json();
-          if (res.ok && result.success) successCount++;
+          
+          if (res.ok) successCount++;
       } catch (err) {
           console.error(`Exception sending ${doNum}:`, err);
       }
@@ -378,46 +432,48 @@ export default function DeliveryPage() {
     alert(`Completed push. Successful: ${successCount} / ${selectedDOs.size}`);
   };
 
+  // FRONTEND ONLY: Pull Drivers and Statuses from Shipday directly
   const syncWithShipday = async () => {
     setIsSyncing(true);
-    const currentDOs = groupedOrders.map(g => g.info.DONumber);
-    if (currentDOs.length === 0) {
-        alert("No orders to sync.");
-        setIsSyncing(false);
-        return;
-    }
     try {
-        const response = await fetch('/api/shipday/sync', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderNumbers: currentDOs })
+        const apiKey = process.env.NEXT_PUBLIC_SHIPDAY_API_KEY;
+        if (!apiKey) {
+            alert("Please set NEXT_PUBLIC_SHIPDAY_API_KEY in your .env.local file.");
+            setIsSyncing(false);
+            return;
+        }
+
+        // Fetch active orders from Shipday
+        const res = await fetch('https://api.shipday.com/orders', {
+            method: 'GET',
+            headers: {
+                'Authorization': `Basic ${apiKey}`,
+                'Content-Type': 'application/json'
+            }
         });
-        const result = await response.json();
-        if (response.ok && result.success) {
-            const driversToUpdate = result.foundDrivers; 
-            if (driversToUpdate && driversToUpdate.length > 0) {
-                let updateCount = 0;
-                for (const item of driversToUpdate) {
-                    const { error } = await supabase
-                        .from('Orders')
-                        .update({ DriverName: item.driverName })
-                        .eq('DONumber', item.doNumber);
-                    if (!error) updateCount++;
-                }
-                const updateOrdersState = (prev) => prev.map(group => {
-                   const match = driversToUpdate.find(d => d.doNumber === group.info.DONumber);
-                   if (match) {
-                       return { ...group, info: { ...group.info, DriverName: match.driverName } };
-                   }
-                   return group;
-                });
-                setGroupedOrders(prev => updateOrdersState(prev));
-                setFilteredGroupedOrders(prev => updateOrdersState(prev));
-                alert(`Sync Complete! Updated ${updateCount} drivers.`);
-            } else {
-                alert("Sync Complete. No drivers found in Shipday yet.");
+
+        if (!res.ok) throw new Error("Failed to connect to Shipday API.");
+        const shipdayOrders = await res.json();
+
+        let updateCount = 0;
+        for (const sOrder of shipdayOrders) {
+            const doNum = sOrder.orderNumber || sOrder.order_number;
+            const driverName = sOrder.carrier?.name;
+            const status = sOrder.orderStatus?.orderState;
+
+            if (doNum && driverName) {
+                // Update Supabase
+                const { error } = await supabase
+                    .from('Orders')
+                    .update({ DriverName: driverName, Status: status || 'ASSIGNED' })
+                    .eq('DONumber', doNum);
+                
+                if (!error) updateCount++;
             }
         }
+
+        alert(`Sync Complete! Updated ${updateCount} drivers.`);
+        fetchDayOrders(selectedDate); // Refresh UI
     } catch (e) {
         alert("Sync error: " + e.message);
     } finally {
@@ -586,7 +642,7 @@ export default function DeliveryPage() {
   };
 
   return (
-    <div className="p-3 md:p-8 max-w-full min-h-screen bg-gray-50/50 pb-32 font-sans relative overflow-x-clip">
+    <div className="p-3 md:p-8 max-w-full overflow-x-clip min-h-screen bg-gray-50/50 pb-32">
       
       {/* HEADER & ACTIONS */}
       <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -732,10 +788,11 @@ export default function DeliveryPage() {
                           filteredGroupedOrders.map(group => {
                               const rawStatus = getRawStatus(group.info);
                               const isSelected = selectedDOs.has(group.info.DONumber);
+                              const isConsignment = String(group.info.DONumber).startsWith('CSGN');
                               return (
                               <tr key={group.info.DONumber} className={`transition-colors group/row cursor-pointer ${isSelected ? 'bg-blue-50/60' : 'hover:bg-blue-50/30'}`} onClick={() => handleCheckbox(group.info.DONumber)}>
                                   <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={isSelected} onChange={() => handleCheckbox(group.info.DONumber)} className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer" /></td>
-                                  <td className="p-4"><span className="font-mono text-xs font-black text-green-700 bg-green-100 px-2 py-1 rounded border border-green-200">{group.info.DONumber}</span></td>
+                                  <td className="p-4"><span className={`font-mono text-xs font-black px-2 py-1 rounded border ${isConsignment ? 'text-orange-700 bg-orange-100 border-orange-200' : 'text-green-700 bg-green-100 border-green-200'}`}>{group.info.DONumber}</span></td>
                                   <td className="p-4"><div className="font-black text-gray-800 text-base uppercase max-w-[350px] whitespace-normal leading-tight">{group.info["Customer Name"]}</div><div className="text-xs text-gray-500 mt-1 font-bold">{group.info["Contact Person"]}</div></td>
                                   <td className="p-4"><div className={`text-[9px] px-2 py-1 rounded w-fit font-black mb-1 uppercase tracking-widest border ${getDeliveryModeStyle(group.info["Delivery Mode"])}`}>{group.info["Delivery Mode"] || 'Standard'}</div><div className="text-xs text-gray-500 truncate max-w-[200px] font-medium">{group.info["Delivery Address"]}</div></td>
                                   <td className="p-4 text-center"><span className="bg-gray-100 text-gray-600 text-xs font-black px-3 py-1 rounded-full">{group.itemCount}</span></td>
@@ -755,10 +812,11 @@ export default function DeliveryPage() {
               {filteredGroupedOrders.length === 0 ? (<div className="p-10 text-center text-gray-400 italic font-bold bg-white rounded-2xl border border-dashed border-gray-200">No orders scheduled.</div>) : (filteredGroupedOrders.map(group => {
                       const rawStatus = getRawStatus(group.info);
                       const isSelected = selectedDOs.has(group.info.DONumber);
+                      const isConsignment = String(group.info.DONumber).startsWith('CSGN');
                       return (
                           <div key={group.info.DONumber} className={`rounded-2xl p-4 transition-all relative border shrink-0 ${isSelected ? 'bg-blue-50/50 border-blue-400 shadow-md ring-1 ring-blue-400' : 'bg-white border-gray-100 shadow-sm hover:border-blue-200'}`} onClick={() => handleCheckbox(group.info.DONumber)}>
                               <div className="flex justify-between items-start mb-3">
-                                  <div className="flex flex-col gap-1.5"><span className="font-mono text-[10px] font-black text-green-700 bg-green-100 px-2 py-1 rounded border border-green-200 w-fit">{group.info.DONumber}</span><span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase border w-fit ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></div>
+                                  <div className="flex flex-col gap-1.5"><span className={`font-mono text-[10px] font-black px-2 py-1 rounded border w-fit ${isConsignment ? 'text-orange-700 bg-orange-100 border-orange-200' : 'text-green-700 bg-green-100 border-green-200'}`}>{group.info.DONumber}</span><span className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase border w-fit ${getStatusColor(rawStatus)}`}>{formatDisplayStatus(rawStatus)}</span></div>
                                   <input type="checkbox" className="w-6 h-6 rounded-full text-blue-600 border-gray-300 pointer-events-none mt-1" checked={isSelected} readOnly />
                               </div>
                               <div className="mb-4"><h4 className="font-black text-gray-800 text-sm uppercase leading-tight mb-1 pr-6">{group.info["Customer Name"]}</h4><p className="text-[10px] text-gray-500 font-medium line-clamp-2 leading-snug">{group.info["Delivery Address"]}</p></div>

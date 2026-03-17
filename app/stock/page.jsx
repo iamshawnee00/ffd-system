@@ -111,10 +111,26 @@ export default function StockBalancePage() {
     const handleSyncShipday = async () => {
         setIsSyncingShipday(true);
         try {
-            const res = await fetch('/api/shipday/sync-status', { method: 'POST' });
-            if (res.ok) {
-                await fetchInventoryData();
+            const apiKey = process.env.NEXT_PUBLIC_SHIPDAY_API_KEY;
+            if (!apiKey) return alert("Missing NEXT_PUBLIC_SHIPDAY_API_KEY");
+
+            const res = await fetch('https://api.shipday.com/orders', {
+                method: 'GET',
+                headers: { 'Authorization': `Basic ${apiKey}`, 'Content-Type': 'application/json' }
+            });
+            if (!res.ok) throw new Error("Failed to connect to Shipday");
+            const shipdayOrders = await res.json();
+
+            for (const sOrder of shipdayOrders) {
+                const doNum = sOrder.orderNumber || sOrder.order_number;
+                const driverName = sOrder.carrier?.name;
+                const status = sOrder.orderStatus?.orderState;
+
+                if (doNum && driverName) {
+                    await supabase.from('Orders').update({ DriverName: driverName, Status: status || 'ASSIGNED' }).eq('DONumber', doNum);
+                }
             }
+            await fetchInventoryData();
         } catch (err) {
             console.error("Sync error:", err);
         } finally {

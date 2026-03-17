@@ -24,9 +24,15 @@ export default function RouteReportContent() {
       // 2. Fetch Live Shipday Orders to get the precise optimized Route Sequences
       let shipdayOrders = [];
       try {
-        const res = await fetch('/api/shipday/active');
-        if (res.ok) {
-          shipdayOrders = await res.json();
+        const apiKey = process.env.NEXT_PUBLIC_SHIPDAY_API_KEY;
+        if (apiKey) {
+            const res = await fetch('https://api.shipday.com/orders', {
+                method: 'GET',
+                headers: { 'Authorization': `Basic ${apiKey}`, 'Content-Type': 'application/json' }
+            });
+            if (res.ok) {
+              shipdayOrders = await res.json();
+            }
         }
       } catch (e) {
         console.error("Shipday fetch error", e);

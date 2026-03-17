@@ -29,6 +29,6 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     "**/*.mts"
-, "app/client-portal/layout.jsx", "app/layout.tsx"  ],
+, "app/client-portal/layout.jsx", "app/layout.tsx", "next.config.js"  ],
   "exclude": ["node_modules"]
 }
