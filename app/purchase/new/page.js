@@ -113,6 +113,11 @@ export default function NewPurchasePage() {
   const [editData, setEditData] = useState({});
   const [historySearchTerm, setHistorySearchTerm] = useState('');
 
+  // Pagination & Server Search States
+  const [historyLimit, setHistoryLimit] = useState(2000);
+  const [displayLimit, setDisplayLimit] = useState(100);
+  const [isDeepSearching, setIsDeepSearching] = useState(false);
+
   // History Sort & Filter State
   const [sortConfig, setSortConfig] = useState({ key: 'Timestamp', direction: 'desc' });
   const [columnFilters, setColumnFilters] = useState({
@@ -123,6 +128,9 @@ export default function NewPurchasePage() {
       cost: '',
       invoice: ''
   });
+
+  // Derived state to check if ANY filter is currently active
+  const hasAnyFilter = historySearchTerm || Object.values(columnFilters).some(v => v !== '');
 
   // 1. Fetch Data & User on Load
   useEffect(() => {
@@ -153,19 +161,78 @@ export default function NewPurchasePage() {
       setSuppliers(suppData || []);
       setProducts(prodData || []);
       
-      await fetchPurchaseHistory();
+      await fetchPurchaseHistory(2000);
       setLoading(false);
     }
     loadData();
   }, [router]);
 
-  const fetchPurchaseHistory = async () => {
+  const fetchPurchaseHistory = async (limit = historyLimit) => {
     const { data } = await supabase
         .from('Purchase')
         .select('*')
         .order('Timestamp', { ascending: false })
-        .limit(5000); 
+        .limit(limit); 
     if (data) setPurchaseHistory(data);
+  };
+
+  const handleLoadMore = async () => {
+    const newDisplayLimit = displayLimit + 100;
+    setDisplayLimit(newDisplayLimit);
+    
+    // If we reach the end of currently fetched DB records, fetch more from DB
+    if (newDisplayLimit >= purchaseHistory.length && purchaseHistory.length >= historyLimit) {
+        const newDbLimit = historyLimit + 2000;
+        setHistoryLimit(newDbLimit);
+        await fetchPurchaseHistory(newDbLimit);
+    }
+  };
+
+  const handleDeepSearch = async () => {
+    if (!hasAnyFilter) {
+        return alert("Please enter a keyword or use column filters to search the database.");
+    }
+    
+    setIsDeepSearching(true);
+    
+    let query = supabase.from('Purchase').select('*');
+
+    // 1. Apply Global Keyword Search
+    if (historySearchTerm) {
+        query = query.or(`ProductName.ilike.%${historySearchTerm}%,Supplier.ilike.%${historySearchTerm}%,InvoiceNumber.ilike.%${historySearchTerm}%,ProductCode.ilike.%${historySearchTerm}%`);
+    }
+
+    // 2. Apply Column Filters directly to Supabase Query
+    if (columnFilters.date) {
+        const startOfDay = new Date(`${columnFilters.date}T00:00:00`);
+        const endOfDay = new Date(`${columnFilters.date}T23:59:59.999`);
+        query = query.gte('Timestamp', startOfDay.toISOString()).lte('Timestamp', endOfDay.toISOString());
+    }
+    if (columnFilters.supplier) query = query.ilike('Supplier', `%${columnFilters.supplier}%`);
+    if (columnFilters.product) query = query.ilike('ProductName', `%${columnFilters.product}%`);
+    if (columnFilters.qty) query = query.eq('PurchaseQty', columnFilters.qty);
+    if (columnFilters.cost) query = query.eq('CostPrice', columnFilters.cost);
+    if (columnFilters.invoice) query = query.ilike('InvoiceNumber', `%${columnFilters.invoice}%`);
+
+    const { data, error } = await query.order('Timestamp', { ascending: false }).limit(2000);
+        
+    if (error) {
+        alert("Database search error: " + error.message);
+    } else if (data) {
+        setPurchaseHistory(data);
+        if (data.length === 0) {
+            alert(`No records found matching your deep search criteria.`);
+        }
+    }
+    setIsDeepSearching(false);
+  };
+
+  const handleResetHistory = () => {
+      setHistorySearchTerm('');
+      handleClearFilters();
+      setHistoryLimit(2000);
+      setDisplayLimit(100);
+      fetchPurchaseHistory(2000);
   };
 
   // --- NEW PURCHASE LOGIC ---
@@ -217,7 +284,7 @@ export default function NewPurchasePage() {
 
     const finalSupplier = selectedSupplier.toUpperCase().trim();
 
-    // --- NEW: Add Supplier to database if it doesn't exist ---
+    // --- Add Supplier to database if it doesn't exist ---
     const supplierExists = suppliers.some(s => s.SupplierName.toUpperCase() === finalSupplier);
     if (!supplierExists) {
         const { error: suppErr } = await supabase.from('Suppliers').insert([{ SupplierName: finalSupplier }]);
@@ -230,7 +297,6 @@ export default function NewPurchasePage() {
     const [year, month, day] = purchaseDate.split('-');
 
     const purchaseRows = cart.map((item, index) => {
-      // Create a truly unique timestamp dynamically to completely bypass constraint errors
       const rowDate = new Date(year, month - 1, day, now.getHours(), now.getMinutes(), now.getSeconds(), now.getMilliseconds() + index);
 
       return {
@@ -256,7 +322,7 @@ export default function NewPurchasePage() {
       setCart([]);
       setInvoiceNumber('');
       setSubmitting(false);
-      fetchPurchaseHistory(); 
+      handleResetHistory(); 
       setActiveTab('history');
     }
   };
@@ -280,7 +346,7 @@ export default function NewPurchasePage() {
 
       const finalSupplier = editData.Supplier.toUpperCase().trim();
 
-      // --- NEW: Add Supplier if it doesn't exist during history edit ---
+      // --- Add Supplier if it doesn't exist during history edit ---
       const supplierExists = suppliers.some(s => s.SupplierName.toUpperCase() === finalSupplier);
       if (!supplierExists) {
           const { error: suppErr } = await supabase.from('Suppliers').insert([{ SupplierName: finalSupplier }]);
@@ -307,7 +373,8 @@ export default function NewPurchasePage() {
       } else {
           alert("Purchase updated successfully.");
           setEditingId(null);
-          fetchPurchaseHistory();
+          // Refetch locally instead of full reset to maintain their current view
+          fetchPurchaseHistory(historyLimit);
       }
   };
 
@@ -318,7 +385,7 @@ export default function NewPurchasePage() {
       if (error) {
           alert("Error deleting: " + error.message);
       } else {
-          fetchPurchaseHistory();
+          fetchPurchaseHistory(historyLimit);
       }
   };
 
@@ -391,9 +458,9 @@ export default function NewPurchasePage() {
     return filtered;
   }, [purchaseHistory, historySearchTerm, sortConfig, columnFilters]);
 
-  // Limit direct view to 100 items, but allow full results if searching or filtering
-  const isFilteringActive = historySearchTerm || Object.values(columnFilters).some(v => v !== '');
-  const displayedHistory = isFilteringActive ? filteredPurchaseHistory : filteredPurchaseHistory.slice(0, 100);
+  // Limit direct view to improve performance, but allow full results if filtering
+  const isFilteringActive = hasAnyFilter;
+  const displayedHistory = isFilteringActive ? filteredPurchaseHistory : filteredPurchaseHistory.slice(0, displayLimit);
 
   const getStockColor = (balance) => {
     if (balance === null || balance === undefined) return 'bg-gray-100 text-gray-500'; 
@@ -651,22 +718,40 @@ export default function NewPurchasePage() {
       <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-180px)] flex flex-col relative">
          
          {/* History Header & Search */}
-         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 flex-none">
+         <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 gap-4 flex-none">
              <div>
                  <h2 className="text-xl font-black text-gray-800 tracking-tight flex items-center gap-2 uppercase">
                      <ClipboardDocumentListIcon className="w-7 h-7 text-purple-600" />
                      Recent Purchases
                  </h2>
              </div>
-             <div className="relative w-full sm:w-80">
-                 <input 
-                     type="text" 
-                     placeholder="Global search any text..." 
-                     className="w-full pl-10 p-3.5 border border-gray-200 rounded-2xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50/50 transition-all"
-                     value={historySearchTerm}
-                     onChange={(e) => setHistorySearchTerm(e.target.value)}
-                 />
-                 <span className="absolute left-3.5 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+             <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto">
+                 <div className="relative w-full sm:w-64">
+                     <input 
+                         type="text" 
+                         placeholder="Global search any text..." 
+                         className="w-full pl-10 p-3.5 border border-gray-200 rounded-2xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 bg-gray-50/50 transition-all"
+                         value={historySearchTerm}
+                         onChange={(e) => setHistorySearchTerm(e.target.value)}
+                         onKeyDown={(e) => e.key === 'Enter' && handleDeepSearch()}
+                     />
+                     <span className="absolute left-3.5 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+                 </div>
+                 <button 
+                     onClick={handleDeepSearch}
+                     disabled={isDeepSearching || !hasAnyFilter}
+                     className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-4 py-3.5 rounded-2xl text-xs transition-all shadow-sm active:scale-95 disabled:bg-gray-300 disabled:cursor-not-allowed whitespace-nowrap"
+                 >
+                     {isDeepSearching ? 'SEARCHING...' : 'DEEP SEARCH DB'}
+                 </button>
+                 {hasAnyFilter && (
+                     <button 
+                         onClick={handleResetHistory}
+                         className="bg-gray-100 hover:bg-gray-200 text-gray-600 font-bold px-4 py-3.5 rounded-2xl text-xs transition-all active:scale-95 whitespace-nowrap border border-gray-200"
+                     >
+                         RESET
+                     </button>
+                 )}
              </div>
          </div>
 
@@ -827,9 +912,22 @@ export default function NewPurchasePage() {
                              </td>
                          </tr>
                      ))}
+
+                     {displayedHistory.length > 0 && !isFilteringActive && purchaseHistory.length >= historyLimit && (
+                         <tr>
+                             <td colSpan="8" className="p-6 text-center bg-white border-t border-gray-100">
+                                 <button onClick={handleLoadMore} className="text-purple-600 hover:text-purple-800 font-black uppercase text-[10px] tracking-widest bg-purple-50 hover:bg-purple-100 px-6 py-2.5 rounded-full transition-all active:scale-95 border border-purple-200">
+                                     Load More Older Records...
+                                 </button>
+                             </td>
+                         </tr>
+                     )}
+
                      {displayedHistory.length === 0 && (
                          <tr>
-                             <td colSpan="8" className="p-16 text-center text-gray-400 italic font-bold">No purchase records found matching your search.</td>
+                             <td colSpan="8" className="p-16 text-center text-gray-400 italic font-bold">
+                                No records found. Try using 'Deep Search DB' to search older history.
+                             </td>
                          </tr>
                      )}
                  </tbody>
