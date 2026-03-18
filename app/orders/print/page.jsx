@@ -12,15 +12,45 @@ function PrintOrderContent() {
   const ITEMS_PER_PAGE = 25;
 
   useEffect(() => {
-    // BUG FIX: Bulletproof Vanilla JS approach to grab query parameters.
-    // This prevents Next.js hydration crashes when opening .html files directly.
     if (typeof window !== 'undefined') {
-        const params = new URLSearchParams(window.location.search);
-        const targetDo = params.get('do');
-        if (targetDo) {
-            setDoNumber(targetDo);
+        // Force the tab title to update immediately
+        document.title = "Print DO - FFD System";
+
+        // Helper function to aggressively extract the DO number
+        const extractDO = () => {
+            let target = '';
+            const rawUrl = window.location.href; // Safest way to read exactly what's in the address bar
+            
+            // 1. Try Hash
+            if (rawUrl.includes('#')) {
+                target = rawUrl.split('#')[1].split('?')[0].trim();
+            }
+            // 2. Try Query Params
+            if (!target && rawUrl.includes('?do=')) {
+                target = new URLSearchParams(window.location.search).get('do');
+            }
+            // 3. Try LocalStorage
+            if (!target) {
+                target = localStorage.getItem('print_do_target');
+            }
+            return target;
+        };
+
+        let foundDo = extractDO();
+
+        // If found immediately, proceed.
+        if (foundDo && foundDo !== 'null' && foundDo !== 'undefined') {
+            setDoNumber(foundDo);
         } else {
-            setLoading(false); // No DO provided
+            // If empty, wait 300ms for Next.js to finish its hydration URL rewrites, then try again.
+            setTimeout(() => {
+                const retryDo = extractDO();
+                if (retryDo && retryDo !== 'null' && retryDo !== 'undefined') {
+                    setDoNumber(retryDo);
+                } else {
+                    setLoading(false); // Truly no DO provided
+                }
+            }, 300);
         }
     }
   }, []);
@@ -30,6 +60,9 @@ function PrintOrderContent() {
       if (!doNumber) return; // Wait until we have the DO number
 
       try {
+          // CRITICAL FIX: Wait for Supabase to restore the session in the new tab
+          await supabase.auth.getSession();
+
           const { data: allItems, error: listError } = await supabase
             .from('Orders')
             .select('*')
@@ -54,7 +87,14 @@ function PrintOrderContent() {
   }, [doNumber]);
 
   if (loading) return <div className="p-10 text-center font-bold text-gray-400 uppercase tracking-widest animate-pulse">Loading Invoice...</div>;
-  if (!orderData) return <div className="p-10 text-center text-red-500 font-bold uppercase tracking-widest">Order not found.</div>;
+  if (!orderData) return (
+      <div className="p-20 text-center flex flex-col items-center gap-4">
+          <span className="text-red-500 font-black uppercase tracking-widest text-xl">Order not found</span>
+          <span className="text-xs font-bold text-gray-500 bg-gray-100 border border-gray-200 px-4 py-2 rounded-xl uppercase tracking-widest">
+              Target DO: <span className="text-blue-600 ml-1">{doNumber || 'None provided'}</span>
+          </span>
+      </div>
+  );
 
   const pages = [];
   for (let i = 0; i < items.length; i += ITEMS_PER_PAGE) {
@@ -257,6 +297,7 @@ function PrintOrderContent() {
 export default function PrintOrderPage() {
     return (
         <Suspense fallback={<div className="p-10 text-center font-bold text-gray-400">Loading Order Data...</div>}>
+            <title>Print DO - FFD System</title>
             <PrintOrderContent />
         </Suspense>
     );

@@ -397,7 +397,7 @@ export default function OrderListPage() {
   };
 
   const handlePrintOrder = (doNumber) => {
-        window.open(`/orders/print.html?do=${doNumber}`, '_blank');
+        window.open(`/orders/print#${doNumber}`, '_blank');
   };
 
   // Fuzzy search for list (Updated to include products inside the order)

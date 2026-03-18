@@ -284,7 +284,8 @@ export default function DeliveryPage() {
   };
 
   const handlePrintOrder = (doNumber) => {
-        window.open(`/orders/print.html?do=${doNumber}`, '_blank');
+      localStorage.setItem('print_do_target', doNumber);
+      window.open(`/orders/print?do=${doNumber}`, '_blank');
   };
 
   // FRONTEND ONLY: Send to Shipday
@@ -443,38 +444,99 @@ export default function DeliveryPage() {
             return;
         }
 
-        // Fetch active orders from Shipday
-        const res = await fetch('https://api.shipday.com/orders', {
-            method: 'GET',
-            headers: {
-                'Authorization': `Basic ${apiKey}`,
-                'Content-Type': 'application/json'
-            }
+        const headers = {
+            'Authorization': `Basic ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+        };
+
+        // 1. Fetch Completed Orders (Last 48 hours) to catch ALREADY_DELIVERED statuses
+        const endTime = new Date().toISOString();
+        const startTime = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+        
+        const completedRes = await fetch('https://api.shipday.com/orders/query', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                startTime,
+                endTime,
+                orderStatus: 'ALREADY_DELIVERED'
+            })
         });
 
-        if (!res.ok) throw new Error("Failed to connect to Shipday API.");
-        const shipdayOrders = await res.json();
+        // 2. Fetch Active Orders
+        const activeRes = await fetch('https://api.shipday.com/orders', {
+            method: 'GET',
+            headers
+        });
+
+        if (!activeRes.ok && !completedRes.ok) {
+             throw new Error("Failed to connect to Shipday API.");
+        }
+
+        const completedOrders = completedRes.ok ? await completedRes.json() : [];
+        const activeOrders = activeRes.ok ? await activeRes.json() : [];
+
+        // Combine both lists
+        const allShipdayOrders = [...completedOrders, ...activeOrders];
+
+        // 3. Create a map of Shipday orders for lightning-fast cross-referencing
+        const shipdayMap = {};
+        allShipdayOrders.forEach(sOrder => {
+            const doNum = sOrder.orderNumber || sOrder.order_number;
+            if (doNum) shipdayMap[doNum] = sOrder;
+        });
 
         let updateCount = 0;
-        for (const sOrder of shipdayOrders) {
-            const doNum = sOrder.orderNumber || sOrder.order_number;
-            const driverName = sOrder.carrier?.name;
-            const status = sOrder.orderStatus?.orderState;
 
-            if (doNum && driverName) {
-                // Update Supabase
+        // 4. Cross-reference ONLY the DOs currently on your screen (groupedOrders)
+        // This instantly catches deletions and unassignments!
+        for (const group of groupedOrders) {
+            const doNum = group.info.DONumber;
+            const sOrder = shipdayMap[doNum];
+            
+            let newDriver = group.info.DriverName || "";
+            let newStatus = getRawStatus(group.info);
+
+            if (sOrder) {
+                // Order exists in Shipday: Pull the exact driver and status
+                newDriver = sOrder.assignedCarrier?.name || sOrder.carrier?.name || "";
+                newStatus = sOrder.status || sOrder.orderStatus?.orderState || 'PENDING';
+            } else {
+                // Order is MISSING from Shipday (Deleted or Never Sent)
+                // If it currently has a driver in our system, we MUST unassign it
+                if (group.info.DriverName && group.info.DriverName.trim() !== '') {
+                    newDriver = "";
+                    newStatus = "PENDING";
+                } else {
+                    continue; // No change needed, skip to save DB calls
+                }
+            }
+
+            // Normalize strings to compare if an update is actually required
+            const safeNewDriver = newDriver.trim();
+            const safeOldDriver = (group.info.DriverName || "").trim();
+            const safeNewStatus = newStatus.toUpperCase().trim();
+            const safeOldStatus = (group.info.Status || "").toUpperCase().trim();
+
+            // Only update the database if the data has actually changed
+            if (safeNewDriver !== safeOldDriver || safeNewStatus !== safeOldStatus) {
                 const { error } = await supabase
                     .from('Orders')
-                    .update({ DriverName: driverName, Status: status || 'ASSIGNED' })
+                    .update({ 
+                        Status: safeNewStatus, 
+                        DriverName: safeNewDriver 
+                    })
                     .eq('DONumber', doNum);
                 
                 if (!error) updateCount++;
             }
         }
 
-        alert(`Sync Complete! Updated ${updateCount} drivers.`);
+        alert(`Sync Complete! Updated ${updateCount} orders on this date.`);
         fetchDayOrders(selectedDate); // Refresh UI
     } catch (e) {
+        console.error("Sync Error:", e);
         alert("Sync error: " + e.message);
     } finally {
         setIsSyncing(false);
