@@ -50,6 +50,7 @@ export default function StockBalancePage() {
 
     // --- DATA STATES ---
     const [inventory, setInventory] = useState([]);
+    const [conversions, setConversions] = useState([]); // UOM Conversions
     const [isSyncingShipday, setIsSyncingShipday] = useState(false);
     
     // --- MASTER TAB STATES ---
@@ -62,6 +63,21 @@ export default function StockBalancePage() {
     const [logCart, setLogCart] = useState([]);
     const [productInputs, setProductInputs] = useState({});
     const [submittingLog, setSubmittingLog] = useState(false);
+
+    // --- USAGE REPORT STATES ---
+    const [usageStartDate, setUsageStartDate] = useState(() => {
+        const tmr = new Date();
+        tmr.setDate(tmr.getDate() + 1);
+        return getLocalDateStr(tmr);
+    });
+    const [usageEndDate, setUsageEndDate] = useState(() => {
+        const tmr = new Date();
+        tmr.setDate(tmr.getDate() + 1);
+        return getLocalDateStr(tmr);
+    });
+    const [usageOrders, setUsageOrders] = useState([]);
+    const [usageSearch, setUsageSearch] = useState('');
+    const [isUsageLoading, setIsUsageLoading] = useState(false);
 
     // --- ALERT MUTING STATES ---
     const [mutedAlerts, setMutedAlerts] = useState({});
@@ -91,11 +107,31 @@ export default function StockBalancePage() {
             .channel('realtime_orders_sync')
             .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'Orders' }, () => {
                 fetchInventoryData();
+                if (activeTab === 'usage') fetchUsageOrders(); // Auto-refresh usage tab
             })
             .subscribe();
 
         return () => { supabase.removeChannel(channel); };
-    }, [router]);
+    }, [router, activeTab]);
+
+    // Fetch Orders for Usage Report automatically when the date changes
+    useEffect(() => {
+        fetchUsageOrders();
+    }, [usageStartDate, usageEndDate]);
+
+    const fetchUsageOrders = async () => {
+        if (!usageStartDate || !usageEndDate) return;
+        setIsUsageLoading(true);
+        const { data, error } = await supabase
+            .from('Orders')
+            .select('*')
+            .gte('"Delivery Date"', usageStartDate)
+            .lte('"Delivery Date"', usageEndDate);
+            
+        if (data) setUsageOrders(data);
+        else setUsageOrders([]);
+        setIsUsageLoading(false);
+    };
 
     // Format display status for consistent logic across pages
     const formatDisplayStatus = (rawStatus) => {
@@ -161,11 +197,16 @@ export default function StockBalancePage() {
             setMutedAlerts(localMuted);
         }
 
+        // Fetch Products
         const { data: prods, error: prodError } = await supabase
             .from('ProductMaster')
             .select('ProductCode, ProductName, Category, BaseUOM, SalesUOM, StockBalance, AllowedUOMs');
             
         if (prodError) console.error("Error fetching products:", prodError);
+
+        // Fetch Conversions
+        const { data: convData } = await supabase.from('UOM_Conversions').select('*');
+        if (convData) setConversions(convData);
 
         const today = new Date();
         const sevenDaysAgo = new Date(today);
@@ -251,6 +292,93 @@ export default function StockBalancePage() {
 
         setInventory(enriched);
         setLoading(false);
+    };
+
+    // --- SMART USAGE REPORT CALCULATION (UOM AWARE) ---
+    const calculatedUsage = useMemo(() => {
+        if (!inventory.length) return []; // Need product masterlist for mapping
+        const usage = {};
+        
+        usageOrders.forEach(row => {
+            const prodKey = row["Product Code"];
+            const fallbackName = row["Order Items"];
+            const orderUOM = (row.UOM || '').toUpperCase().trim();
+            const qty = Number(row.Quantity || 0);
+
+            const prod = inventory.find(p => p.ProductCode === prodKey);
+            const baseUOM = (prod?.BaseUOM || orderUOM).toUpperCase().trim();
+            const salesUOM = (prod?.SalesUOM || baseUOM).toUpperCase().trim();
+
+            // 1. Convert everything to Base UOM
+            let baseQty = qty;
+            if (orderUOM !== baseUOM) {
+                const conv = conversions.find(c => c.ProductCode === prodKey && c.ConversionUOM?.toUpperCase().trim() === orderUOM);
+                if (conv && Number(conv.Factor) > 0) {
+                    baseQty = qty * Number(conv.Factor);
+                }
+            }
+
+            const mapKey = prodKey || fallbackName;
+
+            if (!usage[mapKey]) {
+                usage[mapKey] = {
+                    code: prodKey,
+                    name: fallbackName,
+                    baseQtyTotal: 0,
+                    salesUOM: salesUOM,
+                    baseUOM: baseUOM,
+                    stockBalance: Number(prod?.StockBalance || 0)
+                };
+            }
+            usage[mapKey].baseQtyTotal += baseQty;
+        });
+
+        // 2. Convert from Base UOM into the final Sales UOM for the UI summary
+        return Object.values(usage).map(u => {
+            let displayQty = u.baseQtyTotal;
+            if (u.salesUOM !== u.baseUOM) {
+                const conv = conversions.find(c => c.ProductCode === u.code && c.ConversionUOM?.toUpperCase().trim() === u.salesUOM);
+                if (conv && Number(conv.Factor) > 0) {
+                    displayQty = u.baseQtyTotal / Number(conv.Factor);
+                }
+            }
+            
+            // Format stock balance to match sales UOM if needed (assuming StockBalance is in BaseUOM)
+            let formattedStock = u.stockBalance;
+            if (u.salesUOM !== u.baseUOM) {
+                const conv = conversions.find(c => c.ProductCode === u.code && c.ConversionUOM?.toUpperCase().trim() === u.salesUOM);
+                if (conv && Number(conv.Factor) > 0) {
+                    formattedStock = u.stockBalance / Number(conv.Factor);
+                }
+            }
+
+            return {
+                name: u.name,
+                code: u.code,
+                qty: Number(displayQty % 1 !== 0 ? displayQty.toFixed(2) : displayQty),
+                uom: u.salesUOM,
+                stockBalance: Number(formattedStock % 1 !== 0 ? formattedStock.toFixed(2) : formattedStock)
+            };
+        }).sort((a,b) => a.name.localeCompare(b.name));
+    }, [usageOrders, inventory, conversions]);
+
+    const filteredUsage = calculatedUsage.filter(u => {
+        if (!usageSearch) return true;
+        return `${u.name} ${u.code}`.toLowerCase().includes(usageSearch.toLowerCase());
+    });
+
+    // --- PRINT PAGINATION LOGIC ---
+    const ITEMS_PER_PAGE = 35;
+    const printPages = [];
+    for (let i = 0; i < filteredUsage.length; i += ITEMS_PER_PAGE) {
+        printPages.push(filteredUsage.slice(i, i + ITEMS_PER_PAGE));
+    }
+    if (printPages.length === 0) printPages.push([]); // Print at least an empty page frame if no items
+
+    const formatDisplayDate = (dStr) => {
+        if (!dStr) return '';
+        const d = new Date(dStr);
+        return !isNaN(d) ? d.toLocaleDateString('en-GB') : dStr;
     };
 
     // --- LOG INVENTORY HANDLERS ---
@@ -523,455 +651,656 @@ export default function StockBalancePage() {
     if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse">ANALYZING INVENTORY...</div>;
 
     return (
-        <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32 animate-in fade-in duration-300">
+        <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32 animate-in fade-in duration-300 print:bg-white print:p-0 print:pb-0">
             
-            {/* Header */}
-            <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                <div>
-                    <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Stock Dashboard</h1>
-                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">
-                        Predictive Analysis & Live Ledger
-                    </p>
-                </div>
-                <div className="text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm hidden sm:block">
-                    User: {currentUser}
-                </div>
-            </div>
-
-            {/* Navigation Tabs */}
-            <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200">
-                <button onClick={() => setActiveTab('master')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'master' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
-                    <ClipboardDocumentListIcon className="w-5 h-5" /> Master Inventory
-                </button>
-                <button onClick={() => setActiveTab('log')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'log' ? 'bg-orange-500 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
-                    <PencilSquareIcon className="w-5 h-5" /> Batch Adjust
-                </button>
-            </div>
-
-            {/* TAB 1: MASTER INVENTORY */}
-            {activeTab === 'master' && (
-            <div className="animate-in fade-in duration-300 h-full flex flex-col">
+            {/* WRAPPER TO HIDE ALL ON-SCREEN UI DURING PRINT */}
+            <div className="print-hidden flex flex-col h-full">
                 
-                {/* Main View: List & Detail (Native mobile slide-over pattern) */}
-                <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 md:gap-6 items-start xl:h-[calc(100vh-160px)] relative overflow-hidden">
-                    
-                    {/* LEFT COLUMN: Health Matrix + Product Selector */}
-                    <div className="xl:col-span-4 flex flex-col h-[calc(100vh-200px)] xl:h-full overflow-hidden gap-4">
-                        
-                        {/* Health Matrix (Moved Left & Compact) */}
-                        <div className="grid grid-cols-2 gap-3 shrink-0">
-                            <div 
-                                onClick={() => handleStatusFilterToggle('OOS')}
-                                className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'OOS' ? 'bg-gray-100 border-gray-400 ring-2 ring-gray-400' : 'bg-white border-gray-100 hover:border-gray-300 hover:shadow-md'}`}
-                            >
-                                <div>
-                                    <p className="text-[9px] text-gray-500 uppercase font-black tracking-widest">OOS / OUT SEAS</p>
-                                    <h3 className="text-2xl font-black text-gray-800 mt-0.5 leading-none">{oosCount}</h3>
-                                </div>
-                                <XCircleIcon className="w-6 h-6 md:w-8 md:h-8 text-gray-300" />
-                            </div>
-
-                            <div 
-                                onClick={() => handleStatusFilterToggle('Critical')}
-                                className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Critical' ? 'bg-red-50 border-red-400 ring-2 ring-red-400' : 'bg-white border-gray-100 hover:border-red-300 hover:shadow-md'}`}
-                            >
-                                <div>
-                                    <p className="text-[9px] text-red-500 uppercase font-black tracking-widest">Critical</p>
-                                    <h3 className="text-2xl font-black text-red-700 mt-0.5 leading-none">{criticalCount}</h3>
-                                </div>
-                                <ExclamationTriangleIcon className="w-6 h-6 md:w-8 md:h-8 text-red-200" />
-                            </div>
-
-                            <div 
-                                onClick={() => handleStatusFilterToggle('Low')}
-                                className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Low' ? 'bg-orange-50 border-orange-400 ring-2 ring-orange-400' : 'bg-white border-gray-100 hover:border-orange-300 hover:shadow-md'}`}
-                            >
-                                <div>
-                                    <p className="text-[9px] text-orange-500 uppercase font-black tracking-widest">Low</p>
-                                    <h3 className="text-2xl font-black text-orange-700 mt-0.5 leading-none">{lowCount}</h3>
-                                </div>
-                                <ArrowTrendingUpIcon className="w-6 h-6 md:w-8 md:h-8 text-orange-200" />
-                            </div>
-
-                            <div 
-                                onClick={() => handleStatusFilterToggle('Healthy')}
-                                className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Healthy' ? 'bg-green-50 border-green-400 ring-2 ring-green-400' : 'bg-white border-gray-100 hover:border-green-300 hover:shadow-md'}`}
-                            >
-                                <div>
-                                    <p className="text-[9px] text-green-600 uppercase font-black tracking-widest">Healthy / NOTED</p>
-                                    <h3 className="text-2xl font-black text-green-700 mt-0.5 leading-none">{healthyCount}</h3>
-                                </div>
-                                <CheckCircleIcon className="w-6 h-6 md:w-8 md:h-8 text-green-200" />
-                            </div>
-                        </div>
-
-                        {/* Product Selector */}
-                        <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 flex flex-col flex-1 overflow-hidden min-h-[300px]">
-                            <div className="p-4 border-b border-gray-100 bg-gray-50/50">
-                                <div className="relative">
-                                    <span className="absolute left-4 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5" /></span>
-                                    <input 
-                                        type="text"
-                                        placeholder="Search inventory..."
-                                        className="w-full pl-12 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                                        value={masterSearch}
-                                        onChange={e => setMasterSearch(e.target.value)}
-                                    />
-                                </div>
-                            </div>
-                            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-                                {filteredMaster.map(item => {
-                                    const isSelected = ledgerProduct?.ProductCode === item.ProductCode;
-                                    return (
-                                        <div 
-                                            key={item.ProductCode} 
-                                            onClick={() => handleOpenLedger(item)}
-                                            className={`p-4 rounded-2xl cursor-pointer border transition-all duration-100 group ${
-                                                isSelected 
-                                                ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400 shadow-md' 
-                                                : 'bg-white border-gray-100 hover:border-blue-200 hover:shadow-sm'
-                                            }`}
-                                        >
-                                            <div className="flex justify-between items-start mb-2">
-                                                <div className="pr-2">
-                                                    <div className={`font-black text-xs uppercase leading-tight ${isSelected ? 'text-blue-900' : 'text-gray-800'}`}>
-                                                        {item.ProductName}
-                                                    </div>
-                                                    <div className={`text-[10px] font-bold font-mono mt-0.5 ${isSelected ? 'text-blue-600' : 'text-gray-400'}`}>{item.ProductCode}</div>
-                                                </div>
-                                                <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase shrink-0 border ${getStatusStyle(item.status)}`}>
-                                                    {item.status}
-                                                </span>
-                                            </div>
-                                            <div className="flex justify-between items-end mt-2 pt-2 border-t border-gray-50">
-                                                <div className={`text-gray-500 font-medium ${isSelected ? 'text-blue-800' : ''}`}>
-                                                    <span className="block text-xs mb-1">Need Tmw: <strong className={`text-lg md:text-xl font-black ${isSelected ? 'text-blue-700' : 'text-blue-600'}`}>{item.predictedNeed}</strong> <span className="text-[10px] font-bold">{item.displayUOM}</span></span>
-                                                    <span className="block text-[10px]">7 Days: <strong className={`font-black ${isSelected ? 'text-blue-900' : 'text-gray-700'}`}>{item.past7Days}</strong> {item.displayUOM}</span>
-                                                </div>
-                                                <div className="text-right">
-                                                    <span className={`block text-[9px] uppercase font-bold tracking-widest ${isSelected ? 'text-blue-500' : 'text-gray-400'} mb-0.5`}>Balance</span>
-                                                    <span className={`font-black text-xl md:text-2xl ${isSelected ? 'text-blue-900' : 'text-slate-900'}`}>{item.StockBalance} <span className="text-[10px] font-bold opacity-60">{item.displayUOM}</span></span>
-                                                </div>
-                                            </div>
-                                            {/* NEW: ALERTS ACTION BAR */}
-                                            {['Critical', 'Low', 'Out of Stock'].includes(item.status) && (
-                                                <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
-                                                    <button onClick={() => handleMuteAlert(item.ProductCode, 'ACK')} className="flex-1 text-[9px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 py-1.5 rounded-lg transition-colors">✓ NOTED (24H)</button>
-                                                    <button onClick={() => handleMuteAlert(item.ProductCode, 'OOS')} className="flex-1 text-[9px] font-black bg-slate-100 hover:bg-slate-200 text-slate-600 py-1.5 rounded-lg transition-colors">❄️ OUT SEASON</button>
-                                                </div>
-                                            )}
-                                            {['Acknowledged', 'Out of Season'].includes(item.status) && (
-                                                <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
-                                                    <button onClick={() => handleUnmuteAlert(item.ProductCode)} className="flex-1 text-[9px] font-black bg-blue-50 hover:bg-blue-100 text-blue-600 py-1.5 rounded-lg transition-colors">↺ RESTORE ALERTS</button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
-                                {filteredMaster.length === 0 && (
-                                    <div className="p-8 text-center text-gray-400 font-bold italic text-xs">
-                                        {statusFilter ? `No products found with status "${statusFilter}".` : "No products found."}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+                {/* Header */}
+                <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <div>
+                        <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Stock Dashboard</h1>
+                        <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">
+                            Predictive Analysis & Live Ledger
+                        </p>
                     </div>
+                    <div className="text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm hidden sm:block">
+                        User: {currentUser}
+                    </div>
+                </div>
 
-                    {/* RIGHT COLUMN: Ledger Details (Full screen slide-in on mobile, static on desktop) */}
-                    <div className={`
-                        xl:col-span-8 bg-white rounded-t-[2rem] xl:rounded-[2rem] shadow-2xl xl:shadow-xl border border-gray-100 
-                        flex-col h-full xl:h-full overflow-hidden 
-                        fixed inset-0 z-50 mt-14 xl:static xl:z-auto xl:mt-0 
-                        transition-transform duration-300 ease-in-out
-                        ${ledgerProduct ? 'translate-x-0 flex' : 'translate-x-full xl:translate-x-0 hidden xl:flex'}
-                    `}>
-                        {ledgerProduct ? (
-                            <div className="flex flex-col h-full bg-white relative">
-                                {/* Mobile Header with Back Button */}
-                                <div className="xl:hidden flex items-center justify-between p-4 border-b border-gray-100 bg-white sticky top-0 z-10 shrink-0">
-                                    <button onClick={() => setLedgerProduct(null)} className="flex items-center gap-1 text-blue-600 font-bold text-xs p-2 -ml-2 rounded-lg active:bg-blue-50">
-                                        <ChevronLeftIcon className="w-5 h-5" /> Back
-                                    </button>
-                                    <div className="text-xs font-black uppercase text-gray-800 truncate px-4">{ledgerProduct.ProductName}</div>
+                {/* Navigation Tabs */}
+                <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200 custom-scrollbar">
+                    <button onClick={() => setActiveTab('master')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'master' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
+                        <ClipboardDocumentListIcon className="w-5 h-5" /> Master Inventory
+                    </button>
+                    <button onClick={() => setActiveTab('log')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'log' ? 'bg-orange-500 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
+                        <PencilSquareIcon className="w-5 h-5" /> Batch Adjust
+                    </button>
+                    <button onClick={() => setActiveTab('usage')} className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'usage' ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
+                        <ChartBarIcon className="w-5 h-5" /> Usage Report
+                    </button>
+                </div>
+
+                {/* TAB 1: MASTER INVENTORY */}
+                {activeTab === 'master' && (
+                <div className="animate-in fade-in duration-300 h-full flex flex-col">
+                    
+                    {/* Main View: List & Detail (Native mobile slide-over pattern) */}
+                    <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 md:gap-6 items-start xl:h-[calc(100vh-160px)] relative overflow-hidden">
+                        
+                        {/* LEFT COLUMN: Health Matrix + Product Selector */}
+                        <div className="xl:col-span-4 flex flex-col h-[calc(100vh-200px)] xl:h-full overflow-hidden gap-4">
+                            
+                            {/* Health Matrix (Moved Left & Compact) */}
+                            <div className="grid grid-cols-2 gap-3 shrink-0">
+                                <div 
+                                    onClick={() => handleStatusFilterToggle('OOS')}
+                                    className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'OOS' ? 'bg-gray-100 border-gray-400 ring-2 ring-gray-400' : 'bg-white border-gray-100 hover:border-gray-300 hover:shadow-md'}`}
+                                >
+                                    <div>
+                                        <p className="text-[9px] text-gray-500 uppercase font-black tracking-widest">OOS / OUT SEAS</p>
+                                        <h3 className="text-2xl font-black text-gray-800 mt-0.5 leading-none">{oosCount}</h3>
+                                    </div>
+                                    <XCircleIcon className="w-6 h-6 md:w-8 md:h-8 text-gray-300" />
                                 </div>
 
-                                <div className="p-5 md:p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1 pb-24 xl:pb-8">
-                                    {/* Desktop Detail Header */}
-                                    <div className="hidden xl:flex justify-between items-start md:items-center gap-4 border-b border-gray-50 pb-6 shrink-0">
-                                        <div>
-                                            <h2 className="text-xl md:text-3xl font-black text-gray-800 tracking-tight uppercase leading-none">{ledgerProduct.ProductName}</h2>
-                                            <div className="flex items-center gap-3 mt-3">
-                                                <span className="text-[10px] text-gray-400 font-black font-mono uppercase tracking-widest bg-gray-50 px-2 py-1 rounded-md border border-gray-100">CODE: {ledgerProduct.ProductCode}</span>
-                                            </div>
-                                        </div>
-                                        <button 
-                                            onClick={() => setShowResetModal(true)}
-                                            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl shadow-lg font-black transition-all flex items-center gap-2 active:scale-95 text-[10px] md:text-xs uppercase tracking-widest"
-                                        >
-                                            <CheckCircleIcon className="w-5 h-5 stroke-[2]" />
-                                            Manual Audit
-                                        </button>
+                                <div 
+                                    onClick={() => handleStatusFilterToggle('Critical')}
+                                    className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Critical' ? 'bg-red-50 border-red-400 ring-2 ring-red-400' : 'bg-white border-gray-100 hover:border-red-300 hover:shadow-md'}`}
+                                >
+                                    <div>
+                                        <p className="text-[9px] text-red-500 uppercase font-black tracking-widest">Critical</p>
+                                        <h3 className="text-2xl font-black text-red-700 mt-0.5 leading-none">{criticalCount}</h3>
                                     </div>
+                                    <ExclamationTriangleIcon className="w-6 h-6 md:w-8 md:h-8 text-red-200" />
+                                </div>
 
-                                    {/* Mobile Audit Button (Floating bottom or inline) */}
-                                    <div className="xl:hidden shrink-0">
-                                        <button 
-                                            onClick={() => setShowResetModal(true)}
-                                            className="w-full bg-blue-600 text-white p-4 rounded-2xl shadow-lg font-black flex items-center justify-center gap-2 active:scale-95 text-xs uppercase tracking-widest"
-                                        >
-                                            <CheckCircleIcon className="w-5 h-5" /> Perform Manual Audit
-                                        </button>
+                                <div 
+                                    onClick={() => handleStatusFilterToggle('Low')}
+                                    className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Low' ? 'bg-orange-50 border-orange-400 ring-2 ring-orange-400' : 'bg-white border-gray-100 hover:border-orange-300 hover:shadow-md'}`}
+                                >
+                                    <div>
+                                        <p className="text-[9px] text-orange-500 uppercase font-black tracking-widest">Low</p>
+                                        <h3 className="text-2xl font-black text-orange-700 mt-0.5 leading-none">{lowCount}</h3>
                                     </div>
+                                    <ArrowTrendingUpIcon className="w-6 h-6 md:w-8 md:h-8 text-orange-200" />
+                                </div>
 
-                                    {isLedgerLoading ? (
-                                        <div className="flex-1 flex items-center justify-center py-20 text-gray-300 font-black animate-pulse uppercase tracking-[0.2em] text-xs">Loading Ledger...</div>
-                                    ) : (
-                                        <>
-                                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                                                <div className="bg-blue-50/50 p-4 md:p-5 rounded-3xl border border-blue-100 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-4 shadow-sm">
-                                                    <div className="p-3 bg-white text-blue-600 rounded-2xl shadow-sm mb-2 sm:mb-0"><CubeIcon className="w-6 h-6 sm:w-7 sm:h-7" /></div>
-                                                    <div>
-                                                        <p className="text-[9px] md:text-[10px] font-black text-blue-500 uppercase tracking-widest">Current Bal</p>
-                                                        <h3 className="text-2xl font-black text-blue-900 leading-none mt-1">{Number(ledgerTransactions[0]?.balance || 0).toFixed(2)} <span className="text-[10px] font-bold text-gray-500">{ledgerProduct.displayUOM}</span></h3>
-                                                    </div>
-                                                </div>
-                                                <div className="bg-emerald-50/50 p-4 md:p-5 rounded-3xl border border-emerald-100 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-4 shadow-sm">
-                                                    <div className="p-3 bg-white text-emerald-600 rounded-2xl shadow-sm mb-2 sm:mb-0"><ArrowTrendingUpIcon className="w-6 h-6 sm:w-7 sm:h-7" /></div>
-                                                    <div>
-                                                        <p className="text-[9px] md:text-[10px] font-black text-emerald-500 uppercase tracking-widest">Incoming</p>
-                                                        <h3 className="text-2xl font-black text-emerald-900 leading-none mt-1">{Number(ledgerTransactions.filter(t => t.type === 'IN').reduce((s, t) => s + (Number(t.qtyIn) || 0), 0)).toFixed(2)} <span className="text-[10px] font-bold text-gray-500">{ledgerProduct.displayUOM}</span></h3>
-                                                    </div>
-                                                </div>
-                                                <div className="col-span-2 sm:col-span-1 bg-slate-50 p-4 md:p-5 rounded-3xl border border-slate-200 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-4 shadow-sm">
-                                                    <div className="p-3 bg-white text-slate-500 rounded-2xl shadow-sm mb-2 sm:mb-0 hidden sm:block"><ClipboardDocumentListIcon className="w-6 h-6 sm:w-7 sm:h-7" /></div>
-                                                    <div>
-                                                        <p className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-widest">Recent Audit</p>
-                                                        <h3 className="text-sm font-black text-slate-800 leading-tight mt-2">{[...ledgerTransactions].find(t => t.type === 'RESET')?.date || 'N/A'}</h3>
-                                                    </div>
-                                                </div>
-                                            </div>
+                                <div 
+                                    onClick={() => handleStatusFilterToggle('Healthy')}
+                                    className={`cursor-pointer transition-all duration-200 p-3 md:p-4 rounded-2xl border flex items-center justify-between shadow-sm ${statusFilter === 'Healthy' ? 'bg-green-50 border-green-400 ring-2 ring-green-400' : 'bg-white border-gray-100 hover:border-green-300 hover:shadow-md'}`}
+                                >
+                                    <div>
+                                        <p className="text-[9px] text-green-600 uppercase font-black tracking-widest">Healthy / NOTED</p>
+                                        <h3 className="text-2xl font-black text-green-700 mt-0.5 leading-none">{healthyCount}</h3>
+                                    </div>
+                                    <CheckCircleIcon className="w-6 h-6 md:w-8 md:h-8 text-green-200" />
+                                </div>
+                            </div>
 
-                                            <div className="bg-white p-5 md:p-6 rounded-[2rem] border border-gray-100 shadow-sm">
-                                                <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Stock Trend</h3>
-                                                <div className="h-[300px] xl:h-[350px] w-full">
-                                                    {chartData.length > 0 ? (
-                                                        <ResponsiveContainer width="100%" height="100%">
-                                                            <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                                                                <CartesianGrid stroke="#f3f4f6" strokeDasharray="3 3" vertical={false} />
-                                                                <ReferenceLine y={0} stroke="#ef4444" strokeWidth={2} strokeDasharray="4 4" label={{ position: 'insideTopLeft', value: '0 Balance', fill: '#ef4444', fontSize: 10, fontWeight: 'bold' }} />
-                                                                <XAxis 
-                                                                    dataKey="date" 
-                                                                    tick={{fontSize: 10, fill: '#9ca3af', fontWeight: 'bold'}} 
-                                                                    axisLine={false} 
-                                                                    tickLine={false} 
-                                                                    dy={10}
-                                                                    minTickGap={30}
-                                                                />
-                                                                <YAxis 
-                                                                    tick={{fontSize: 10, fill: '#9ca3af', fontWeight: 'bold'}} 
-                                                                    axisLine={false} 
-                                                                    tickLine={false} 
-                                                                />
-                                                                <Tooltip 
-                                                                    contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', padding: '12px'}}
-                                                                    labelStyle={{fontWeight: 'bold', color: '#1f2937', marginBottom: '8px', fontSize: '12px'}}
-                                                                    itemStyle={{fontSize: '12px', fontWeight: '500'}}
-                                                                />
-                                                                <Line 
-                                                                    type="monotone" 
-                                                                    dataKey="balance" 
-                                                                    name="Balance" 
-                                                                    stroke="#3b82f6" 
-                                                                    strokeWidth={3} 
-                                                                    dot={{r: 0}} 
-                                                                    activeDot={{r: 6, strokeWidth: 0}} 
-                                                                    connectNulls 
-                                                                />
-                                                            </LineChart>
-                                                        </ResponsiveContainer>
-                                                    ) : (
-                                                        <div className="h-full flex flex-col items-center justify-center text-gray-300">
-                                                            <span className="text-4xl mb-3 opacity-50">📉</span>
-                                                            <p className="font-bold text-sm">No trend data available</p>
+                            {/* Product Selector */}
+                            <div className="bg-white rounded-[2rem] shadow-xl border border-gray-100 flex flex-col flex-1 overflow-hidden min-h-[300px]">
+                                <div className="p-4 border-b border-gray-100 bg-gray-50/50">
+                                    <div className="relative">
+                                        <span className="absolute left-4 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5" /></span>
+                                        <input 
+                                            type="text"
+                                            placeholder="Search inventory..."
+                                            className="w-full pl-12 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                                            value={masterSearch}
+                                            onChange={e => setMasterSearch(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+                                    {filteredMaster.map(item => {
+                                        const isSelected = ledgerProduct?.ProductCode === item.ProductCode;
+                                        return (
+                                            <div 
+                                                key={item.ProductCode} 
+                                                onClick={() => handleOpenLedger(item)}
+                                                className={`p-4 rounded-2xl cursor-pointer border transition-all duration-100 group ${
+                                                    isSelected 
+                                                    ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400 shadow-md' 
+                                                    : 'bg-white border-gray-100 hover:border-blue-200 hover:shadow-sm'
+                                                }`}
+                                            >
+                                                <div className="flex justify-between items-start mb-2">
+                                                    <div className="pr-2">
+                                                        <div className={`font-black text-xs uppercase leading-tight ${isSelected ? 'text-blue-900' : 'text-gray-800'}`}>
+                                                            {item.ProductName}
                                                         </div>
-                                                    )}
+                                                        <div className={`text-[10px] font-bold font-mono mt-0.5 ${isSelected ? 'text-blue-600' : 'text-gray-400'}`}>{item.ProductCode}</div>
+                                                    </div>
+                                                    <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase shrink-0 border ${getStatusStyle(item.status)}`}>
+                                                        {item.status}
+                                                    </span>
                                                 </div>
+                                                <div className="flex justify-between items-end mt-2 pt-2 border-t border-gray-50">
+                                                    <div className={`text-gray-500 font-medium ${isSelected ? 'text-blue-800' : ''}`}>
+                                                        <span className="block text-xs mb-1">Need Tmw: <strong className={`text-lg md:text-xl font-black ${isSelected ? 'text-blue-700' : 'text-blue-600'}`}>{item.predictedNeed}</strong> <span className="text-[10px] font-bold">{item.displayUOM}</span></span>
+                                                        <span className="block text-[10px]">7 Days: <strong className={`font-black ${isSelected ? 'text-blue-900' : 'text-gray-700'}`}>{item.past7Days}</strong> {item.displayUOM}</span>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <span className={`block text-[9px] uppercase font-bold tracking-widest ${isSelected ? 'text-blue-500' : 'text-gray-400'} mb-0.5`}>Balance</span>
+                                                        <span className={`font-black text-xl md:text-2xl ${isSelected ? 'text-blue-900' : 'text-slate-900'}`}>{item.StockBalance} <span className="text-[10px] font-bold opacity-60">{item.displayUOM}</span></span>
+                                                    </div>
+                                                </div>
+                                                {/* NEW: ALERTS ACTION BAR */}
+                                                {['Critical', 'Low', 'Out of Stock'].includes(item.status) && (
+                                                    <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
+                                                        <button onClick={() => handleMuteAlert(item.ProductCode, 'ACK')} className="flex-1 text-[9px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 py-1.5 rounded-lg transition-colors">✓ NOTED (24H)</button>
+                                                        <button onClick={() => handleMuteAlert(item.ProductCode, 'OOS')} className="flex-1 text-[9px] font-black bg-slate-100 hover:bg-slate-200 text-slate-600 py-1.5 rounded-lg transition-colors">❄️ OUT SEASON</button>
+                                                    </div>
+                                                )}
+                                                {['Acknowledged', 'Out of Season'].includes(item.status) && (
+                                                    <div className="flex gap-2 mt-3 pt-3 border-t border-gray-100" onClick={(e) => e.stopPropagation()}>
+                                                        <button onClick={() => handleUnmuteAlert(item.ProductCode)} className="flex-1 text-[9px] font-black bg-blue-50 hover:bg-blue-100 text-blue-600 py-1.5 rounded-lg transition-colors">↺ RESTORE ALERTS</button>
+                                                    </div>
+                                                )}
                                             </div>
-
-                                            <div className="border border-gray-100 rounded-[2rem] overflow-hidden shadow-sm">
-                                                <table className="w-full text-left">
-                                                    <thead className="bg-gray-50 text-[9px] font-black text-gray-400 uppercase border-b border-gray-100 tracking-widest">
-                                                        <tr><th className="p-4 pl-6">Date</th><th className="p-4">Type</th><th className="p-4 text-center">In</th><th className="p-4 text-center">Out</th><th className="p-4 text-center text-blue-600">Bal</th></tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-gray-50 text-xs font-bold text-gray-600">
-                                                        {ledgerTransactions.map((tx) => (
-                                                            <tr key={tx.id} className="hover:bg-gray-50/50 transition-colors">
-                                                                <td className="p-4 pl-6 font-mono text-gray-400">{tx.date.substring(5)}</td>
-                                                                <td className="p-4">
-                                                                    <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase border tracking-widest shadow-sm ${
-                                                                        tx.type === 'IN' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
-                                                                        tx.type === 'OUT' ? 'bg-orange-50 text-orange-700 border-orange-100' :
-                                                                        'bg-blue-50 text-blue-700 border-blue-100'
-                                                                    }`}>{tx.type}</span>
-                                                                </td>
-                                                                <td className="p-4 text-center text-emerald-600">{tx.qtyIn > 0 ? `+${Number(tx.qtyIn).toFixed(2)}` : '—'}</td>
-                                                                <td className="p-4 text-center text-orange-500">{tx.qtyOut > 0 ? `-${Number(tx.qtyOut).toFixed(2)}` : '—'}</td>
-                                                                <td className="p-4 text-center font-black text-gray-800 bg-gray-50/50">{Number(tx.balance).toFixed(2)}</td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        </>
+                                        );
+                                    })}
+                                    {filteredMaster.length === 0 && (
+                                        <div className="p-8 text-center text-gray-400 font-bold italic text-xs">
+                                            {statusFilter ? `No products found with status "${statusFilter}".` : "No products found."}
+                                        </div>
                                     )}
                                 </div>
                             </div>
-                        ) : (
-                            <div className="flex-1 flex flex-col items-center justify-start pt-32 text-slate-400 p-8 text-center h-full">
-                                <div className="bg-slate-50 p-8 rounded-full mb-6 border border-slate-100 shadow-sm hidden md:block">
-                                    <ChartBarIcon className="w-12 h-12 text-slate-300" />
+                        </div>
+
+                        {/* RIGHT COLUMN: Ledger Details (Full screen slide-in on mobile, static on desktop) */}
+                        <div className={`
+                            xl:col-span-8 bg-white rounded-t-[2rem] xl:rounded-[2rem] shadow-2xl xl:shadow-xl border border-gray-100 
+                            flex-col h-full xl:h-full overflow-hidden 
+                            fixed inset-0 z-50 mt-14 xl:static xl:z-auto xl:mt-0 
+                            transition-transform duration-300 ease-in-out
+                            ${ledgerProduct ? 'translate-x-0 flex' : 'translate-x-full xl:translate-x-0 hidden xl:flex'}
+                        `}>
+                            {ledgerProduct ? (
+                                <div className="flex flex-col h-full bg-white relative">
+                                    {/* Mobile Header with Back Button */}
+                                    <div className="xl:hidden flex items-center justify-between p-4 border-b border-gray-100 bg-white sticky top-0 z-10 shrink-0">
+                                        <button onClick={() => setLedgerProduct(null)} className="flex items-center gap-1 text-blue-600 font-bold text-xs p-2 -ml-2 rounded-lg active:bg-blue-50">
+                                            <ChevronLeftIcon className="w-5 h-5" /> Back
+                                        </button>
+                                        <div className="text-xs font-black uppercase text-gray-800 truncate px-4">{ledgerProduct.ProductName}</div>
+                                    </div>
+
+                                    <div className="p-5 md:p-8 space-y-6 overflow-y-auto custom-scrollbar flex-1 pb-24 xl:pb-8">
+                                        {/* Desktop Detail Header */}
+                                        <div className="hidden xl:flex justify-between items-start md:items-center gap-4 border-b border-gray-50 pb-6 shrink-0">
+                                            <div>
+                                                <h2 className="text-xl md:text-3xl font-black text-gray-800 tracking-tight uppercase leading-none">{ledgerProduct.ProductName}</h2>
+                                                <div className="flex items-center gap-3 mt-3">
+                                                    <span className="text-[10px] text-gray-400 font-black font-mono uppercase tracking-widest bg-gray-50 px-2 py-1 rounded-md border border-gray-100">CODE: {ledgerProduct.ProductCode}</span>
+                                                </div>
+                                            </div>
+                                            <button 
+                                                onClick={() => setShowResetModal(true)}
+                                                className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-2xl shadow-lg font-black transition-all flex items-center gap-2 active:scale-95 text-[10px] md:text-xs uppercase tracking-widest"
+                                            >
+                                                <CheckCircleIcon className="w-5 h-5 stroke-[2]" />
+                                                Manual Audit
+                                            </button>
+                                        </div>
+
+                                        {/* Mobile Audit Button (Floating bottom or inline) */}
+                                        <div className="xl:hidden shrink-0">
+                                            <button 
+                                                onClick={() => setShowResetModal(true)}
+                                                className="w-full bg-blue-600 text-white p-4 rounded-2xl shadow-lg font-black flex items-center justify-center gap-2 active:scale-95 text-xs uppercase tracking-widest"
+                                            >
+                                                <CheckCircleIcon className="w-5 h-5" /> Perform Manual Audit
+                                            </button>
+                                        </div>
+
+                                        {isLedgerLoading ? (
+                                            <div className="flex-1 flex items-center justify-center py-20 text-gray-300 font-black animate-pulse uppercase tracking-[0.2em] text-xs">Loading Ledger...</div>
+                                        ) : (
+                                            <>
+                                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                                                    <div className="bg-blue-50/50 p-4 md:p-5 rounded-3xl border border-blue-100 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-4 shadow-sm">
+                                                        <div className="p-3 bg-white text-blue-600 rounded-2xl shadow-sm mb-2 sm:mb-0"><CubeIcon className="w-6 h-6 sm:w-7 sm:h-7" /></div>
+                                                        <div>
+                                                            <p className="text-[9px] md:text-[10px] font-black text-blue-500 uppercase tracking-widest">Current Bal</p>
+                                                            <h3 className="text-2xl font-black text-blue-900 leading-none mt-1">{Number(ledgerTransactions[0]?.balance || 0).toFixed(2)} <span className="text-[10px] font-bold text-gray-500">{ledgerProduct.displayUOM}</span></h3>
+                                                        </div>
+                                                    </div>
+                                                    <div className="bg-emerald-50/50 p-4 md:p-5 rounded-3xl border border-emerald-100 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-4 shadow-sm">
+                                                        <div className="p-3 bg-white text-emerald-600 rounded-2xl shadow-sm mb-2 sm:mb-0"><ArrowTrendingUpIcon className="w-6 h-6 sm:w-7 sm:h-7" /></div>
+                                                        <div>
+                                                            <p className="text-[9px] md:text-[10px] font-black text-emerald-500 uppercase tracking-widest">Incoming</p>
+                                                            <h3 className="text-2xl font-black text-emerald-900 leading-none mt-1">{Number(ledgerTransactions.filter(t => t.type === 'IN').reduce((s, t) => s + (Number(t.qtyIn) || 0), 0)).toFixed(2)} <span className="text-[10px] font-bold text-gray-500">{ledgerProduct.displayUOM}</span></h3>
+                                                        </div>
+                                                    </div>
+                                                    <div className="col-span-2 sm:col-span-1 bg-slate-50 p-4 md:p-5 rounded-3xl border border-slate-200 flex flex-col justify-center items-center text-center sm:items-start sm:text-left sm:flex-row sm:gap-4 shadow-sm">
+                                                        <div className="p-3 bg-white text-slate-500 rounded-2xl shadow-sm mb-2 sm:mb-0 hidden sm:block"><ClipboardDocumentListIcon className="w-6 h-6 sm:w-7 sm:h-7" /></div>
+                                                        <div>
+                                                            <p className="text-[9px] md:text-[10px] font-black text-slate-500 uppercase tracking-widest">Recent Audit</p>
+                                                            <h3 className="text-sm font-black text-slate-800 leading-tight mt-2">{[...ledgerTransactions].find(t => t.type === 'RESET')?.date || 'N/A'}</h3>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                <div className="bg-white p-5 md:p-6 rounded-[2rem] border border-gray-100 shadow-sm">
+                                                    <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4">Stock Trend</h3>
+                                                    <div className="h-[300px] xl:h-[350px] w-full">
+                                                        {chartData.length > 0 ? (
+                                                            <ResponsiveContainer width="100%" height="100%">
+                                                                <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                                                                    <CartesianGrid stroke="#f3f4f6" strokeDasharray="3 3" vertical={false} />
+                                                                    <ReferenceLine y={0} stroke="#ef4444" strokeWidth={2} strokeDasharray="4 4" label={{ position: 'insideTopLeft', value: '0 Balance', fill: '#ef4444', fontSize: 10, fontWeight: 'bold' }} />
+                                                                    <XAxis 
+                                                                        dataKey="date" 
+                                                                        tick={{fontSize: 10, fill: '#9ca3af', fontWeight: 'bold'}} 
+                                                                        axisLine={false} 
+                                                                        tickLine={false} 
+                                                                        dy={10}
+                                                                        minTickGap={30}
+                                                                    />
+                                                                    <YAxis 
+                                                                        tick={{fontSize: 10, fill: '#9ca3af', fontWeight: 'bold'}} 
+                                                                        axisLine={false} 
+                                                                        tickLine={false} 
+                                                                    />
+                                                                    <Tooltip 
+                                                                        contentStyle={{borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', padding: '12px'}}
+                                                                        labelStyle={{fontWeight: 'bold', color: '#1f2937', marginBottom: '8px', fontSize: '12px'}}
+                                                                        itemStyle={{fontSize: '12px', fontWeight: '500'}}
+                                                                    />
+                                                                    <Line 
+                                                                        type="monotone" 
+                                                                        dataKey="balance" 
+                                                                        name="Balance" 
+                                                                        stroke="#3b82f6" 
+                                                                        strokeWidth={3} 
+                                                                        dot={{r: 0}} 
+                                                                        activeDot={{r: 6, strokeWidth: 0}} 
+                                                                        connectNulls 
+                                                                    />
+                                                                </LineChart>
+                                                            </ResponsiveContainer>
+                                                        ) : (
+                                                            <div className="h-full flex flex-col items-center justify-center text-gray-300">
+                                                                <span className="text-4xl mb-3 opacity-50">📉</span>
+                                                                <p className="font-bold text-sm">No trend data available</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div className="border border-gray-100 rounded-[2rem] overflow-hidden shadow-sm">
+                                                    <table className="w-full text-left">
+                                                        <thead className="bg-gray-50 text-[9px] font-black text-gray-400 uppercase border-b border-gray-100 tracking-widest">
+                                                            <tr><th className="p-4 pl-6">Date</th><th className="p-4">Type</th><th className="p-4 text-center">In</th><th className="p-4 text-center">Out</th><th className="p-4 text-center text-blue-600">Bal</th></tr>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-gray-50 text-xs font-bold text-gray-600">
+                                                            {ledgerTransactions.map((tx) => (
+                                                                <tr key={tx.id} className="hover:bg-gray-50/50 transition-colors">
+                                                                    <td className="p-4 pl-6 font-mono text-gray-400">{tx.date.substring(5)}</td>
+                                                                    <td className="p-4">
+                                                                        <span className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase border tracking-widest shadow-sm ${
+                                                                            tx.type === 'IN' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' :
+                                                                            tx.type === 'OUT' ? 'bg-orange-50 text-orange-700 border-orange-100' :
+                                                                            'bg-blue-50 text-blue-700 border-blue-100'
+                                                                        }`}>{tx.type}</span>
+                                                                    </td>
+                                                                    <td className="p-4 text-center text-emerald-600">{tx.qtyIn > 0 ? `+${Number(tx.qtyIn).toFixed(2)}` : '—'}</td>
+                                                                    <td className="p-4 text-center text-orange-500">{tx.qtyOut > 0 ? `-${Number(tx.qtyOut).toFixed(2)}` : '—'}</td>
+                                                                    <td className="p-4 text-center font-black text-gray-800 bg-gray-50/50">{Number(tx.balance).toFixed(2)}</td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
-                                <h3 className="text-lg font-black uppercase tracking-widest mb-2 text-slate-600">Select Product</h3>
-                                <p className="text-sm max-w-xs mx-auto font-medium text-slate-400 leading-relaxed">Choose an item from the catalog on the left to view its detailed ledger.</p>
-                            </div>
-                        )}
+                            ) : (
+                                <div className="flex-1 flex flex-col items-center justify-start pt-32 text-slate-400 p-8 text-center h-full">
+                                    <div className="bg-slate-50 p-8 rounded-full mb-6 border border-slate-100 shadow-sm hidden md:block">
+                                        <ChartBarIcon className="w-12 h-12 text-slate-300" />
+                                    </div>
+                                    <h3 className="text-lg font-black uppercase tracking-widest mb-2 text-slate-600">Select Product</h3>
+                                    <p className="text-sm max-w-xs mx-auto font-medium text-slate-400 leading-relaxed">Choose an item from the catalog on the left to view its detailed ledger.</p>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
-            </div>
-            )}
+                )}
 
-            {/* TAB 2: LOG INVENTORY (Batch Update) */}
-            {activeTab === 'log' && (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-300">
-                <div className="lg:col-span-8 space-y-6">
-                    <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-gray-100"> 
-                        <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4 border-b border-gray-50 pb-2">Record Actual Balance</h2>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"> 
-                            <div>
-                                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Count Date</label>
-                                <input type="date" className="w-full border border-gray-200 rounded-xl p-3.5 text-sm font-black bg-orange-50/30 text-orange-900 outline-none focus:ring-2 focus:ring-orange-500 transition-all" value={logDate} onChange={e => setLogDate(e.target.value)} />
-                            </div>
-                            <div className="relative flex items-end">
-                                <div className="w-full relative">
-                                    <input type="text" placeholder="Search catalog..." className="w-full pl-12 p-3.5 border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-orange-500 text-sm font-bold bg-white outline-none transition-all" value={logSearch} onChange={e => setLogSearch(e.target.value)} />
-                                    <span className="absolute left-4 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5" /></span>
+                {/* TAB 2: LOG INVENTORY (Batch Update) */}
+                {activeTab === 'log' && (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-in fade-in duration-300">
+                    <div className="lg:col-span-8 space-y-6">
+                        <div className="bg-white p-5 md:p-6 rounded-3xl shadow-sm border border-gray-100"> 
+                            <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-4 border-b border-gray-50 pb-2">Record Actual Balance</h2>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4"> 
+                                <div>
+                                    <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Count Date</label>
+                                    <input type="date" className="w-full border border-gray-200 rounded-xl p-3.5 text-sm font-black bg-orange-50/30 text-orange-900 outline-none focus:ring-2 focus:ring-orange-500 transition-all" value={logDate} onChange={e => setLogDate(e.target.value)} />
                                 </div>
+                                <div className="relative flex items-end">
+                                    <div className="w-full relative">
+                                        <input type="text" placeholder="Search catalog..." className="w-full pl-12 p-3.5 border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-orange-500 text-sm font-bold bg-white outline-none transition-all" value={logSearch} onChange={e => setLogSearch(e.target.value)} />
+                                        <span className="absolute left-4 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5" /></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:h-[calc(100vh-320px)] lg:overflow-y-auto custom-scrollbar pb-32 lg:pb-0 pr-2">
+                            {filteredLogProducts.slice(0, 15).map(p => {
+                                const inputs = productInputs[p.ProductCode] || {};
+                                const availableUOMs = Array.from(new Set([p.BaseUOM, ...(p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [])]));
+                                return (
+                                    <div key={p.ProductCode} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm relative group hover:border-orange-300 hover:shadow-md transition-all flex flex-col justify-between">
+                                        <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-2xl text-[8px] font-black uppercase ${getStatusStyle(p.status)}`}>CUR: {p.StockBalance} {p.displayUOM}</div>
+                                        <h3 className="font-black text-gray-800 text-sm uppercase mb-4 pr-20 leading-tight">{p.ProductName}</h3>
+                                        <div className="flex items-center gap-2 mt-auto">
+                                            <select className="bg-gray-50 border border-gray-200 rounded-xl text-[10px] p-2 flex-1 font-black uppercase outline-none focus:ring-2 focus:ring-orange-500" value={inputs.uom || p.displayUOM} onChange={(e) => handleLogProductChange(p.ProductCode, 'uom', e.target.value)}>{availableUOMs.map(u => <option key={u} value={u}>{u}</option>)}</select>
+                                            <input type="number" step="0.1" placeholder="New Bal" className="w-24 border border-gray-200 rounded-xl text-xs p-2 font-black text-center outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50" value={inputs.qty || ''} onChange={(e) => handleLogProductChange(p.ProductCode, 'qty', e.target.value)} />
+                                            <button onClick={() => addToLogCart(p)} className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl w-10 h-10 flex items-center justify-center font-black text-lg shadow-sm transform transition active:scale-95 shrink-0">+</button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Desktop Cart Column (Hidden on Mobile) */}
+                    <div className="hidden lg:flex lg:col-span-4 bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 sticky top-4 flex-col h-[calc(100vh-6rem)] min-h-[500px]">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-lg font-black text-gray-800 tracking-tight uppercase">Update List</h2>
+                            <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{logCart.length} Items</span>
+                        </div>
+                        <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-1">
+                            {logCart.length === 0 ? (
+                                <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">List is empty</div>
+                            ) : logCart.map((item) => (
+                                <div key={item.cartId} className="p-4 rounded-2xl bg-gray-50/50 border border-gray-100 relative group hover:bg-white transition-all">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="pr-6">
+                                            <div className="text-xs font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
+                                            <div className="text-[9px] text-gray-400 font-mono mt-1">{item.ProductCode}</div>
+                                        </div>
+                                        <button onClick={() => removeFromLogCart(item.cartId)} className="text-gray-300 hover:text-red-500 absolute top-3 right-3 p-1 transition-colors"><XMarkIcon className="w-4 h-4" /></button>
+                                    </div>
+                                    <div className="flex items-center justify-between mt-2">
+                                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Set to:</span>
+                                        <div className="text-xs font-black text-orange-700 bg-orange-50 px-3 py-1 rounded-lg border border-orange-100 shadow-sm">{item.qty} <span className="text-[10px]">{item.uom}</span></div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-auto pt-6 border-t border-gray-100 space-y-4">
+                            <button 
+                                onClick={handleSubmitLog} 
+                                disabled={submittingLog || logCart.length === 0} 
+                                className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submittingLog || logCart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-orange-500 hover:bg-orange-600 active:scale-95'}`}
+                            >
+                                {submittingLog ? 'PROCESSING ENGINE...' : '🚀 COMMIT ADJUSTMENT'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Mobile Floating Cart Action Bar */}
+                    {logCart.length > 0 && (
+                        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-40">
+                            <div className="flex items-center justify-between gap-4 max-w-lg mx-auto">
+                                <div className="flex items-center gap-3">
+                                    <div className="bg-orange-100 p-3 rounded-full text-orange-600 relative">
+                                        <ClipboardDocumentListIcon className="w-6 h-6" />
+                                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border-2 border-white">{logCart.length}</span>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={handleSubmitLog}
+                                    disabled={submittingLog}
+                                    className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-black py-4 px-6 rounded-xl shadow-lg transition active:scale-95 text-sm tracking-widest"
+                                >
+                                    {submittingLog ? 'UPDATING...' : 'COMMIT BATCH'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+                )}
+
+                {/* TAB 3: USAGE REPORT */}
+                {activeTab === 'usage' && (
+                <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 animate-in fade-in h-[calc(100vh-180px)] flex flex-col relative overflow-hidden">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4 shrink-0">
+                        <div>
+                            <h2 className="text-xl font-black text-gray-800 tracking-tight uppercase flex items-center gap-2">
+                                <ChartBarIcon className="w-6 h-6 text-purple-600" /> Usage Report
+                            </h2>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase mt-1">Aggregated production needs mapped to sales UOM</p>
+                        </div>
+                        <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
+                            <button 
+                                onClick={() => window.print()}
+                                className="w-full sm:w-auto bg-purple-600 hover:bg-purple-700 text-white font-black py-3 px-6 rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 text-[10px] md:text-xs uppercase tracking-widest shrink-0"
+                            >
+                                <PrinterIcon className="w-4 h-4 md:w-5 md:h-5" /> Print Report
+                            </button>
+                            <div className="relative w-full sm:w-64">
+                                <span className="absolute left-3.5 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+                                <input 
+                                    type="text" 
+                                    placeholder="Search products..." 
+                                    className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all"
+                                    value={usageSearch}
+                                    onChange={e => setUsageSearch(e.target.value)}
+                                />
+                            </div>
+                            <div className="flex items-center gap-2 w-full sm:w-auto bg-purple-50 p-2 rounded-xl border border-purple-200">
+                                <input 
+                                    type="date" 
+                                    className="w-full sm:w-auto bg-transparent text-purple-900 text-xs font-black outline-none cursor-pointer"
+                                    value={usageStartDate}
+                                    onChange={e => setUsageStartDate(e.target.value)}
+                                />
+                                <span className="text-purple-400 font-black text-xs px-1">TO</span>
+                                <input 
+                                    type="date" 
+                                    className="w-full sm:w-auto bg-transparent text-purple-900 text-xs font-black outline-none cursor-pointer"
+                                    value={usageEndDate}
+                                    onChange={e => setUsageEndDate(e.target.value)}
+                                />
                             </div>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 lg:h-[calc(100vh-320px)] lg:overflow-y-auto custom-scrollbar pb-32 lg:pb-0 pr-2">
-                        {filteredLogProducts.slice(0, 15).map(p => {
-                            const inputs = productInputs[p.ProductCode] || {};
-                            const availableUOMs = Array.from(new Set([p.BaseUOM, ...(p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean) : [])]));
-                            return (
-                                <div key={p.ProductCode} className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm relative group hover:border-orange-300 hover:shadow-md transition-all flex flex-col justify-between">
-                                    <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-2xl text-[8px] font-black uppercase ${getStatusStyle(p.status)}`}>CUR: {p.StockBalance} {p.displayUOM}</div>
-                                    <h3 className="font-black text-gray-800 text-sm uppercase mb-4 pr-20 leading-tight">{p.ProductName}</h3>
-                                    <div className="flex items-center gap-2 mt-auto">
-                                        <select className="bg-gray-50 border border-gray-200 rounded-xl text-[10px] p-2 flex-1 font-black uppercase outline-none focus:ring-2 focus:ring-orange-500" value={inputs.uom || p.displayUOM} onChange={(e) => handleLogProductChange(p.ProductCode, 'uom', e.target.value)}>{availableUOMs.map(u => <option key={u} value={u}>{u}</option>)}</select>
-                                        <input type="number" step="0.1" placeholder="New Bal" className="w-24 border border-gray-200 rounded-xl text-xs p-2 font-black text-center outline-none focus:ring-2 focus:ring-orange-500 bg-gray-50" value={inputs.qty || ''} onChange={(e) => handleLogProductChange(p.ProductCode, 'qty', e.target.value)} />
-                                        <button onClick={() => addToLogCart(p)} className="bg-orange-500 hover:bg-orange-600 text-white rounded-xl w-10 h-10 flex items-center justify-center font-black text-lg shadow-sm transform transition active:scale-95 shrink-0">+</button>
-                                    </div>
-                                </div>
-                            );
-                        })}
+                    <div className="flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
+                        {isUsageLoading ? (
+                            <div className="h-full flex items-center justify-center text-gray-400 font-black animate-pulse tracking-widest text-xs uppercase">Calculating Usage...</div>
+                        ) : (
+                            <table className="w-full text-left whitespace-nowrap min-w-[600px]">
+                                <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
+                                    <tr>
+                                        <th className="p-5 pl-6 w-1/2">Product</th>
+                                        <th className="p-5 text-center">Required Qty</th>
+                                        <th className="p-5 text-center">Sales UOM</th>
+                                        <th className="p-5 text-right pr-6">Current Stock</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
+                                    {filteredUsage.map((u, idx) => {
+                                        const isShort = Number(u.stockBalance) < Number(u.qty);
+                                        return (
+                                        <tr key={idx} className="hover:bg-purple-50/30 transition-colors group/row">
+                                            <td className="p-4 pl-6">
+                                                <div className="font-black text-gray-800 uppercase leading-tight truncate max-w-[200px] md:max-w-md">{u.name}</div>
+                                                <div className="text-[10px] text-gray-400 font-mono mt-0.5">{u.code}</div>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <span className="bg-purple-100 text-purple-700 px-4 py-1.5 rounded-xl text-lg font-black">{u.qty}</span>
+                                            </td>
+                                            <td className="p-4 text-center">
+                                                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">{u.uom}</span>
+                                            </td>
+                                            <td className="p-4 text-right pr-6">
+                                                <div className="flex flex-col items-end">
+                                                    <span className={`font-black text-lg ${isShort ? 'text-red-600' : 'text-emerald-600'}`}>
+                                                        {u.stockBalance}
+                                                    </span>
+                                                    {isShort && <span className="text-[8px] font-black text-red-500 uppercase tracking-widest bg-red-50 px-2 py-0.5 rounded mt-1 border border-red-100">Shortage</span>}
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )})}
+                                    {filteredUsage.length === 0 && (
+                                        <tr><td colSpan="4" className="p-16 text-center text-gray-400 italic font-bold">No orders found between {usageStartDate} and {usageEndDate}.</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        )}
                     </div>
                 </div>
+                )}
 
-                {/* Desktop Cart Column (Hidden on Mobile) */}
-                <div className="hidden lg:flex lg:col-span-4 bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 sticky top-4 flex-col h-[calc(100vh-6rem)] min-h-[500px]">
-                    <div className="flex justify-between items-center mb-6">
-                        <h2 className="text-lg font-black text-gray-800 tracking-tight uppercase">Update List</h2>
-                        <span className="bg-orange-100 text-orange-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{logCart.length} Items</span>
-                    </div>
-                    <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-1">
-                        {logCart.length === 0 ? (
-                            <div className="h-48 flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">List is empty</div>
-                        ) : logCart.map((item) => (
-                            <div key={item.cartId} className="p-4 rounded-2xl bg-gray-50/50 border border-gray-100 relative group hover:bg-white transition-all">
-                                <div className="flex justify-between items-start mb-2">
-                                    <div className="pr-6">
-                                        <div className="text-xs font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
-                                        <div className="text-[9px] text-gray-400 font-mono mt-1">{item.ProductCode}</div>
-                                    </div>
-                                    <button onClick={() => removeFromLogCart(item.cartId)} className="text-gray-300 hover:text-red-500 absolute top-3 right-3 p-1 transition-colors"><XMarkIcon className="w-4 h-4" /></button>
-                                </div>
-                                <div className="flex items-center justify-between mt-2">
-                                    <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Set to:</span>
-                                    <div className="text-xs font-black text-orange-700 bg-orange-50 px-3 py-1 rounded-lg border border-orange-100 shadow-sm">{item.qty} <span className="text-[10px]">{item.uom}</span></div>
+                {/* AUDIT MODAL */}
+                {showResetModal && ledgerProduct && (
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in zoom-in duration-200">
+                        <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 flex flex-col">
+                            <div className="flex justify-between items-center mb-2 flex-shrink-0 border-b border-gray-100 pb-4 pt-6 px-6 bg-gray-50/50 relative">
+                                <button onClick={() => setShowResetModal(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1 absolute right-6 top-6">×</button>
+                                <div className="text-center w-full mt-2">
+                                    <h3 className="text-xl md:text-2xl font-black text-gray-900 flex items-center justify-center gap-2 uppercase tracking-tight">
+                                        <CheckCircleIcon className="w-6 h-6 text-blue-600" />
+                                        Manual Audit
+                                    </h3>
+                                    <p className="text-[10px] md:text-xs font-bold text-gray-500 mt-2 uppercase tracking-widest leading-relaxed">
+                                        Set balance for <br/><span className="text-blue-600 block mt-1">{ledgerProduct.ProductName}</span>
+                                    </p>
                                 </div>
                             </div>
-                        ))}
-                    </div>
-                    <div className="mt-auto pt-6 border-t border-gray-100 space-y-4">
-                        <button 
-                            onClick={handleSubmitLog} 
-                            disabled={submittingLog || logCart.length === 0} 
-                            className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submittingLog || logCart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-orange-500 hover:bg-orange-600 active:scale-95'}`}
-                        >
-                            {submittingLog ? 'PROCESSING ENGINE...' : '🚀 COMMIT ADJUSTMENT'}
-                        </button>
-                    </div>
-                </div>
-
-                {/* Mobile Floating Cart Action Bar */}
-                {logCart.length > 0 && (
-                    <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-40">
-                        <div className="flex items-center justify-between gap-4 max-w-lg mx-auto">
-                            <div className="flex items-center gap-3">
-                                <div className="bg-orange-100 p-3 rounded-full text-orange-600 relative">
-                                    <ClipboardDocumentListIcon className="w-6 h-6" />
-                                    <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-black w-5 h-5 flex items-center justify-center rounded-full border-2 border-white">{logCart.length}</span>
+                            <div className="p-6 md:p-8 space-y-6">
+                                <div>
+                                    <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 ml-1">Physical Count ({ledgerProduct.displayUOM})</label>
+                                    <input type="number" step="0.1" value={resetQuantity} onChange={(e) => setResetQuantity(e.target.value)} className="w-full p-4 border border-gray-200 rounded-2xl focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-2xl font-black text-gray-800 transition-all text-center bg-gray-50" placeholder="0.0" autoFocus />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 ml-1">Remarks</label>
+                                    <input type="text" value={resetRemarks} onChange={(e) => setResetRemarks(e.target.value)} className="w-full p-4 border border-gray-200 rounded-2xl focus:border-blue-500 outline-none text-sm font-bold text-gray-600 transition-all" />
                                 </div>
                             </div>
-                            <button 
-                                onClick={handleSubmitLog}
-                                disabled={submittingLog}
-                                className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-black py-4 px-6 rounded-xl shadow-lg transition active:scale-95 text-sm tracking-widest"
-                            >
-                                {submittingLog ? 'UPDATING...' : 'COMMIT BATCH'}
-                            </button>
+                            <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3 pb-8 md:pb-6">
+                                <button onClick={() => setShowResetModal(false)} className="flex-1 py-4 text-xs font-black text-gray-600 hover:bg-gray-200 rounded-2xl transition-all uppercase tracking-widest border border-gray-200 bg-white">Cancel</button>
+                                <button onClick={handleSaveSingleReset} disabled={!resetQuantity} className="flex-[2] py-4 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:bg-gray-300 rounded-2xl shadow-xl transition-all uppercase tracking-widest active:scale-95">Confirm Result</button>
+                            </div>
                         </div>
                     </div>
                 )}
             </div>
-            )}
 
-            {/* AUDIT MODAL */}
-            {showResetModal && ledgerProduct && (
-                <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in zoom-in duration-200">
-                    <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-md overflow-hidden border border-gray-100 flex flex-col">
-                        <div className="flex justify-between items-center mb-2 flex-shrink-0 border-b border-gray-100 pb-4 pt-6 px-6 bg-gray-50/50 relative">
-                            <button onClick={() => setShowResetModal(false)} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1 absolute right-6 top-6">×</button>
-                            <div className="text-center w-full mt-2">
-                                <h3 className="text-xl md:text-2xl font-black text-gray-900 flex items-center justify-center gap-2 uppercase tracking-tight">
-                                    <CheckCircleIcon className="w-6 h-6 text-blue-600" />
-                                    Manual Audit
-                                </h3>
-                                <p className="text-[10px] md:text-xs font-bold text-gray-500 mt-2 uppercase tracking-widest leading-relaxed">
-                                    Set balance for <br/><span className="text-blue-600 block mt-1">{ledgerProduct.ProductName}</span>
-                                </p>
+            {/* ==========================================
+                PRINT LAYOUT FOR USAGE REPORT TAB
+                ========================================== */}
+            {activeTab === 'usage' && (
+                <div className="hidden print:block text-black font-sans text-xs bg-white">
+                    <style dangerouslySetInnerHTML={{__html: `
+                        @media print {
+                            @page { size: A4; margin: 0; }
+                            html, body, main { background: white !important; margin: 0 !important; padding: 0 !important; -webkit-print-color-adjust: exact; }
+                            main { padding-top: 0 !important; }
+                            .page-break-after { page-break-after: always; }
+                            .page-break-after:last-child { page-break-after: auto; }
+                            .print-hidden { display: none !important; }
+                        }
+                    `}} />
+
+                    {printPages.map((pageItems, pageIndex) => (
+                        <div key={pageIndex} 
+                            className="mx-auto bg-white mb-0 flex flex-col relative page-break-after overflow-hidden box-border" 
+                            style={{ width: '210mm', height: '297mm', padding: '10mm', paddingBottom: '20mm' }}> 
+                            
+                            {/* --- HEADER (Module 1) --- */}
+                            <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-2 h-[35mm] shrink-0">
+                                <div className="flex gap-3 h-full items-center">
+                                    <div className="w-16 h-16 relative">
+                                        <img src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" alt="Logo" className="w-full h-full object-contain" />
+                                    </div>
+                                    <div>
+                                        <h1 className="text-xl font-black uppercase tracking-tight mb-1">FRESHER FARM DIRECT SDN BHD</h1>
+                                        <div className="text-[9px] leading-tight text-gray-800 font-medium">
+                                            <p>Reg No: 200701010054 | TIN No: C20176000020 | MSIC Code: 46319</p>
+                                            <p>Address: Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, 68100 Batu Caves, Selangor</p>
+                                            <p>Tel: 011-2862 8667 | Email: fresherfarmdirect2.0@gmail.com</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div className="text-right self-center">
+                                    <h2 className="text-3xl font-black uppercase tracking-widest leading-none text-purple-700">AGGREGATED<br/>USAGE</h2>
+                                </div>
+                            </div>
+
+                            {/* --- TITLE & METADATA (Module 2) --- */}
+                            <div className="mb-2 flex justify-between items-end shrink-0">
+                                <div className="text-left">
+                                    <span className="text-gray-500 font-bold block text-xs uppercase mb-1">Date Range:</span>
+                                    <span className="text-2xl font-black tracking-tight">{formatDisplayDate(usageStartDate)} TO {formatDisplayDate(usageEndDate)}</span>
+                                </div>
+                            </div>
+
+                            {/* --- TABLE (Module 3) --- */}
+                            <div className="flex-grow border-t-2 border-black relative">
+                                <table className="w-full border-collapse table-fixed text-[10px]">
+                                    <thead className="h-6 bg-transparent">
+                                        <tr className="border-b-2 border-black text-black uppercase font-bold">
+                                            <th className="py-1 px-1 text-center w-8 border-r border-black">No</th>
+                                            <th className="py-1 px-2 text-left border-r border-black w-[50%]">Product Description</th>
+                                            <th className="py-1 px-1 text-center w-16 border-r border-black">Required</th>
+                                            <th className="py-1 px-1 text-center w-16 border-r border-black">UOM</th>
+                                            <th className="py-1 px-2 text-right w-[20%]">Stock Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {pageItems.map((item, index) => {
+                                            const isShort = Number(item.stockBalance) < Number(item.qty);
+                                            return (
+                                                <tr key={index} className="border-b border-gray-300 h-5">
+                                                    <td className="py-1 px-1 text-center border-r border-gray-300 font-bold">{filteredUsage.indexOf(item) + 1}</td>
+                                                    <td className="py-1 px-2 border-r border-gray-300 font-bold truncate uppercase">
+                                                        {item.name} <span className="text-gray-400 font-mono ml-1 text-[8px]">{item.code}</span>
+                                                    </td>
+                                                    <td className="py-1 px-1 text-center border-r border-gray-300 font-black text-purple-700 text-[11px]">{item.qty}</td>
+                                                    <td className="py-1 px-1 text-center border-r border-gray-300 uppercase">{item.uom}</td>
+                                                    <td className="py-1 px-2 text-right font-black">
+                                                        <span className={isShort ? 'text-red-600' : 'text-emerald-600'}>{item.stockBalance}</span>
+                                                        {isShort && <span className="text-[8px] font-black text-red-500 uppercase tracking-widest ml-1">(SHORT)</span>}
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                        {Array.from({ length: Math.max(0, ITEMS_PER_PAGE - pageItems.length) }).map((_, idx) => (
+                                            <tr key={`fill-${idx}`} className="border-b border-gray-100 h-5">
+                                                <td className="border-r border-gray-100"></td>
+                                                <td className="border-r border-gray-100"></td>
+                                                <td className="border-r border-gray-100"></td>
+                                                <td className="border-r border-gray-100"></td>
+                                                <td></td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Page Number Footer */}
+                            <div className="absolute bottom-4 right-10 text-[9px] text-gray-400 font-bold">
+                                Page {pageIndex + 1} of {printPages.length || 1}
                             </div>
                         </div>
-                        <div className="p-6 md:p-8 space-y-6">
-                            <div>
-                                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 ml-1">Physical Count ({ledgerProduct.displayUOM})</label>
-                                <input type="number" step="0.1" value={resetQuantity} onChange={(e) => setResetQuantity(e.target.value)} className="w-full p-4 border border-gray-200 rounded-2xl focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none text-2xl font-black text-gray-800 transition-all text-center bg-gray-50" placeholder="0.0" autoFocus />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 ml-1">Remarks</label>
-                                <input type="text" value={resetRemarks} onChange={(e) => setResetRemarks(e.target.value)} className="w-full p-4 border border-gray-200 rounded-2xl focus:border-blue-500 outline-none text-sm font-bold text-gray-600 transition-all" />
-                            </div>
-                        </div>
-                        <div className="p-6 bg-gray-50 border-t border-gray-100 flex gap-3 pb-8 md:pb-6">
-                            <button onClick={() => setShowResetModal(false)} className="flex-1 py-4 text-xs font-black text-gray-600 hover:bg-gray-200 rounded-2xl transition-all uppercase tracking-widest border border-gray-200 bg-white">Cancel</button>
-                            <button onClick={handleSaveSingleReset} disabled={!resetQuantity} className="flex-[2] py-4 text-xs font-black text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:bg-gray-300 rounded-2xl shadow-xl transition-all uppercase tracking-widest active:scale-95">Confirm Result</button>
-                        </div>
-                    </div>
+                    ))}
                 </div>
             )}
-
         </div>
     );
 }
