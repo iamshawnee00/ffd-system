@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { 
   PencilSquareIcon,
@@ -63,10 +63,12 @@ export default function DeliveryPage() {
 
   const [groupedOrders, setGroupedOrders] = useState([]); 
   const [filteredGroupedOrders, setFilteredGroupedOrders] = useState([]); 
-  const [usageSummary, setUsageSummary] = useState([]);
   
+  // Data Masterlists
   const [products, setProducts] = useState([]);
+  const [conversions, setConversions] = useState([]);
   const [customers, setCustomers] = useState([]); 
+
   const [selectedDOs, setSelectedDOs] = useState(new Set());
   const [isUsageExpanded, setIsUsageExpanded] = useState(false);
   const [isBulkSending, setIsBulkSending] = useState(false); 
@@ -129,8 +131,13 @@ export default function DeliveryPage() {
   const fetchProducts = async () => {
     const { data } = await supabase
       .from('ProductMaster')
-      .select('ProductCode, ProductName, AllowedUOMs, BaseUOM, Category');
+      .select('ProductCode, ProductName, AllowedUOMs, BaseUOM, SalesUOM, Category');
     if (data) setProducts(data);
+
+    const { data: convData } = await supabase
+      .from('UOM_Conversions')
+      .select('*');
+    if (convData) setConversions(convData);
   };
 
   const fetchCustomers = async () => {
@@ -207,14 +214,12 @@ export default function DeliveryPage() {
       processOrders(data);
     } else {
       setGroupedOrders([]);
-      setUsageSummary([]);
     }
     setLoading(false);
   };
 
   const processOrders = (rows) => {
     const groups = {};
-    const usage = {};
     rows.forEach(row => {
       if (!groups[row.DONumber]) {
         groups[row.DONumber] = {
@@ -235,23 +240,68 @@ export default function DeliveryPage() {
       }
       groups[row.DONumber].items.push(row);
       groups[row.DONumber].itemCount += 1;
-
-      const prodKey = row["Product Code"];
-      if (!usage[prodKey]) {
-        usage[prodKey] = {
-          code: prodKey,
-          name: row["Order Items"],
-          uom: row.UOM,
-          qty: 0
-        };
-      }
-      usage[prodKey].qty += Number(row.Quantity || 0);
     });
     const groupsArray = Object.values(groups);
     setGroupedOrders(groupsArray);
     setFilteredGroupedOrders(groupsArray); 
-    setUsageSummary(Object.values(usage).sort((a,b) => a.name.localeCompare(b.name)));
   };
+
+  // --- SMART USAGE SUMMARY CALCULATION (UOM AWARE) ---
+  const usageSummary = useMemo(() => {
+      if (!products.length) return []; // Need product data to do conversions
+
+      const usage = {};
+      groupedOrders.forEach(group => {
+          group.items.forEach(row => {
+              const prodKey = row["Product Code"];
+              const fallbackName = row["Order Items"];
+              const orderUOM = (row.UOM || '').toUpperCase().trim();
+              const qty = Number(row.Quantity || 0);
+
+              const prod = products.find(p => p.ProductCode === prodKey);
+              const baseUOM = (prod?.BaseUOM || orderUOM).toUpperCase().trim();
+              const salesUOM = (prod?.SalesUOM || baseUOM).toUpperCase().trim();
+
+              // 1. Convert everything to Base UOM
+              let baseQty = qty;
+              if (orderUOM !== baseUOM) {
+                  const conv = conversions.find(c => c.ProductCode === prodKey && c.ConversionUOM?.toUpperCase().trim() === orderUOM);
+                  if (conv && Number(conv.Factor) > 0) {
+                      baseQty = qty * Number(conv.Factor);
+                  }
+              }
+
+              const mapKey = prodKey || fallbackName;
+
+              if (!usage[mapKey]) {
+                  usage[mapKey] = {
+                      code: prodKey,
+                      name: fallbackName,
+                      baseQtyTotal: 0,
+                      salesUOM: salesUOM,
+                      baseUOM: baseUOM
+                  };
+              }
+              usage[mapKey].baseQtyTotal += baseQty;
+          });
+      });
+
+      // 2. Convert from Base UOM into the final Sales UOM for the UI summary
+      return Object.values(usage).map(u => {
+          let displayQty = u.baseQtyTotal;
+          if (u.salesUOM !== u.baseUOM) {
+              const conv = conversions.find(c => c.ProductCode === u.code && c.ConversionUOM?.toUpperCase().trim() === u.salesUOM);
+              if (conv && Number(conv.Factor) > 0) {
+                  displayQty = u.baseQtyTotal / Number(conv.Factor);
+              }
+          }
+          return {
+              name: u.name,
+              qty: Number(displayQty % 1 !== 0 ? displayQty.toFixed(2) : displayQty),
+              uom: u.salesUOM
+          };
+      }).sort((a,b) => a.name.localeCompare(b.name));
+  }, [groupedOrders, products, conversions]);
 
   // --- 3. ACTIONS ---
   const handleCheckbox = (doNum) => {
@@ -285,7 +335,7 @@ export default function DeliveryPage() {
 
   const handlePrintOrder = (doNumber) => {
       localStorage.setItem('print_do_target', doNumber);
-      window.open(`/orders/print?do=${doNumber}`, '_blank');
+      window.open(`/orders/print#${doNumber}`, '_blank');
   };
 
   // FRONTEND ONLY: Send to Shipday
@@ -829,6 +879,7 @@ export default function DeliveryPage() {
                                   <span className="text-purple-800 whitespace-nowrap">{u.qty} <span className="text-[10px] font-bold text-gray-400 uppercase">{u.uom}</span></span>
                               </div>
                           ))}
+                          {usageSummary.length === 0 && <div className="col-span-full text-center text-gray-400 italic text-xs">No usage data found for this date.</div>}
                       </div>
                   </div>
               )}
