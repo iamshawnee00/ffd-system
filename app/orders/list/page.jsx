@@ -1,14 +1,11 @@
 'use client';
 import React, { useState, useEffect, useMemo } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-
-// ==================================================================
-// ⚠️ 重要提示：当您将此代码复制回本地项目时，请取消注释真实的导入，
-// 并删除下方的 MOCK API 部分！
-// ==================================================================
 import { supabase } from '../../lib/supabaseClient';
 
+// ==================================================================
+// ⚠️ IMPORTANT: When copying back to your local project, uncomment these:
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 
 
 import { 
@@ -75,7 +72,7 @@ export default function OrderListPage() {
   // 3. Router Hooks
   const router = useRouter();
   const pathname = usePathname();
-
+  const cleanPath = pathname?.endsWith('/') && pathname !== '/' ? pathname.slice(0, -1) : pathname;
   // 4. Effects
   useEffect(() => {
       if (isEditModalOpen || isBulkEditOpen) {
@@ -397,7 +394,8 @@ export default function OrderListPage() {
   };
 
   const handlePrintOrder = (doNumber) => {
-        window.open(`/orders/print#${doNumber}`, '_blank');
+      localStorage.setItem('print_do_target', doNumber);
+      window.open(`/orders/print?do=${doNumber}`, '_blank');
   };
 
   // Fuzzy search for list (Updated to include products inside the order)
@@ -484,16 +482,25 @@ export default function OrderListPage() {
          </div>
       </div>
 
-      {/* SUB-NAVIGATION BAR (Added Tabs here) */}
-      <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200 snap-x custom-scrollbar">
-          <Link href="/orders/new" className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${pathname === '/orders/new' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <PlusCircleIcon className="w-4 h-4 md:w-5 h-5" /> New Order
+      {/* SUB-NAVIGATION BAR (Route-based Tabs) */}
+      <div className="flex gap-3 mb-6 overflow-x-auto pb-2 custom-scrollbar">
+          <Link 
+              href="/orders/new" 
+              className={`px-6 py-3.5 rounded-xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/new' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-50 shadow-sm border border-gray-100'}`}
+          >
+              <PlusCircleIcon className="w-5 h-5" /> New Order
           </Link>
-          <Link href="/orders/list" className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${pathname === '/orders/list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <ClipboardDocumentListIcon className="w-4 h-4 md:w-5 h-5" /> Order History
+          <Link 
+              href="/orders/list" 
+              className={`px-6 py-3.5 rounded-xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-50 shadow-sm border border-gray-100'}`}
+          >
+              <ClipboardDocumentListIcon className="w-5 h-5" /> Order History
           </Link>
-          <Link href="/orders/standing" className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${pathname === '/orders/standing' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <ArrowPathIcon className="w-4 h-4 md:w-5 h-5" /> Auto-Pilot
+          <Link 
+              href="/orders/standing" 
+              className={`px-6 py-3.5 rounded-xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/standing' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-50 shadow-sm border border-gray-100'}`}
+          >
+              <ArrowPathIcon className="w-5 h-5" /> Auto-Pilot
           </Link>
       </div>
 

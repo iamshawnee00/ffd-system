@@ -107,7 +107,17 @@ export default function Sidebar() {
         {/* Navigation Links - Scrollable Area */}
         <nav className="flex-1 overflow-y-auto py-6 px-4 space-y-2 custom-scrollbar">
           {menuItems.map((item) => {
-            const isActive = pathname === item.path;
+            // 1. Clean trailing slash for matching (caused by next.config.js export settings)
+            const cleanPath = pathname?.endsWith('/') && pathname !== '/' ? pathname.slice(0, -1) : pathname;
+            
+            // 2. Base exact match
+            let isActive = cleanPath === item.path;
+
+            // 3. Keep "Order Management" highlighted when inside its sub-tabs
+            if (item.path === '/orders/new' && (cleanPath === '/orders/list' || cleanPath === '/orders/standing')) {
+                isActive = true;
+            }
+
             return (
               <Link 
                 key={item.name} 

@@ -1,12 +1,12 @@
 'use client';
 import React, { useState, useEffect, useMemo } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
 
 // ==================================================================
-// ⚠️ 重要提示：当您将此代码复制回本地项目时，请取消注释以下三行真实的导入，
-// 并删除下方的 MOCK API 部分！
+// ⚠️ 重要提示：当您将此代码复制回本地项目时，请取消注释以下真实的导入，
+// 并删除下方的 MOCK API 和 MOCK NEXT.JS 部分！
 // ==================================================================
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabaseClient';
 
 
@@ -42,7 +42,7 @@ const getLocalDateString = (date) => {
 };
 
 export default function NewOrderPage() {
-  // 1. Data States (Moved to the top to fix Hook order issues)
+  // 1. Data States
   const [customers, setCustomers] = useState([]);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -81,13 +81,14 @@ export default function NewOrderPage() {
 
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurringDay, setRecurringDay] = useState('Monday');
+  const [isConsignment, setIsConsignment] = useState(false); // NEW STATE ADDED
 
-  // 3. Router Hooks (Moved after state to stabilize hook indexing)
+  // 3. Router Hooks
   const router = useRouter();
   const pathname = usePathname();
+  const cleanPath = pathname?.endsWith('/') && pathname !== '/' ? pathname.slice(0, -1) : pathname;
 
   // 4. Effects
-  // Body Scroll Lock for Mobile Cart
   useEffect(() => {
       if (isMobileCartOpen) {
           document.body.style.overflow = 'hidden';
@@ -97,7 +98,6 @@ export default function NewOrderPage() {
       return () => { document.body.style.overflow = ''; };
   }, [isMobileCartOpen]);
 
-  // INITIAL DATA FETCH
   useEffect(() => {
     async function loadData() {
       try {
@@ -204,7 +204,7 @@ export default function NewOrderPage() {
         qty: qty,
         uom: uom,
         price: price, 
-        notes: '', // Notes field initialized here
+        notes: '', 
         isReplacement: inputs.replacement || false
       };
       return [...prevCart, newItem];
@@ -228,7 +228,6 @@ export default function NewOrderPage() {
     }).filter(item => item.qty > 0));
   };
 
-  // Helper to update notes for a specific cart item
   const updateCartNote = (cartId, note) => {
     setCart(prevCart => prevCart.map(item => {
       if (item.cartId === cartId) {
@@ -238,7 +237,7 @@ export default function NewOrderPage() {
     }));
   };
 
-  const removeFromCart = (cartId) => setCart(filter(item => item.cartId !== cartId));
+  const removeFromCart = (cartId) => setCart(cart.filter(item => item.cartId !== cartId));
 
   const handleSubmitOrder = async () => {
     if (!selectedCustomerValue || !deliveryDate || cart.length === 0) {
@@ -249,7 +248,9 @@ export default function NewOrderPage() {
     setSubmitting(true);
     const [year, month, day] = deliveryDate.split('-');
     const dateStr = `${year.slice(2)}${month}${day}`;
-    const doNumber = `DO-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
+    // APPLY CONSIGNMENT PREFIX IF CHECKED IN RECURRING SETTINGS
+    const prefix = isConsignment && isRecurring ? 'CSGN' : 'DO';
+    const doNumber = `${prefix}-${dateStr}-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const occurrenceMap = {};
     const orderRows = cart.map(item => {
@@ -280,7 +281,7 @@ export default function NewOrderPage() {
             "UOM": item.uom,
             "Price": item.isReplacement ? 0 : item.price,
             "Replacement": repVal,
-            "SpecialNotes": item.notes, // Maps directly to DB SpecialNotes
+            "SpecialNotes": (isConsignment && isRecurring) ? "CONSIGNMENT - NO DO REQUIRED" : item.notes, 
             "LoggedBy": currentUser
         };
     });
@@ -312,6 +313,7 @@ export default function NewOrderPage() {
                 DeliveryMode: deliveryMode,
                 DeliveryDay: recurringDay,
                 Status: 'Active',
+                IsConsignment: isConsignment, // SAVE CONSIGNMENT FLAG TO DB
                 Items: cleanItems
             };
             
@@ -329,7 +331,6 @@ export default function NewOrderPage() {
 
   const categories = useMemo(() => ['All', ...new Set(products.map(p => p.Category || 'Other'))], [products]);
 
-  // Token-based Fuzzy Search
   const filteredProducts = useMemo(() => products.filter(p => {
     const matchesCat = activeCategory === 'All' || p.Category === activeCategory;
     if (!searchTerm) return matchesCat;
@@ -343,7 +344,7 @@ export default function NewOrderPage() {
   if (loading) return <div className="p-10 flex items-center justify-center h-screen font-black text-gray-300 animate-pulse uppercase">Booting New Order Engine...</div>;
 
   return (
-    <div className="p-3 md:p-8 max-w-full min-h-screen bg-gray-50/50 pb-40 md:pb-32 font-sans relative">
+    <div className="p-3 md:p-8 max-w-full overflow-x-clip min-h-screen bg-gray-50/50 pb-40 md:pb-32 font-sans relative">
       
       <style jsx global>{`
         input, select, textarea { font-size: 16px !important; }
@@ -359,25 +360,33 @@ export default function NewOrderPage() {
              <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-2">Manage single-session and historical orders</p> 
          </div>
          <div className="text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm">
-             User: {currentUser}
+             User: {currentUser || 'GUEST'}
          </div>
       </div>
 
       {/* SUB-NAVIGATION BAR (Route-based Tabs) */}
-      <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200 snap-x custom-scrollbar">
-          <Link href="/orders/new" className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${pathname === '/orders/new' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <PlusCircleIcon className="w-4 h-4 md:w-5 h-5" /> New Order
+      <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200">
+          <Link 
+              href="/orders/new" 
+              className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/new' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+          >
+              <PlusCircleIcon className="w-5 h-5" /> New Order
           </Link>
-          <Link href="/orders/list" className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${pathname === '/orders/list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <ClipboardDocumentListIcon className="w-4 h-4 md:w-5 h-5" /> Order History
+          <Link 
+              href="/orders/list" 
+              className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+          >
+              <ClipboardDocumentListIcon className="w-5 h-5" /> Order History
           </Link>
-          <Link href="/orders/standing" className={`snap-start shrink-0 px-4 md:px-6 py-2.5 md:py-3 rounded-xl md:rounded-t-2xl font-black text-xs md:text-sm transition-all whitespace-nowrap flex items-center gap-2 ${pathname === '/orders/standing' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 border hover:bg-gray-50'}`}>
-              <ArrowPathIcon className="w-4 h-4 md:w-5 h-5" /> Auto-Pilot
+          <Link 
+              href="/orders/standing" 
+              className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/standing' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+          >
+              <ArrowPathIcon className="w-5 h-5" /> Auto-Pilot
           </Link>
       </div>
 
-      {/* GRID CONTAINER - Removed items-start so columns stretch, allowing inner sticky div to track full height */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in duration-300 relative">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in duration-300 relative items-start">
         <div className="lg:col-span-2 space-y-4 md:space-y-6">
           
           {/* Customer Selection Box */}
@@ -500,10 +509,10 @@ export default function NewOrderPage() {
           </div>
         </div>
 
-        {/* Desktop Cart Column (Grid Item wrapper without sticky) */}
-        <div className="hidden lg:block lg:col-span-1 relative">
-           {/* Inner container applying sticky logic perfectly inside the stretched grid item */}
-           <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-2rem)] sticky top-4 z-10">
+        {/* Desktop Cart Column */}
+        {/* We keep h-full on the column wrapper, and perfectly nest sticky inside to scroll correctly */}
+        <div className="hidden lg:block lg:col-span-1 h-full relative">
+           <div className="bg-white p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-4rem)] sticky top-6 z-10">
               <div className="flex justify-between items-center mb-6 shrink-0">
                  <h2 className="text-lg font-black text-gray-800 tracking-tight uppercase">Cart Summary</h2>
                  <span className="bg-green-100 text-green-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{cart.length} items</span>
@@ -542,11 +551,19 @@ export default function NewOrderPage() {
                           <span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save as Weekly Pattern</span>
                       </label>
                       {isRecurring && (
-                          <div className="mt-2 animate-in fade-in slide-in-from-top-1">
-                              <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest ml-1">Generate On:</span>
-                              <select className="w-full mt-1 border border-indigo-200 p-2 rounded-xl text-xs font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
-                                  {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
-                              </select>
+                          <div className="mt-3 animate-in fade-in slide-in-from-top-1 space-y-3 border-t border-indigo-100/50 pt-3">
+                              <div>
+                                  <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest ml-1">Generate On:</span>
+                                  <select className="w-full mt-1 border border-indigo-200 p-2 rounded-xl text-xs font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
+                                      {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
+                                  </select>
+                              </div>
+                              <div>
+                                  <label className="flex items-center gap-2 cursor-pointer">
+                                      <input type="checkbox" className="w-4 h-4 text-orange-500 rounded border-orange-200 focus:ring-orange-500" checked={isConsignment} onChange={e => setIsConsignment(e.target.checked)} />
+                                      <span className="text-[9px] font-black text-orange-800 uppercase tracking-widest leading-tight">Mark as Consignment <span className="block text-[8px] font-bold text-orange-500 mt-0.5">Route Only. Skips DO Printing.</span></span>
+                                  </label>
+                              </div>
                           </div>
                       )}
                   </div>
@@ -633,7 +650,15 @@ export default function NewOrderPage() {
                           <div><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Products</p><h3 className="text-2xl font-black text-gray-900 leading-none">{cart.length}</h3></div>
                           <div className="bg-indigo-50 border border-indigo-100 p-2.5 rounded-xl"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} /><span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save Pattern</span></label></div>
                       </div>
-                      {isRecurring && <select className="w-full mt-2 border border-indigo-200 p-3 rounded-xl text-base font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>{DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}</select>}
+                      {isRecurring && (
+                          <div className="space-y-2">
+                              <select className="w-full border border-indigo-200 p-3 rounded-xl text-base font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>{DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}</select>
+                              <label className="flex items-center gap-3 p-3 bg-orange-50 border border-orange-100 rounded-xl cursor-pointer">
+                                  <input type="checkbox" className="w-5 h-5 text-orange-600 rounded border-gray-300" checked={isConsignment} onChange={e => setIsConsignment(e.target.checked)} />
+                                  <span className="text-[10px] font-black text-orange-900 uppercase tracking-widest">Consignment (No DO)</span>
+                              </label>
+                          </div>
+                      )}
                       <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 active:scale-95'}`}>
                           {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & SUBMIT' : 'SUBMIT ORDER')}
                       </button>
