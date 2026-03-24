@@ -21,19 +21,18 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const isLogin = pathname === '/login';
 
   // 1. 如果是客户端门户或登录页，返回无侧边栏布局
-  // 使用 h-[100dvh] 和 overflow-hidden 锁定外层，内部区域独立滚动
+  // 打印时：解除 h-[100dvh] 限制，允许溢出 (print:h-auto print:overflow-visible)
   if (isClientPortal || isLogin) {
     return (
-      <main className="w-full bg-gray-50 h-[100dvh] overflow-y-auto overflow-x-hidden overscroll-none">
+      <main className="w-full bg-gray-50 h-[100dvh] overflow-y-auto overflow-x-hidden overscroll-none print:h-auto print:overflow-visible">
         {children}
       </main>
     );
   }
 
   // 2. 内部员工布局 (带有侧边栏)
-  // 同样使用 h-[100dvh] 锁定整个 App 框架，防止原生浏览器上下滑动时的“橡皮筋”效应
   return (
-    <div className="flex flex-col md:flex-row h-[100dvh] overflow-hidden bg-gray-100 overscroll-none">
+    <div className="flex flex-col md:flex-row h-[100dvh] overflow-hidden bg-gray-100 overscroll-none print:h-auto print:overflow-visible print:block">
       
       {/* 桌面端侧边栏 */}
       <div 
@@ -50,7 +49,8 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
       </div>
       
       {/* 主内容区：独立滚动，彻底脱离原生 Body 滚动 */}
-      <main className="flex-1 w-full h-full overflow-y-auto overflow-x-hidden md:pt-0 pt-[72px] overscroll-none pb-20 md:pb-0">
+      {/* 打印时：必须解除所有的滚动限制，变成常规块级元素 */}
+      <main className="flex-1 w-full h-full overflow-y-auto overflow-x-hidden md:pt-0 pt-[72px] overscroll-none pb-20 md:pb-0 print:h-auto print:overflow-visible print:block print:pt-0">
         {children}
       </main>
       
@@ -129,7 +129,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       
       {/* 在 body 层面彻底禁用滚动，配合内部的 h-[100dvh] 实现完美 App 体验 */}
-      <body className={`${poppins.className} overflow-hidden overscroll-none select-none`}>
+      {/* 打印时：恢复溢出 (print:overflow-visible) 和允许文本选中 (print:select-auto) */}
+      <body className={`${poppins.className} overflow-hidden overscroll-none select-none print:overflow-visible print:select-auto print:bg-white`}>
         <SidebarProvider>
           <LayoutContent>{children}</LayoutContent>
         </SidebarProvider>
