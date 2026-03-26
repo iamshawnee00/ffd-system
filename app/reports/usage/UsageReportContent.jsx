@@ -12,7 +12,7 @@ export default function UsageReportContent() {
   const [loading, setLoading] = useState(true);
 
   // Constants for A4 Layout - Standardized to 28 for consistency with DO reports
-  const ITEMS_PER_PAGE = 28; 
+  const ITEMS_PER_PAGE = 35; 
 
   useEffect(() => {
     async function fetchUsage() {
@@ -70,48 +70,81 @@ export default function UsageReportContent() {
   }
 
   return (
-    <div className="bg-gray-100 min-h-screen p-0 md:p-8 print:p-0 print:bg-white text-black font-sans text-xs">
+    <div id="usage-report-print-root" className="bg-gray-100 min-h-screen p-0 md:p-8 print:p-0 print:bg-white text-black font-sans text-xs">
       
-      {/* Aggressive Print Styles to bypass Mobile UI Layout constraints */}
-      <style dangerouslySetInnerHTML={{__html: `
+      {/* Aggressive "Nuclear" Print Styles to isolate the report from the App Shell */}
+      <style jsx global>{`
         @media print {
-          @page { size: A4; margin: 0; }
+          @page { 
+            size: A4; 
+            margin: 0 !important; 
+          }
           
-          /* 1. Neutralize global app layout specifically for printing */
+          /* 1. Hide EVERYTHING by default */
+          body * {
+            visibility: hidden !important;
+          }
+          
+          /* 2. Re-show only the report container and its children */
+          #usage-report-print-root,
+          #usage-report-print-root * {
+            visibility: visible !important;
+          }
+
+          /* 3. Position the report container at the absolute top-left of the page */
+          #usage-report-print-root {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            background: white !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+
+          /* 4. Completely annihilate layout containers and nav bars */
+          nav, 
+          aside, 
+          header:not(.report-header), 
+          footer, 
+          [class*="MobileNavigation"], 
+          [class*="SystemMenu"], 
+          button,
+          .fixed {
+            display: none !important;
+            height: 0 !important;
+            overflow: hidden !important;
+          }
+
+          /* 5. Force standard document flow */
           html, body {
             height: auto !important;
-            min-height: 0 !important;
+            overflow: visible !important;
             background: white !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            overflow: visible !important;
           }
 
-          /* 2. Unstick parent wrappers to allow pagination flow */
-          main, #__next, .flex-1, div[class*="h-[100dvh]"], div[class*="h-screen"] {
-            height: auto !important;
-            min-height: 0 !important;
-            max-height: none !important;
-            overflow: visible !important;
+          main {
             display: block !important;
+            overflow: visible !important;
+            height: auto !important;
             padding: 0 !important;
             margin: 0 !important;
           }
 
-          /* 3. Hide all UI elements including navigation bars and menu pages */
-          nav, aside, button, .fixed, .print-hidden, .z-[60], .z-[200] { 
-            display: none !important; 
-          }
-          
-          /* 4. Page Break Logic */
+          /* 6. Page Break Logic */
           .page-wrapper {
              page-break-after: always !important;
-             display: block !important;
-             margin: 0 !important;
-             padding: 0 !important;
-             height: 297mm !important;
+             display: flex !important;
+             flex-direction: column !important;
+             height: 297mm !important; /* Fixed A4 height */
+             width: 210mm !important;
+             margin: 0 auto !important;
+             padding: 10mm !important;
+             box-sizing: border-box !important;
+             position: relative !important;
              overflow: hidden !important;
           }
+          
           .page-wrapper:last-child {
              page-break-after: auto !important;
           }
@@ -121,7 +154,7 @@ export default function UsageReportContent() {
             print-color-adjust: exact !important;
           }
         }
-      `}} />
+      `}</style>
 
       {/* Print Controls */}
       <div className="fixed bottom-8 right-8 print-hidden z-50 flex gap-2">
@@ -149,7 +182,7 @@ export default function UsageReportContent() {
             <div key={idx} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-2">
               <div className="flex justify-between items-start">
                 <span className="font-black text-sm text-gray-800 uppercase leading-tight">{item.description}</span>
-                <span className="bg-blue-100 text-blue-800 text-[10px] font-black px-2.5 py-1 rounded-lg uppercase border border-blue-200 shadow-sm">
+                <span className="bg-blue-100 text-blue-800 text-[10px] font-black px-2.5 py-0.5 rounded-lg uppercase border border-blue-200 shadow-sm">
                   {item.qty} {item.uom}
                 </span>
               </div>
@@ -166,11 +199,11 @@ export default function UsageReportContent() {
       <div className="hidden md:flex flex-col items-center print:flex">
         {!loading && items.length > 0 && pages.map((pageItems, pageIndex) => (
             <div key={pageIndex} 
-                className="mx-auto bg-white shadow-xl print:shadow-none flex flex-col relative overflow-hidden box-border page-wrapper" 
+                className="mx-auto bg-white shadow-xl print:shadow-none flex flex-col box-border page-wrapper" 
                 style={{ width: '210mm', height: '297mm', padding: '10mm' }}> 
                 
                 {/* --- HEADER (Module 1) --- */}
-                <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-2 h-[35mm] shrink-0">
+                <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-2 h-[35mm] shrink-0 report-header">
                   <div className="flex gap-4 h-full items-center">
                       <div className="w-16 h-16 relative">
                           <img src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" alt="Logo" className="w-full h-full object-contain" />
@@ -185,7 +218,6 @@ export default function UsageReportContent() {
                       </div>
                   </div>
                   
-                  {/* DAILY USAGE FORM TITLE */}
                   <div className="text-right self-center">
                       <h2 className="text-4xl font-black uppercase tracking-tighter leading-none">DAILY<br/>USAGE</h2>
                   </div>
@@ -224,7 +256,7 @@ export default function UsageReportContent() {
                             <td className="py-1 px-2 truncate font-bold text-gray-700 uppercase">{item.customer}</td>
                           </tr>
                       ))}
-                      {/* Filler Rows to maintain consistent footer anchor */}
+                      {/* Filler Rows */}
                       {Array.from({ length: Math.max(0, ITEMS_PER_PAGE - pageItems.length) }).map((_, idx) => (
                           <tr key={`fill-${idx}`} className="border-b border-gray-100 h-6">
                               <td className="border-r border-gray-100"></td>
@@ -238,8 +270,8 @@ export default function UsageReportContent() {
                   </table>
                 </div>
 
-                {/* Print Footer */}
-                <div className="pt-4 border-t border-gray-200 mt-auto shrink-0 flex justify-between items-center text-[8px] font-black text-gray-400 uppercase tracking-widest">
+                {/* Print Footer - Now anchored at the absolute bottom of the 297mm height */}
+                <div className="pt-4 border-t border-gray-200 mt-auto shrink-0 flex justify-between items-center text-[8px] font-black text-gray-400 uppercase tracking-widest pb-2">
                     <span>Generated by FFD Intelligence Engine</span>
                     <span>{new Date().toLocaleString('en-GB')}</span>
                 </div>

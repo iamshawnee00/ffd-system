@@ -15,13 +15,13 @@ export default function RouteReportContent() {
       if (!date) return;
       setLoading(true);
 
-      // 1. Fetch Supabase Orders to get Customers, Addresses, and Drivers
+      // 1. Fetch Supabase Orders
       const { data: orders } = await supabase
         .from('Orders')
         .select('DONumber, "Customer Name", "Delivery Address", "Delivery Mode", "Status", DriverName, "Contact Number"')
         .eq('Delivery Date', date);
 
-      // 2. Fetch Live Shipday Orders to get the precise optimized Route Sequences
+      // 2. Fetch Live Shipday Orders
       let shipdayOrders = [];
       try {
         const apiKey = process.env.NEXT_PUBLIC_SHIPDAY_API_KEY;
@@ -38,25 +38,22 @@ export default function RouteReportContent() {
         console.error("Shipday fetch error", e);
       }
 
-      // 3. Process & Merge Data & Count Items
+      // 3. Process & Merge Data
       const uniqueDOs = {};
       (orders || []).forEach(o => {
         const doNum = String(o.DONumber).trim();
         if (!uniqueDOs[doNum]) {
-            // Initialize DO entry and start item count at 1
             uniqueDOs[doNum] = { ...o, itemCount: 1 };
         } else {
-            // Increment item count for every row sharing the same DO Number
             uniqueDOs[doNum].itemCount += 1;
         }
       });
 
-      // 4. Attach Shipday sequence based on optimized route times
+      // 4. Attach Shipday sequence
       const safeShipdayOrders = Array.isArray(shipdayOrders) ? shipdayOrders : [];
       safeShipdayOrders.forEach((so) => {
           const shipdayDoNum = String(so.orderNumber || so.order_number || '').trim();
           if (uniqueDOs[shipdayDoNum]) {
-              // Shipday updates these times when a route is planned/optimized
               const expectedDate = so.expectedDeliveryDate || '9999-99-99';
               const expectedTime = so.expectedDeliveryTime || '23:59:59';
               const eta = so.etaTime || expectedTime; 
@@ -64,7 +61,7 @@ export default function RouteReportContent() {
           }
       });
 
-      // 5. Group perfectly by Driver
+      // 5. Group by Driver
       const drivers = {};
       Object.values(uniqueDOs).forEach(o => {
           const driver = o.DriverName || o["Delivery Mode"] || 'DRIVER';
@@ -72,7 +69,7 @@ export default function RouteReportContent() {
           drivers[driver].push(o);
       });
 
-      // 6. Sort each driver's list by Shipday's expected route time, fallback to customer name
+      // 6. Sort lists
       Object.keys(drivers).forEach(d => {
           drivers[d].sort((a, b) => {
               const timeA = a.shipdayTime || '9999-99-99T23:59:59';
@@ -82,26 +79,19 @@ export default function RouteReportContent() {
           });
       });
 
-      // 7. Sort the drivers themselves: alphabetical, but "DRIVER" (unassigned) and "Self Pick-up" go to the bottom
+      // 7. Sort drivers
       const groupedArray = Object.keys(drivers).sort((a, b) => {
           const aUpper = a.toUpperCase();
           const bUpper = b.toUpperCase();
-          
           const isSelfA = aUpper.includes('SELF PICK');
           const isSelfB = bUpper.includes('SELF PICK');
-          
           const isDriverA = aUpper === 'DRIVER' || aUpper === 'UNASSIGNED';
           const isDriverB = bUpper === 'DRIVER' || bUpper === 'UNASSIGNED';
 
-          // 1st priority: push Self Pick-up to the absolute bottom
           if (isSelfA && !isSelfB) return 1;
           if (!isSelfA && isSelfB) return -1;
-
-          // 2nd priority: push generic "DRIVER" to the bottom, just above Self Pick-up
           if (isDriverA && !isDriverB) return 1;
           if (!isDriverA && isDriverB) return -1;
-
-          // Standard alphabetical for actual driver names
           return a.localeCompare(b);
       }).map(d => ({
           driver: d,
@@ -115,43 +105,88 @@ export default function RouteReportContent() {
     fetchAndMapRoutes();
   }, [date]);
 
-  if (loading) return <div className="p-10 text-white text-center font-bold tracking-widest uppercase">Calculating Route Sequences...</div>;
+  if (loading) return <div className="p-10 text-white text-center font-bold tracking-widest uppercase animate-pulse">Calculating Route Sequences...</div>;
   if (!date) return <div className="p-10 text-center text-slate-400">Please provide a date parameter.</div>;
   if (routeData.length === 0) return <div className="p-10 text-center text-slate-400">No scheduled routes found for this date.</div>;
 
   return (
-    <div className="bg-white p-8 rounded-[2rem] shadow-xl print:shadow-none print:p-0 text-black font-sans">
-       <style dangerouslySetInnerHTML={{__html: `
+    <div id="route-report-print-root" className="bg-white p-4 md:p-8 print:p-0 text-black font-sans">
+      
+      {/* Aggressive Visibility Isolation for Printing */}
+      <style jsx global>{`
         @media print {
-          @page { size: A4 portrait; margin: 10mm; }
-          
-          /* Force overwrite global layouts to remove huge grey top space */
-          html, body, main { 
-            background: white !important; 
-            margin: 0 !important; 
-            padding: 0 !important; 
-            -webkit-print-color-adjust: exact; 
+          @page { 
+            size: A4 portrait; 
+            margin: 10mm !important; 
           }
+          
+          /* 1. Hide EVERY global element by default */
+          body * {
+            visibility: hidden !important;
+          }
+          
+          /* 2. Re-enable only the report container and its content */
+          #route-report-print-root,
+          #route-report-print-root * {
+            visibility: visible !important;
+          }
+
+          /* 3. Position container at top of PDF */
+          #route-report-print-root {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            background: white !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+
+          /* 4. Kill off mobile nav/menus entirely */
+          nav, 
+          aside, 
+          header:not(.report-header), 
+          footer, 
+          [class*="MobileNavigation"], 
+          [class*="SystemMenu"], 
+          button,
+          .fixed {
+            display: none !important;
+            height: 0 !important;
+            overflow: hidden !important;
+          }
+
+          /* 5. Flow standard document height */
+          html, body {
+            height: auto !important;
+            overflow: visible !important;
+            background: white !important;
+          }
+
           main {
-            padding-top: 0 !important; 
+            display: block !important;
+            overflow: visible !important;
+            height: auto !important;
+            padding: 0 !important;
+            margin: 0 !important;
           }
-          
-          .print-hidden { display: none !important; }
-          
-          /* Prevent splitting elements across pages */
+
+          /* 6. Avoid splitting rows or drivers across pages */
           .break-inside-avoid {
              page-break-inside: avoid !important;
              break-inside: avoid !important;
-             display: block; /* Ensure block formatting context for breaks to apply */
+             display: block !important;
           }
           
           tr.break-inside-avoid {
-             display: table-row; /* Keep rows as rows, but avoid breaks */
+             display: table-row !important;
           }
-        }
-      `}} />
 
-      <div className="flex justify-between items-center mb-8 print-hidden">
+          .print-hidden { display: none !important; }
+        }
+      `}</style>
+
+      <div className="flex justify-between items-center mb-8 print-hidden report-header">
          <h2 className="text-xl font-black uppercase text-gray-800">Masterlist - {date}</h2>
          <button onClick={() => window.print()} className="bg-orange-500 hover:bg-orange-600 transition active:scale-95 text-white px-8 py-4 rounded-full font-black shadow-lg flex items-center gap-2 uppercase tracking-widest text-sm">
             <span>🖨️</span> Print Driver Routes
@@ -159,7 +194,7 @@ export default function RouteReportContent() {
       </div>
 
       {routeData.map((group) => (
-         <div key={group.driver} className="mb-20 print:mb-16 break-inside-avoid">
+         <div key={group.driver} className="mb-12 print:mb-10 break-inside-avoid">
             {/* DRIVER HEADER */}
             <div className="border-b-2 border-black pb-2 mb-4 flex justify-between items-end">
                 <div>
@@ -175,7 +210,7 @@ export default function RouteReportContent() {
                 <thead>
                     <tr className="bg-gray-100 border-b-2 border-black text-[10px] uppercase font-black">
                         <th className="py-1.5 px-2 text-center w-10 border-r border-black">Stop</th>
-                        <th className="py-1.5 px-2 text-left w-24 border-r border-black">DO Number</th>
+                        <th className="py-1.5 px-2 text-left w-28 border-r border-black">DO Number</th>
                         <th className="py-1.5 px-2 text-left border-r border-black">Customer</th>
                         <th className="py-1.5 px-2 text-center w-12 border-r border-black">Final</th>
                         <th className="py-1.5 px-2 text-center w-12">Load</th>
@@ -186,7 +221,7 @@ export default function RouteReportContent() {
                         const isConsignment = String(o.DONumber).startsWith('CSGN');
                         return (
                         <tr key={o.DONumber} className="border-b border-black break-inside-avoid">
-                            <td className="py-1 px-2 text-center border-r border-black bg-white align-middle"></td>
+                            <td className="py-1 px-2 text-center border-r border-black bg-white align-middle font-black text-sm">{i + 1}</td>
                             <td className="py-1 px-2 border-r border-black align-middle">
                                 <div className="font-mono font-black text-xs leading-none">{o.DONumber}</div>
                             </td>

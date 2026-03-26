@@ -1,6 +1,6 @@
 'use client';
 import { Suspense } from 'react';
-import RouteReportContent from './reportcontent';
+import RouteReportContent from './UsageReportContent';
 
 export default function RoutePage() {
   return (
