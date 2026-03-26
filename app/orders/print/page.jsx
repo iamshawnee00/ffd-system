@@ -9,7 +9,8 @@ function PrintOrderContent() {
   const [loading, setLoading] = useState(true);
 
   // Constants: Adjusted for A4 fit with fixed footer
-  const ITEMS_PER_PAGE = 25;
+  // 28 items usually fits well with the current header/footer sizes
+  const ITEMS_PER_PAGE = 28;
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -19,17 +20,14 @@ function PrintOrderContent() {
         // Helper function to aggressively extract the DO number
         const extractDO = () => {
             let target = '';
-            const rawUrl = window.location.href; // Safest way to read exactly what's in the address bar
+            const rawUrl = window.location.href; 
             
-            // 1. Try Hash
             if (rawUrl.includes('#')) {
                 target = rawUrl.split('#')[1].split('?')[0].trim();
             }
-            // 2. Try Query Params
             if (!target && rawUrl.includes('?do=')) {
                 target = new URLSearchParams(window.location.search).get('do');
             }
-            // 3. Try LocalStorage
             if (!target) {
                 target = localStorage.getItem('print_do_target');
             }
@@ -38,17 +36,15 @@ function PrintOrderContent() {
 
         let foundDo = extractDO();
 
-        // If found immediately, proceed.
         if (foundDo && foundDo !== 'null' && foundDo !== 'undefined') {
             setDoNumber(foundDo);
         } else {
-            // If empty, wait 300ms for Next.js to finish its hydration URL rewrites, then try again.
             setTimeout(() => {
                 const retryDo = extractDO();
                 if (retryDo && retryDo !== 'null' && retryDo !== 'undefined') {
                     setDoNumber(retryDo);
                 } else {
-                    setLoading(false); // Truly no DO provided
+                    setLoading(false); 
                 }
             }, 300);
         }
@@ -57,10 +53,9 @@ function PrintOrderContent() {
 
   useEffect(() => {
     async function fetchFullOrder() {
-      if (!doNumber) return; // Wait until we have the DO number
+      if (!doNumber) return;
 
       try {
-          // CRITICAL FIX: Wait for Supabase to restore the session in the new tab
           await supabase.auth.getSession();
 
           const { data: allItems, error: listError } = await supabase
@@ -113,7 +108,7 @@ function PrintOrderContent() {
   };
 
   return (
-    <div className="bg-gray-200 min-h-screen p-8 print:p-0 print:bg-white text-black font-sans">
+    <div id="print-container" className="bg-gray-200 min-h-screen p-0 md:p-8 print:p-0 print:bg-white text-black font-sans">
       
       <button 
         onClick={() => window.print()}
@@ -124,7 +119,7 @@ function PrintOrderContent() {
 
       {pages.map((pageItems, pageIndex) => (
         <div key={pageIndex} 
-             className="mx-auto bg-white shadow-xl mb-8 print:shadow-none print:mb-0 flex flex-col relative page-break-after overflow-hidden box-border" 
+             className={`mx-auto bg-white shadow-xl print:shadow-none flex flex-col relative overflow-hidden box-border ${pageIndex < pages.length - 1 ? 'mb-8 print:mb-0 page-break-after' : ''}`} 
              style={{ width: '210mm', height: '297mm', padding: '10mm' }}>
           
           {/* --- HEADER SECTION --- */}
@@ -194,7 +189,6 @@ function PrintOrderContent() {
                 {pageItems.map((item, index) => {
                   const isReplacement = item.Replacement === 'YES' || item.Replacement === true || item.isReplacement === true;
                   
-                  // Price Logic
                   let priceDisplay = ""; 
                   if (Number(item.Price) > 0) {
                       priceDisplay = Number(item.Price).toFixed(2);
@@ -218,7 +212,7 @@ function PrintOrderContent() {
                     </tr>
                   );
                 })}
-                {/* Filler lines to maintain table structure */}
+                {/* Filler lines */}
                 {Array.from({ length: Math.max(0, ITEMS_PER_PAGE - pageItems.length) }).map((_, i) => (
                   <tr key={`fill-${i}`} className="border-b border-gray-100 h-[22px]">
                     <td className="border-r border-gray-100"></td>
@@ -234,10 +228,10 @@ function PrintOrderContent() {
           </div>
 
           {/* --- FOOTER SECTION --- */}
-          <div className="h-[50mm] mt-auto shrink-0">
+          <div className="h-[50mm] mt-auto shrink-0 flex flex-col justify-end">
               <div className="mb-4">
                   <div className="font-black text-[9px] uppercase mb-1">NOTE</div>
-                  <div className="border-2 border-black h-[15mm] p-2 text-[10px] font-bold italic leading-tight overflow-hidden flex flex-col gap-1">
+                  <div className="border-2 border-black h-[18mm] p-2 text-[10px] font-bold italic leading-tight overflow-hidden flex flex-col gap-1">
                       {orderData.SpecialNotes && <div className="whitespace-pre-line">{orderData.SpecialNotes}</div>}
                       {(() => {
                           const validItemsWithNotes = items.filter(i => i.SpecialNotes && i.SpecialNotes.trim() !== "" && !i.SpecialNotes.trim().toLowerCase().startsWith("pasted:"));
@@ -255,7 +249,7 @@ function PrintOrderContent() {
                   </div>
               </div>
 
-              <div className="pt-6 flex justify-between items-end">
+              <div className="pt-2 flex justify-between items-end">
                 <div className="w-[30%] text-center">
                     <div className="font-black uppercase text-[12px] mb-1 h-5 overflow-hidden">
                         {orderData.DriverName || ' '}
@@ -283,10 +277,46 @@ function PrintOrderContent() {
 
       <style jsx global>{`
         @media print {
-          @page { size: A4; margin: 0; }
-          body { background: white; -webkit-print-color-adjust: exact; }
-          .page-break-after { page-break-after: always; }
-          .page-break-after:last-child { page-break-after: auto; }
+          @page { 
+            size: A4; 
+            margin: 0; 
+          }
+          
+          /* 1. Neutralize global app layout specifically for printing */
+          html, body {
+            height: auto !important;
+            min-height: 0 !important;
+            background: white !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
+          }
+
+          /* 2. Unstick any potential parent wrappers but keep inner content fixed height */
+          main, #__next, .flex-1, div[class*="h-[100dvh]"] {
+            height: auto !important;
+            min-height: 0 !important;
+            overflow: visible !important;
+            display: block !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+
+          /* 3. Ensure pages break correctly and hide UI */
+          .page-break-after { 
+            page-break-after: always !important; 
+            display: flex !important; /* Keep flex for the inner layout logic */
+          }
+          
+          nav, aside, button, .print\\:hidden { 
+            display: none !important; 
+          }
+          
+          /* 4. Fix color adjustment */
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
         }
       `}</style>
     </div>

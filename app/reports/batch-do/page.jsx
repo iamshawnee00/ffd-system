@@ -1,34 +1,63 @@
+'use client';
 import { Suspense } from 'react';
 import BatchDoReportContent from './reportcontent';
 
 export default function BatchDoPage() {
   return (
-    /* Background is slate-900 on screen, but transparent/white on print */
-    <div className="min-h-screen bg-[#0F172A] print:bg-white p-4 md:p-8 print:p-0">
-      <div className="max-w-7xl mx-auto">
-        {/* Hide header during printing */}
-        <header className="mb-8 print:hidden">
-          <h1 className="text-2xl font-bold text-white tracking-tight">
-            Batch Operations Report
-          </h1>
-          <p className="text-slate-400 text-sm">
-            Real-time monitoring and historical batch data.
-          </p>
-        </header>
+    // We wrap this in a print-clean div to ensure no parent layout 
+    // styles interfere with the report generation.
+    <div className="print-wrapper print:bg-white print:p-0">
+      <Suspense fallback={
+        <div className="p-10 text-center font-black text-gray-400 animate-pulse uppercase tracking-widest">
+          Initializing Batch Engine...
+        </div>
+      }>
+        <BatchDoReportContent />
+      </Suspense>
 
-        <Suspense fallback={
-          <div className="w-full h-64 flex items-center justify-center rounded-xl border border-slate-800 bg-[#1E293B] print:hidden">
-            <div className="flex flex-col items-center gap-4">
-              <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-              <p className="text-slate-400 animate-pulse text-sm font-medium">
-                Initializing Intelligence Feed...
-              </p>
-            </div>
-          </div>
-        }>
-          <BatchDoReportContent />
-        </Suspense>
-      </div>
+      {/* Aggressive scoped styles just for this report route */}
+      <style jsx global>{`
+        @media print {
+          /* 1. Force hide the entire global app shell around the content */
+          nav, 
+          aside, 
+          header, 
+          footer:not(.do-footer),
+          [class*="MobileNavigation"],
+          [class*="SystemMenu"],
+          [class*="sidebar"],
+          .fixed,
+          .sticky,
+          button {
+            display: none !important;
+            opacity: 0 !important;
+            visibility: hidden !important;
+            height: 0 !important;
+            width: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+
+          /* 2. Reset the viewport to allow standard scrolling flow */
+          html, body, main, #__next, .print-wrapper {
+            background-color: white !important;
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            overflow: visible !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            position: relative !important;
+          }
+
+          /* 3. Ensure the main content takes up 100% width and no padding */
+          main {
+            display: block !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+        }
+      `}</style>
     </div>
   );
 }

@@ -8,14 +8,14 @@ export default function BatchDoReportContent() {
   const searchParams = useSearchParams();
   const date = searchParams.get('date');
   const driverFilter = searchParams.get('driver'); 
-  const dosParam = searchParams.get('dos'); // Added for Bulk Printing support
+  const dosParam = searchParams.get('dos'); 
 
   const [doList, setDoList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
 
-  // Constants for A4 Layout - Adjusted to fit 25 items with flexible header
-  const ITEMS_PER_PAGE = 25; 
+  // Standardized for A4 fit with footer anchored at bottom
+  const ITEMS_PER_PAGE = 28; 
 
   useEffect(() => {
     async function fetchAllDOs() {
@@ -40,7 +40,6 @@ export default function BatchDoReportContent() {
             query = query.eq('DriverName', driverFilter);
         }
 
-        // Apply bulk printing filter if provided
         if (dosParam) {
             const dosArray = dosParam.split(',').map(d => d.trim());
             query = query.in('DONumber', dosArray);
@@ -52,7 +51,6 @@ export default function BatchDoReportContent() {
           setErrorMsg(error.message);
           setDoList([]);
         } else if (data) {
-          // EXCLUDE ALL CONSIGNMENT ORDERS FROM BATCH DO PRINTING (unless explicitly passed via exact URL dosParam)
           const filteredData = dosParam ? data : data.filter(row => !String(row.DONumber).startsWith('CSGN-'));
 
           const grouped = {};
@@ -68,27 +66,17 @@ export default function BatchDoReportContent() {
           
           const groupedArray = Object.values(grouped);
           
-          // SORTING LOGIC: Driver A -> Driver B -> ... -> No Driver
           groupedArray.sort((a, b) => {
             const driverA = a.info.DriverName || "";
             const driverB = b.info.DriverName || "";
-
-            // 1. If both have drivers, sort alphabetically by driver name
             if (driverA && driverB) {
               if (driverA.toLowerCase() !== driverB.toLowerCase()) {
                 return driverA.localeCompare(driverB);
               }
-              // If same driver, sort by DO Number
               return (a.info.DONumber || "").localeCompare(b.info.DONumber || "");
             }
-
-            // 2. If A has a driver and B doesn't, A comes first
             if (driverA && !driverB) return -1;
-            
-            // 3. If B has a driver and A doesn't, B comes first
             if (!driverA && driverB) return 1;
-
-            // 4. If neither has a driver, sort by DO Number
             return (a.info.DONumber || "").localeCompare(b.info.DONumber || "");
           });
           
@@ -100,12 +88,11 @@ export default function BatchDoReportContent() {
       setLoading(false);
     }
     
-    // Fixed dependency array size to always be 3
     if (date || dosParam) fetchAllDOs();
     else setLoading(false);
   }, [date, driverFilter, dosParam]);
 
-  if (loading) return <div className="p-10 text-center text-white font-bold uppercase tracking-widest animate-pulse">Generating Batch DOs...</div>;
+  if (loading) return <div className="p-10 text-center text-gray-400 font-bold uppercase tracking-widest animate-pulse">Generating Batch DOs...</div>;
   if (!date && !dosParam) return <div className="p-10 text-center text-gray-400">Please provide a date or DO parameters.</div>;
   
   if (errorMsg) return (
@@ -117,33 +104,60 @@ export default function BatchDoReportContent() {
   if (doList.length === 0) return <div className="p-10 text-center text-gray-400">No orders found matching the criteria.</div>;
 
   return (
-    <div className="text-black font-sans">
+    <div className="text-black font-sans bg-gray-200 min-h-screen p-0 md:p-8 print:p-0 print:bg-white">
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
-          @page { size: A4; margin: 0; }
-          
-          /* Force overwrite global layouts to remove huge grey top space */
-          html, body, main { 
-            background: white !important; 
-            margin: 0 !important; 
-            padding: 0 !important; 
-            -webkit-print-color-adjust: exact;
-          }
-          main {
-            padding-top: 0 !important; 
+          @page { 
+            size: A4; 
+            margin: 0; 
           }
           
-          .page-break-after { 
-            page-break-after: always !important; 
-            display: block; 
+          /* 1. Neutralize global app layout specifically for printing */
+          html, body {
+            height: auto !important;
+            min-height: 0 !important;
+            background: white !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: visible !important;
           }
-          .page-break-after:last-child { page-break-after: auto !important; }
-          .print-hidden { display: none !important; }
+
+          /* 2. Unstick parent wrappers to allow pagination flow */
+          main, #__next, .flex-1, div[class*="h-[100dvh]"], div[class*="h-screen"] {
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            overflow: visible !important;
+            display: block !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+
+          /* 3. Hide all UI elements including navigation bars and menu pages */
+          nav, aside, button, .fixed, .print-hidden, .z-[60], .z-[200] { 
+            display: none !important; 
+          }
+          
+          /* 4. Page Break Logic */
+          .do-wrapper {
+             page-break-after: always !important;
+             display: block !important;
+             margin: 0 !important;
+             padding: 0 !important;
+          }
+          .do-wrapper:last-child {
+             page-break-after: auto !important;
+          }
+
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
         }
       `}} />
 
       {/* Control Button - Floating in UI, Hidden in Print */}
-      <div className="fixed bottom-8 right-8 print-hidden z-50 flex gap-2">
+      <div className="fixed bottom-8 right-8 print-hidden z-50">
         <button 
             onClick={() => window.print()}
             className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-full shadow-2xl transition transform hover:scale-105 flex items-center gap-2"
@@ -152,11 +166,13 @@ export default function BatchDoReportContent() {
         </button>
       </div>
 
-      {doList.map((order) => (
-        <div key={order.info.DONumber} className="page-break-after">
-            <SingleDOComponent orderData={order.info} items={order.items} itemsPerPage={ITEMS_PER_PAGE} />
-        </div>
-      ))}
+      <div className="flex flex-col items-center">
+        {doList.map((order) => (
+          <div key={order.info.DONumber} className="do-wrapper w-full flex flex-col items-center">
+              <SingleDOComponent orderData={order.info} items={order.items} itemsPerPage={ITEMS_PER_PAGE} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -177,8 +193,8 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
     <>
       {pages.map((pageItems, pageIndex) => (
         <div key={pageIndex} 
-             className="mx-auto bg-white shadow-xl mb-8 print:shadow-none print:mb-0 flex flex-col relative overflow-hidden box-border" 
-             style={{ width: '210mm', height: '297mm', padding: '10mm' }}>
+             className={`bg-white print:shadow-none flex flex-col relative overflow-hidden box-border ${pageIndex < pages.length - 1 ? 'mb-8 print:mb-0 page-break-after' : 'mb-8 md:mb-16 print:mb-0'}`} 
+             style={{ width: '210mm', height: '297mm', padding: '10mm', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)' }}>
           
           {/* --- HEADER SECTION --- */}
           <div className="flex justify-between items-start mb-4 border-b-2 border-black pb-2 h-[28mm] shrink-0">
@@ -246,9 +262,7 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
               <tbody className="font-bold">
                 {pageItems.map((item, index) => {
                   const isReplacement = item.Replacement === 'YES' || item.Replacement === true || item.isReplacement === true;
-                  
-                  // Price Logic
-                  let priceDisplay = ""; // Default empty
+                  let priceDisplay = ""; 
                   if (Number(item.Price) > 0) {
                       priceDisplay = Number(item.Price).toFixed(2);
                   } else if (isReplacement) {
@@ -287,12 +301,11 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
           </div>
 
           {/* --- FOOTER SECTION --- */}
-          <div className="h-[50mm] mt-auto shrink-0">
+          <div className="h-[50mm] mt-auto shrink-0 flex flex-col justify-end">
               <div className="mb-4">
                   <div className="font-black text-[9px] uppercase mb-1">NOTE</div>
-                  <div className="border-2 border-black h-[15mm] p-2 text-[10px] font-bold italic leading-tight overflow-hidden flex flex-col gap-1">
+                  <div className="border-2 border-black h-[18mm] p-2 text-[10px] font-bold italic leading-tight overflow-hidden flex flex-col gap-1">
                       {orderData.notes && <div className="whitespace-pre-line">{orderData.notes}</div>}
-                      {/* Formatted Special Notes (e.g., "1. MANGO GOLD SUSU - 10A: masak sikit") */}
                       {(() => {
                           const validItemsWithNotes = items.filter(i => i.SpecialNotes && i.SpecialNotes.trim() !== "" && !i.SpecialNotes.trim().toLowerCase().startsWith("pasted:"));
                           const uniqueNotes = [];
@@ -309,8 +322,7 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
                   </div>
               </div>
 
-              <div className="pt-6 flex justify-between items-end">
-                {/* PEMANDU / DRIVER */}
+              <div className="pt-2 flex justify-between items-end">
                 <div className="w-[30%] text-center">
                     <div className="font-black uppercase text-[12px] mb-1 h-5 overflow-hidden">
                         {orderData.DriverName || ' '}
@@ -318,15 +330,11 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
                     <div className="border-t-2 border-black w-full mx-auto"></div>
                     <p className="font-black uppercase text-[9px] mt-1 tracking-widest">PEMANDU</p>
                 </div>
-
-                {/* TEAM QC */}
                 <div className="w-[30%] text-center">
                     <div className="h-5 mb-1"></div>
                     <div className="border-t-2 border-black w-full mx-auto"></div>
                     <p className="font-black uppercase text-[9px] mt-1 tracking-widest">TEAM QC</p>
                 </div>
-
-                {/* TEAM PENGUTIP / RECEIVER */}
                 <div className="w-[30%] text-center">
                     <div className="h-5 mb-1"></div>
                     <div className="border-t-2 border-black w-full mx-auto"></div>
@@ -334,7 +342,6 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
                 </div>
               </div>
           </div>
-          
         </div>
       ))}
     </>
