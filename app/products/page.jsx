@@ -9,7 +9,8 @@ import {
   CalendarIcon,
   CubeIcon,
   CheckIcon,
-  XMarkIcon
+  XMarkIcon,
+  ChevronLeftIcon
 } from '@heroicons/react/24/outline';
 
 // ==========================================
@@ -463,27 +464,41 @@ export default function ProductManagementPage() {
       setCalendarData(newData);
   };
 
+  if (loading) return <div className="h-screen flex items-center justify-center text-gray-400 font-black animate-pulse uppercase tracking-widest">Waking up Engine...</div>;
+
   return (
-    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32 animate-in fade-in duration-300">
+    <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-[100dvh] bg-gray-50/50 pb-32 animate-in fade-in duration-300 relative">
         
+        <style jsx global>{`
+          input, select, textarea { font-size: 16px !important; }
+          .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+          .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
+        `}</style>
+
         {/* HEADER */}
         <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
           <div>
-              <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Product Management</h1>
-              <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Manage inventory items and UOM settings</p>
+              <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight uppercase leading-none">Product Management</h1>
+              <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1.5 md:mt-2">Manage inventory items and UOM settings</p>
           </div>
           {activeTab === 'masterlist' && (
             <button 
               onClick={openAddModal}
-              className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white font-black py-3 px-6 rounded-2xl shadow-sm transform transition active:scale-95 flex items-center justify-center gap-2 text-xs uppercase tracking-widest"
+              className="hidden sm:flex bg-green-600 hover:bg-green-700 text-white font-black py-3 px-6 rounded-2xl shadow-sm transform transition active:scale-95 items-center justify-center gap-2 text-xs uppercase tracking-widest"
             >
               <PlusIcon className="w-5 h-5" strokeWidth={3} /> Add Product
             </button>
           )}
         </div>
 
-        {/* TABS */}
-        <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200 custom-scrollbar">
+        {/* MOBILE iOS-STYLE SEGMENTED TABS */}
+        <div className="md:hidden flex bg-gray-200/80 p-1 rounded-xl mb-4 shrink-0 shadow-inner">
+           <button onClick={() => setActiveTab('masterlist')} className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all text-center ${activeTab === 'masterlist' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Masterlist</button>
+           <button onClick={() => setActiveTab('calendar')} className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all text-center ${activeTab === 'calendar' ? 'bg-white text-orange-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Calendar</button>
+        </div>
+
+        {/* DESKTOP TABS */}
+        <div className="hidden md:flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200 custom-scrollbar">
             <button onClick={() => setActiveTab('masterlist')} className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'masterlist' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}><CubeIcon className="w-5 h-5" /> Product Masterlist</button>
             <button onClick={() => setActiveTab('calendar')} className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'calendar' ? 'bg-orange-500 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}><CalendarIcon className="w-5 h-5" /> Availability Calendar</button>
         </div>
@@ -492,26 +507,25 @@ export default function ProductManagementPage() {
             TAB 1: PRODUCT MASTERLIST
             ========================================== */}
         {activeTab === 'masterlist' && (
-        <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-180px)] min-h-[500px] animate-in fade-in">
-            <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-6 gap-4 flex-none">
+        <div className="bg-transparent md:bg-white p-0 md:p-6 rounded-none md:rounded-[2rem] shadow-none md:shadow-xl border-none md:border border-gray-100 flex flex-col h-auto md:h-[calc(100vh-180px)] min-h-[500px] animate-in fade-in pb-24 md:pb-0">
+            <div className="flex flex-col xl:flex-row justify-between items-start xl:items-center mb-4 md:mb-6 gap-3 md:gap-4 flex-none w-full">
               
-              <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto">
+              <div className="flex flex-row items-center gap-2 w-full xl:w-auto">
                   <div className="relative flex-1 sm:w-64 sm:flex-none">
-                     <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none"><MagnifyingGlassIcon className="w-5 h-5 text-gray-400" /></div>
-                     <input type="text" placeholder="Search by name or code..." className="w-full pl-12 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-xs font-bold" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                     <div className="absolute inset-y-0 left-0 pl-3 md:pl-4 flex items-center pointer-events-none"><MagnifyingGlassIcon className="w-5 h-5 text-gray-400" /></div>
+                     <input type="text" placeholder="Search product..." className="w-full pl-10 md:pl-12 p-3 md:p-3.5 bg-white md:bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-base md:text-sm font-bold shadow-sm md:shadow-none" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                   </div>
-                  <div className="w-full sm:w-64">
-                     <select className="w-full p-3.5 bg-gray-50 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-xs font-bold text-gray-700 uppercase" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>{filterCategories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                  <div className="w-1/3 sm:w-64">
+                     <select className="w-full p-3 md:p-3.5 bg-white md:bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 transition-all text-base md:text-sm font-bold text-gray-700 uppercase shadow-sm md:shadow-none" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>{filterCategories.map(c => <option key={c} value={c}>{c}</option>)}</select>
                   </div>
               </div>
 
-              {/* Bulk Actions Toolbar */}
-              <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto justify-end">
+              {/* Desktop Bulk Actions Toolbar */}
+              <div className="hidden xl:flex flex-wrap items-center gap-2 w-full xl:w-auto justify-end">
                   <div className={`flex items-center gap-1 sm:gap-2 px-3 py-1.5 rounded-xl transition-all border ${selectedProducts.length > 0 ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-gray-50 border-gray-200 opacity-60 pointer-events-none'}`}>
                       <span className="text-[10px] sm:text-xs font-black uppercase text-blue-800 tracking-widest border-r border-blue-200/50 pr-2 sm:pr-3 mr-1 hidden sm:block">
                           {selectedProducts.length} Selected
                       </span>
-                      <span className="text-xs font-black text-blue-800 sm:hidden mr-1 border-r border-blue-200/50 pr-2">{selectedProducts.length}</span>
                       
                       <button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-1.5 p-1.5 sm:px-2 sm:py-1 rounded-lg text-blue-600 hover:bg-blue-100 transition" title="Bulk Edit">
                           <PencilSquareIcon className="w-4 h-4 md:w-5 md:h-5"/><span className="hidden md:inline text-xs font-bold uppercase tracking-wider">Edit</span>
@@ -524,7 +538,49 @@ export default function ProductManagementPage() {
 
             </div>
 
-            <div className="flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
+            {/* Mobile Cards View */}
+            <div className="md:hidden flex-1 overflow-y-auto space-y-3 custom-scrollbar">
+                {filteredAndSortedProducts.map((p) => {
+                    const isSelected = selectedProducts.includes(p.ProductCode);
+                    return (
+                    <div key={p.ProductCode || p.id} className={`bg-white border rounded-2xl p-4 shadow-sm relative transition-all active:scale-[0.99] ${isSelected ? 'border-green-400 ring-2 ring-green-400 bg-green-50/20' : 'border-gray-200 hover:border-green-300'}`} onClick={() => toggleProductSelection(p.ProductCode)}>
+                        
+                        <div className="absolute top-4 right-4 pointer-events-none">
+                            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center ${isSelected ? 'bg-green-600 border-green-600' : 'border-gray-300 bg-white'}`}>
+                                {isSelected && <CheckIcon className="w-3 h-3 text-white" strokeWidth={4} />}
+                            </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5 mb-2 pr-8">
+                            <span className="font-mono text-xs font-black text-gray-500 bg-gray-100 px-2.5 py-1 rounded border border-gray-200 w-fit">{p.ProductCode}</span>
+                        </div>
+                        
+                        <div className="font-black text-gray-800 text-base uppercase leading-tight mb-2 pr-2">
+                            {p.ProductName}
+                        </div>
+                        
+                        <div className="flex flex-wrap items-center gap-2 mb-4">
+                            <span className="text-[9px] font-black px-2.5 py-1 rounded-md uppercase bg-blue-50 text-blue-600 border border-blue-100 tracking-widest">{p.Category}</span>
+                            {p.origin && <span className="text-[9px] font-bold px-2 py-1 rounded-md uppercase bg-gray-100 text-gray-600 border border-gray-200">{p.origin}</span>}
+                        </div>
+                        
+                        <div className="flex items-center justify-between border-t border-gray-100 pt-3" onClick={e => e.stopPropagation()}>
+                            <div className="flex flex-col">
+                                <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Base UOM</span>
+                                <span className="text-sm font-black text-gray-800 uppercase">{p.BaseUOM}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => openEditModal(p)} className="p-2.5 bg-blue-50 text-blue-600 rounded-xl transition shadow-sm border border-blue-100 active:scale-95"><PencilSquareIcon className="w-4 h-4"/></button>
+                                <button onClick={() => handleDelete(p.ProductName, p.ProductCode)} className="p-2.5 bg-red-50 text-red-600 rounded-xl transition shadow-sm border border-red-100 active:scale-95"><TrashIcon className="w-4 h-4"/></button>
+                            </div>
+                        </div>
+                    </div>
+                )})}
+                {filteredAndSortedProducts.length === 0 && <div className="text-center p-10 text-gray-400 italic font-bold bg-white rounded-3xl border border-dashed border-gray-200 mx-1 md:mx-0">No products found.</div>}
+            </div>
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block flex-1 overflow-auto custom-scrollbar border border-gray-100 rounded-3xl">
                 <table className="w-full text-left whitespace-nowrap min-w-[1000px]">
                   <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
                     <tr>
@@ -550,7 +606,7 @@ export default function ProductManagementPage() {
                         <th className="p-2 pr-6 text-right"><button onClick={handleClearFilters} className="text-gray-400 hover:text-red-600 font-bold uppercase tracking-widest text-[9px] bg-white border border-gray-200 px-3 py-1.5 rounded-lg shadow-sm transition-colors w-full">Clear</button></th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
+                  <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700 bg-white">
                     {filteredAndSortedProducts.map((p) => {
                       const dStr = p.updated_at || p.created_at || p.Timestamp;
                       let formattedDate = '-';
@@ -561,7 +617,7 @@ export default function ProductManagementPage() {
                       const isSelected = selectedProducts.includes(p.ProductCode);
 
                       return (
-                      <tr key={p.ProductCode || p.id} className={`${isSelected ? 'bg-blue-50/60' : 'hover:bg-green-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleProductSelection(p.ProductCode)}>
+                      <tr key={p.ProductCode || p.id} className={`${isSelected ? 'bg-green-50/60' : 'hover:bg-green-50/30'} transition-colors group/row cursor-pointer`} onClick={() => toggleProductSelection(p.ProductCode)}>
                         <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                             <input type="checkbox" className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-gray-300 cursor-pointer" checked={isSelected} onChange={() => toggleProductSelection(p.ProductCode)} />
                         </td>
@@ -582,6 +638,37 @@ export default function ProductManagementPage() {
         </div>
         )}
 
+        {/* STICKY BOTTOM BULK ACTION BAR (Mimics iOS Photos native multi-select) */}
+        <div className={`fixed bottom-[68px] md:bottom-0 left-0 right-0 bg-white md:bg-green-600 border-t border-gray-200 md:border-none shadow-[0_-10px_30px_rgba(0,0,0,0.15)] z-[60] transition-transform duration-300 ease-out transform ${activeTab === 'masterlist' && selectedProducts.length > 0 ? 'translate-y-0' : 'translate-y-full pb-safe'}`}>
+            <div className="max-w-7xl mx-auto px-4 py-3 md:py-4 flex justify-between items-center">
+                <div className="flex items-center gap-2 md:gap-4">
+                    <button onClick={() => setSelectedProducts([])} className="p-2 text-gray-400 md:text-green-200 hover:text-gray-700 md:hover:text-white rounded-full bg-gray-100 md:bg-green-700/50 transition-colors">
+                        <XMarkIcon className="w-5 h-5 stroke-2" />
+                    </button>
+                    <span className="text-base md:text-sm font-black text-gray-800 md:text-white tracking-widest">{selectedProducts.length} <span className="hidden md:inline">Products Selected</span></span>
+                </div>
+                <div className="flex items-center gap-2 md:gap-3">
+                    <button onClick={() => setIsBulkEditOpen(true)} className="flex items-center gap-1.5 px-4 py-2 md:px-4 rounded-xl text-blue-600 md:text-white bg-blue-50 md:bg-green-500 hover:bg-blue-100 md:hover:bg-green-400 transition font-bold text-xs uppercase" title="Bulk Edit">
+                        <PencilSquareIcon className="w-5 h-5"/><span className="hidden sm:inline">Edit</span>
+                    </button>
+                    <button onClick={handleBulkDelete} className="flex items-center gap-1.5 px-4 py-2 md:px-4 rounded-xl text-red-600 md:text-white bg-red-50 md:bg-red-500 hover:bg-red-100 md:hover:bg-red-400 transition font-bold text-xs uppercase ml-1 md:ml-4 border border-red-200 md:border-none" title="Batch Delete">
+                        <TrashIcon className="w-5 h-5"/><span className="hidden sm:inline">Delete</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        {/* MOBILE FLOATING ACTION BAR FOR ADD PRODUCT */}
+        {activeTab === 'masterlist' && (
+        <div className="sm:hidden fixed bottom-[68px] left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-[50] animate-in slide-in-from-bottom-2 pb-safe">
+            <div className="max-w-lg mx-auto">
+                <button onClick={openAddModal} className="w-full bg-green-600 text-white font-black py-4 rounded-2xl shadow-xl transition active:scale-95 text-xs uppercase tracking-widest flex items-center justify-center gap-2 shadow-green-600/30">
+                    <PlusIcon className="w-5 h-5 stroke-2" /> Add New Product
+                </button>
+            </div>
+        </div>
+        )}
+
         {/* ==========================================
             TAB 2: AVAILABILITY CALENDAR (DATABASE SYNC + DRAG SUPPORT)
             ========================================== */}
@@ -598,7 +685,7 @@ export default function ProductManagementPage() {
                 <div className="flex gap-2 w-full sm:w-auto">
                     {isCalendarEditMode ? (
                         <>
-                            <button onClick={addCalendarProduct} className="flex-1 sm:flex-none bg-orange-50 text-orange-600 hover:bg-orange-100 font-black py-2.5 px-5 rounded-xl border border-orange-200 transition-all flex items-center justify-center gap-2 text-xs uppercase tracking-widest"><PlusIcon className="w-4 h-4" /> Add Product</button>
+                            <button onClick={addCalendarProduct} className="flex-1 sm:flex-none bg-orange-50 text-orange-600 hover:bg-orange-100 font-black py-2.5 px-5 rounded-xl border border-orange-200 transition-all flex items-center justify-center gap-2 text-xs uppercase tracking-widest active:scale-95"><PlusIcon className="w-4 h-4" /> <span className="hidden sm:inline">Add Product</span></button>
                             <button onClick={handleDoneEditing} disabled={isSyncingCalendar} className="flex-1 sm:flex-none bg-green-600 text-white hover:bg-green-700 font-black py-2.5 px-6 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-xs uppercase tracking-widest active:scale-95 disabled:opacity-50"><CheckIcon className="w-4 h-4"/> {isSyncingCalendar ? 'SYNCING...' : 'SAVE & FINISH'}</button>
                         </>
                     ) : (
@@ -607,7 +694,7 @@ export default function ProductManagementPage() {
                 </div>
             </div>
             
-            <div className="flex-1 overflow-auto custom-scrollbar border border-gray-200 rounded-2xl relative">
+            <div className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar border border-gray-200 rounded-2xl relative">
                 <table className="w-full text-left border-collapse min-w-[1200px] text-xs">
                     <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-30 shadow-sm">
                         <tr>
@@ -624,7 +711,7 @@ export default function ProductManagementPage() {
                             })}
                         </tr>
                     </thead>
-                    <tbody className="font-medium">
+                    <tbody className="font-medium bg-white">
                         {calendarData.length === 0 ? (
                             <tr><td colSpan="50" className="p-20 text-center text-gray-400 italic font-bold">No availability data. Click "Customize" to build your cloud calendar.</td></tr>
                         ) : calendarData.map((cat, gIdx) => (
@@ -645,8 +732,8 @@ export default function ProductManagementPage() {
                                                 </div>
                                                 {isCalendarEditMode && (
                                                     <div className="flex gap-1 mt-1">
-                                                        <button onClick={() => addCalendarOrigin(gIdx)} className="text-[9px] bg-blue-50 text-blue-600 px-2 py-1 rounded font-bold hover:bg-blue-100 flex-1 flex justify-center items-center gap-1"><PlusIcon className="w-3 h-3"/> Origin</button>
-                                                        <button onClick={() => removeCalendarProduct(gIdx)} className="text-[9px] bg-red-50 text-red-600 px-2 py-1 rounded font-bold hover:bg-red-100 flex items-center justify-center"><TrashIcon className="w-3 h-3"/></button>
+                                                        <button onClick={() => addCalendarOrigin(gIdx)} className="text-[9px] bg-blue-50 text-blue-600 px-2 py-1 rounded font-bold hover:bg-blue-100 flex-1 flex justify-center items-center gap-1 active:scale-95"><PlusIcon className="w-3 h-3"/> Origin</button>
+                                                        <button onClick={() => removeCalendarProduct(gIdx)} className="text-[9px] bg-red-50 text-red-600 px-2 py-1 rounded font-bold hover:bg-red-100 flex items-center justify-center active:scale-95"><TrashIcon className="w-3 h-3"/></button>
                                                     </div>
                                                 )}
                                             </div>
@@ -656,7 +743,7 @@ export default function ProductManagementPage() {
                                     <td className={`p-2 pr-4 bg-white sticky left-40 z-20 border-r border-gray-200 text-right shadow-[2px_0_5px_rgba(0,0,0,0.02)] ${oIdx === cat.origins.length - 1 ? 'border-b border-gray-200' : 'border-b border-gray-50'}`}>
                                         {isCalendarEditMode ? (
                                             <div className="flex items-center justify-end gap-2">
-                                                <button onClick={() => removeCalendarOrigin(gIdx, oIdx)} className="text-gray-300 hover:text-red-500"><XMarkIcon className="w-3 h-3"/></button>
+                                                <button onClick={() => removeCalendarOrigin(gIdx, oIdx)} className="text-gray-300 hover:text-red-500 active:scale-90"><XMarkIcon className="w-3 h-3"/></button>
                                                 <input type="text" value={org.name} onChange={e => updateOriginName(gIdx, oIdx, e.target.value)} className="font-black text-[10px] text-gray-600 uppercase bg-gray-50 border border-gray-200 rounded px-2 py-1 w-28 text-right outline-none focus:border-blue-400" />
                                             </div>
                                         ) : (
@@ -691,37 +778,42 @@ export default function ProductManagementPage() {
         </div>
         )}
 
-        {/* BULK EDIT MODAL */}
+        {/* ==========================================
+            BULK EDIT MODAL
+            ========================================== */}
         {isBulkEditOpen && (
-          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden">
-            <div className="bg-white rounded-[2.5rem] w-full max-w-lg shadow-2xl flex flex-col animate-in zoom-in duration-200 border border-gray-100 max-h-[90vh] overflow-hidden">
-                <div className="flex justify-between items-center p-6 border-b border-gray-100 shrink-0 bg-white">
-                    <div>
-                        <h2 className="text-lg md:text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit Products</h2>
-                        <p className="text-[10px] md:text-xs text-gray-400 font-bold mt-1">Applying to <span className="text-blue-600">{selectedProducts.length}</span> items.</p>
+          <div className="fixed inset-0 bg-gray-50 md:bg-black/60 z-[110] flex items-end md:items-center justify-center md:p-8 backdrop-blur-sm overflow-hidden">
+            <div className="bg-white rounded-none md:rounded-[2.5rem] w-full max-w-lg shadow-2xl flex flex-col animate-in slide-in-from-bottom-full md:zoom-in duration-200 border-none md:border border-gray-100 h-[100dvh] md:h-auto md:max-h-[90vh] overflow-hidden pb-safe">
+                <div className="flex justify-between items-center p-4 md:p-6 border-b border-gray-100 shrink-0 bg-white" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setIsBulkEditOpen(false)} className="md:hidden p-2 bg-gray-50 rounded-full text-blue-600 active:scale-95 border border-gray-100"><ChevronLeftIcon className="w-5 h-5 stroke-2"/></button>
+                        <div>
+                            <h2 className="text-lg md:text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit Products</h2>
+                            <p className="text-[10px] md:text-xs text-gray-400 font-bold mt-1">Applying to <span className="text-blue-600">{selectedProducts.length}</span> items.</p>
+                        </div>
                     </div>
-                    <button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                    <button onClick={() => setIsBulkEditOpen(false)} className="hidden md:flex text-gray-400 hover:text-red-500 text-2xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full items-center justify-center transition-all pb-1">×</button>
                 </div>
                 
                 <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0 custom-scrollbar bg-white">
-                    <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
-                        <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-2">Override Category</label>
+                    <div className="bg-blue-50/50 p-5 rounded-3xl border border-blue-100 shadow-sm">
+                        <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-3 ml-1">Override Category</label>
                         <input 
                             type="text" 
                             list="bulk-categories" 
-                            className="w-full p-3 border border-blue-200 bg-white rounded-xl outline-none font-bold uppercase text-base md:text-xs focus:ring-2 focus:ring-blue-500" 
+                            className="w-full p-4 border border-blue-200 bg-white rounded-2xl outline-none font-bold uppercase text-base md:text-sm focus:ring-2 focus:ring-blue-500 shadow-sm" 
                             value={bulkEditData.Category} 
                             onChange={e => setBulkEditData({...bulkEditData, Category: e.target.value})} 
                             placeholder="-- Leave blank for no change --"
                         />
                         <datalist id="bulk-categories">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist>
                     </div>
-                    <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2">Override Origin</label>
+                    <div className="bg-gray-50 p-5 rounded-3xl border border-gray-200 shadow-sm">
+                        <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-3 ml-1">Override Origin</label>
                         <input 
                             type="text" 
                             list="bulk-origins" 
-                            className="w-full p-3 border border-gray-200 bg-white rounded-xl outline-none font-bold uppercase text-base md:text-xs focus:ring-2 focus:ring-green-500" 
+                            className="w-full p-4 border border-gray-200 bg-white rounded-2xl outline-none font-bold uppercase text-base md:text-sm focus:ring-2 focus:ring-green-500 shadow-sm" 
                             value={bulkEditData.origin} 
                             onChange={e => setBulkEditData({...bulkEditData, origin: e.target.value})} 
                             placeholder="-- Leave blank for no change --"
@@ -730,54 +822,96 @@ export default function ProductManagementPage() {
                     </div>
                 </div>
                 
-                <div className="flex justify-end gap-3 p-5 border-t border-gray-100 shrink-0 bg-gray-50">
-                    <button onClick={() => setIsBulkEditOpen(false)} className="flex-1 sm:flex-none px-6 py-4 sm:py-3 bg-white border border-gray-200 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
-                    <button onClick={handleBulkEditSave} className="flex-1 sm:flex-none px-8 py-4 sm:py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 transition-all active:scale-95 text-xs uppercase tracking-widest">Apply to {selectedProducts.length}</button>
+                <div className="flex justify-end gap-3 p-4 md:p-6 border-t border-gray-100 shrink-0 bg-gray-50">
+                    <button onClick={() => setIsBulkEditOpen(false)} className="flex-1 sm:flex-none px-6 py-4 md:py-3 bg-white border border-gray-200 text-gray-600 font-bold rounded-2xl md:rounded-xl hover:bg-gray-100 transition-all active:scale-95 text-xs uppercase tracking-widest shadow-sm">Cancel</button>
+                    <button onClick={handleBulkEditSave} className="flex-[2] sm:flex-none px-8 py-4 md:py-3 bg-blue-600 text-white font-black rounded-2xl md:rounded-xl shadow-xl hover:bg-blue-700 transition-all active:scale-95 text-xs uppercase tracking-widest shadow-blue-600/30">Apply to {selectedProducts.length}</button>
                 </div>
             </div>
           </div>
         )}
 
-        {/* MODAL (MASTERLIST) */}
+        {/* ==========================================
+            ADD / EDIT PRODUCT MODAL (Full Screen on Mobile)
+            ========================================== */}
         {isModalOpen && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in zoom-in duration-200">
-            <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl w-full max-w-3xl overflow-y-auto max-h-[95vh] border border-gray-100 flex flex-col">
-              <div className="flex justify-between items-center mb-6 flex-shrink-0 border-b border-gray-100 pb-4">
-                  <h2 className="text-xl md:text-2xl font-black text-gray-800 uppercase tracking-tight">{editingProduct ? 'Edit Product' : 'Add New Product'}</h2>
-                  <button onClick={closeModal} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+          <div className="fixed inset-0 bg-gray-50 md:bg-black/60 backdrop-blur-sm flex items-end md:items-center justify-center z-[110] md:p-8 animate-in slide-in-from-bottom-full md:zoom-in duration-300">
+            <div className="bg-white rounded-none md:rounded-[2.5rem] shadow-2xl w-full max-w-3xl overflow-hidden h-[100dvh] md:h-auto md:max-h-[95vh] border-none md:border border-gray-100 flex flex-col pb-safe">
+              
+              {/* Modal Header */}
+              <div className="flex justify-between items-center px-4 md:px-8 py-4 md:py-6 border-b border-gray-100 shrink-0 bg-white z-20" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
+                  <div className="flex items-center gap-3">
+                      <button onClick={closeModal} className="md:hidden p-2 bg-gray-50 rounded-full text-green-600 active:scale-95 border border-gray-100"><ChevronLeftIcon className="w-5 h-5 stroke-2"/></button>
+                      <h2 className="text-lg md:text-2xl font-black text-gray-800 uppercase tracking-tight">{editingProduct ? 'Edit Product' : 'Add New Product'}</h2>
+                  </div>
+                  <button onClick={closeModal} className="hidden md:flex text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full items-center justify-center transition-all pb-1">×</button>
               </div>
-              <form onSubmit={handleSubmit} className="space-y-6 overflow-y-auto flex-1 pr-2 custom-scrollbar">
-                <div className="space-y-4">
-                    <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2">Basic Information</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="col-span-1"><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Code</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 bg-gray-50 font-mono text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all font-bold" value={formData.ProductCode} onChange={(e) => setFormData({...formData, ProductCode: e.target.value})} required disabled={!!editingProduct} placeholder="e.g. A001" /></div>
-                        <div className="col-span-1 md:col-span-2"><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Product Name</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black text-gray-800 uppercase focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.ProductName} onChange={(e) => setFormData({...formData, ProductName: e.target.value})} required placeholder="e.g. AUSTRALIAN CARROTS" /></div>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Category</label><input type="text" list="modal-categories" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black uppercase bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.Category} onChange={(e) => setFormData({...formData, Category: e.target.value})} placeholder="CATEGORY..." required /><datalist id="modal-categories">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist></div>
-                        <div><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Origin</label><input type="text" list="modal-origins" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black uppercase bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.origin} onChange={(e) => setFormData({...formData, origin: e.target.value})} placeholder="e.g. MALAYSIA" /><datalist id="modal-origins">{uniqueOrigins.map(o => <option key={o} value={o} />)}</datalist></div>
-                        <div><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Allowed UOMs</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-bold uppercase focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" placeholder="e.g. KG, PKT, CTN" value={formData.AllowedUOMs} onChange={(e) => setFormData({...formData, AllowedUOMs: e.target.value})} required /></div>
-                    </div>
+              
+              <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden relative z-10">
+                <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 md:space-y-8 custom-scrollbar bg-gray-50/30 md:bg-transparent">
+                  
+                  {/* Basic Information Block */}
+                  <div className="bg-white p-4 md:p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
+                      <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 pb-2">Basic Information</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div className="col-span-1">
+                              <label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Product Code</label>
+                              <input type="text" className="w-full border border-gray-200 rounded-2xl p-4 bg-gray-50 font-mono text-base md:text-sm focus:bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all font-bold shadow-inner disabled:opacity-60" value={formData.ProductCode} onChange={(e) => setFormData({...formData, ProductCode: e.target.value})} required disabled={!!editingProduct} placeholder="e.g. A001" />
+                          </div>
+                          <div className="col-span-1 md:col-span-2">
+                              <label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Product Name</label>
+                              <input type="text" className="w-full border border-gray-200 rounded-2xl p-4 text-base md:text-sm font-black text-gray-800 uppercase focus:outline-none focus:ring-2 focus:ring-green-500 transition-all shadow-sm" value={formData.ProductName} onChange={(e) => setFormData({...formData, ProductName: e.target.value})} required placeholder="e.g. AUSTRALIAN CARROTS" />
+                          </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                              <label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Category</label>
+                              <input type="text" list="modal-categories" className="w-full border border-gray-200 rounded-2xl p-4 text-base md:text-sm font-black uppercase bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all shadow-sm" value={formData.Category} onChange={(e) => setFormData({...formData, Category: e.target.value})} placeholder="CATEGORY..." required />
+                              <datalist id="modal-categories">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist>
+                          </div>
+                          <div>
+                              <label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Origin</label>
+                              <input type="text" list="modal-origins" className="w-full border border-gray-200 rounded-2xl p-4 text-base md:text-sm font-black uppercase bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all shadow-sm" value={formData.origin} onChange={(e) => setFormData({...formData, origin: e.target.value})} placeholder="e.g. MALAYSIA" />
+                              <datalist id="modal-origins">{uniqueOrigins.map(o => <option key={o} value={o} />)}</datalist>
+                          </div>
+                          <div>
+                              <label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Allowed UOMs</label>
+                              <input type="text" className="w-full border border-gray-200 rounded-2xl p-4 text-base md:text-sm font-bold uppercase focus:outline-none focus:ring-2 focus:ring-green-500 transition-all shadow-sm" placeholder="e.g. KG, PKT, CTN" value={formData.AllowedUOMs} onChange={(e) => setFormData({...formData, AllowedUOMs: e.target.value})} required />
+                          </div>
+                      </div>
+                  </div>
+
+                  {/* Unit Settings Block */}
+                  <div className="bg-white p-4 md:p-6 rounded-3xl border border-gray-200 shadow-sm space-y-4">
+                      <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 pb-2">Unit Settings</h3>
+                      <div className="p-4 md:p-6 bg-blue-50/50 rounded-2xl border border-blue-100 shadow-sm">
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                              <div>
+                                  <label className="block text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1.5 ml-1">Base UOM</label>
+                                  <select className="w-full border border-blue-200 rounded-xl p-3.5 text-base md:text-sm font-black uppercase text-blue-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-all" value={formData.BaseUOM} onChange={(e) => setFormData({...formData, BaseUOM: e.target.value})}>{getUOMOptions().map(u => <option key={u} value={u}>{u}</option>)}</select>
+                              </div>
+                              <div>
+                                  <label className="block text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1.5 ml-1">Sales Default</label>
+                                  <select className="w-full border border-blue-200 rounded-xl p-3.5 text-base md:text-sm font-bold uppercase bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-all" value={formData.SalesUOM} onChange={(e) => setFormData({...formData, SalesUOM: e.target.value})}>{getUOMOptions().map(u => <option key={u} value={u}>{u}</option>)}</select>
+                              </div>
+                              <div>
+                                  <label className="block text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1.5 ml-1">Purchase Default</label>
+                                  <select className="w-full border border-blue-200 rounded-xl p-3.5 text-base md:text-sm font-bold uppercase bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-all" value={formData.PurchaseUOM} onChange={(e) => setFormData({...formData, PurchaseUOM: e.target.value})}>{getUOMOptions().map(u => <option key={u} value={u}>{u}</option>)}</select>
+                              </div>
+                          </div>
+                          {getSecondaryUOMs().length > 0 ? (
+                              <div className="mt-6 pt-4 border-t border-blue-100">
+                                  <h4 className="text-[10px] font-black text-blue-600 mb-3 uppercase tracking-widest">Conversion Rates</h4>
+                                  <div className="space-y-3">{getSecondaryUOMs().map(uom => (<div key={uom} className="flex items-center gap-3 bg-white p-3 md:p-4 rounded-xl border border-blue-100 shadow-sm"><span className="font-black text-gray-800 text-sm w-16 text-right">1 {uom}</span><span className="text-gray-300 font-bold">=</span><input type="number" step="0.01" inputMode="decimal" className="border border-gray-200 p-3 rounded-lg text-center font-black text-base md:text-sm text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 w-full bg-gray-50 shadow-inner" value={conversionFactors[uom] || ''} onChange={(e) => setConversionFactors({...conversionFactors, [uom]: e.target.value})} placeholder="?" required /><span className="text-xs font-black text-gray-500 uppercase shrink-0">{formData.BaseUOM}</span></div>))}</div>
+                              </div>
+                          ) : <div className="mt-4 pt-4 border-t border-blue-100 text-[10px] font-bold text-blue-400 italic text-center">Single unit type detected.</div>}
+                      </div>
+                  </div>
                 </div>
-                <div className="space-y-4">
-                    <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2">Unit Settings</h3>
-                    <div className="p-5 md:p-6 bg-blue-50/50 rounded-2xl border border-blue-100 shadow-sm">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                            <div><label className="block text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1.5 ml-1">Base UOM</label><select className="w-full border border-blue-200 rounded-xl p-3 text-xs font-black uppercase text-blue-900 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-all" value={formData.BaseUOM} onChange={(e) => setFormData({...formData, BaseUOM: e.target.value})}>{getUOMOptions().map(u => <option key={u} value={u}>{u}</option>)}</select></div>
-                            <div><label className="block text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1.5 ml-1">Sales Default</label><select className="w-full border border-blue-200 rounded-xl p-3 text-xs font-bold uppercase bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-all" value={formData.SalesUOM} onChange={(e) => setFormData({...formData, SalesUOM: e.target.value})}>{getUOMOptions().map(u => <option key={u} value={u}>{u}</option>)}</select></div>
-                            <div><label className="block text-[9px] font-black text-blue-500 uppercase tracking-widest mb-1.5 ml-1">Purchase Default</label><select className="w-full border border-blue-200 rounded-xl p-3 text-xs font-bold uppercase bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm transition-all" value={formData.PurchaseUOM} onChange={(e) => setFormData({...formData, PurchaseUOM: e.target.value})}>{getUOMOptions().map(u => <option key={u} value={u}>{u}</option>)}</select></div>
-                        </div>
-                        {getSecondaryUOMs().length > 0 ? (
-                            <div className="mt-6 pt-4 border-t border-blue-100">
-                                <h4 className="text-[10px] font-black text-blue-600 mb-3 uppercase tracking-widest">Conversion Rates</h4>
-                                <div className="space-y-2">{getSecondaryUOMs().map(uom => (<div key={uom} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-blue-100 shadow-sm"><span className="font-black text-gray-800 text-sm w-16 text-right">1 {uom}</span><span className="text-gray-300 font-bold">=</span><input type="number" step="0.01" className="border border-gray-200 p-2.5 rounded-lg text-center font-black text-blue-600 outline-none focus:ring-2 focus:ring-blue-500 text-sm w-24 bg-gray-50" value={conversionFactors[uom] || ''} onChange={(e) => setConversionFactors({...conversionFactors, [uom]: e.target.value})} placeholder="?" required /><span className="text-xs font-black text-gray-500 uppercase">{formData.BaseUOM}</span></div>))}</div>
-                            </div>
-                        ) : <div className="mt-4 pt-4 border-t border-blue-100 text-[10px] font-bold text-blue-400 italic text-center">Single unit type detected.</div>}
-                    </div>
-                </div>
-                <div className="flex justify-end gap-3 pt-6 border-t border-gray-100 mt-auto flex-shrink-0">
-                  <button type="button" onClick={closeModal} className="px-6 py-4 bg-gray-100 text-gray-600 font-black uppercase tracking-widest rounded-2xl hover:bg-gray-200 transition-all active:scale-95 text-xs">Cancel</button>
-                  <button type="submit" className="px-8 py-4 bg-green-600 text-white font-black uppercase tracking-widest rounded-2xl shadow-xl hover:bg-green-700 active:scale-95 text-xs">{editingProduct ? 'Save Changes' : 'Create Product'}</button>
+                
+                {/* Modal Footer - Fixed Bottom */}
+                <div className="flex justify-end gap-3 p-4 md:p-6 border-t border-gray-100 mt-auto flex-shrink-0 bg-white shadow-[0_-10px_20px_rgba(0,0,0,0.05)] md:shadow-none relative z-20">
+                  <button type="button" onClick={closeModal} className="flex-1 md:flex-none px-6 py-4 md:py-3 bg-gray-50 text-gray-600 font-black uppercase tracking-widest rounded-2xl md:rounded-xl border border-gray-200 hover:bg-gray-100 transition-all active:scale-95 text-xs">Cancel</button>
+                  <button type="submit" className="flex-[2] md:flex-none px-8 py-4 md:py-3 bg-green-600 text-white font-black uppercase tracking-widest rounded-2xl md:rounded-xl shadow-xl hover:bg-green-700 active:scale-95 text-xs flex items-center justify-center shadow-green-600/30">{editingProduct ? 'Save Changes' : 'Create Product'}</button>
                 </div>
               </form>
             </div>
