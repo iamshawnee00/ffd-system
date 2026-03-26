@@ -21,7 +21,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
   const isClientPortal = pathname.startsWith('/client-portal');
   const isLogin = pathname === '/login';
 
-  // 1. 如果是客户端门户或登录页，返回无侧边栏布局
+  // 1. If client portal or login, return layout without sidebar
   if (isClientPortal || isLogin) {
     return (
       <main className="w-full bg-gray-50 h-[100dvh] overflow-y-auto overflow-x-hidden overscroll-none print:h-auto print:overflow-visible">
@@ -30,11 +30,11 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // 2. 内部员工布局 (带有桌面侧边栏 + 手机端底部导航)
+  // 2. Internal Layout (Desktop Sidebar + Mobile Bottom Nav)
   return (
     <div className="flex flex-col md:flex-row h-[100dvh] overflow-hidden bg-gray-100 overscroll-none print:h-auto print:overflow-visible print:block relative">
       
-      {/* 桌面端侧边栏 */}
+      {/* Desktop Sidebar */}
       <div 
         className={`print:hidden hidden md:block flex-shrink-0 transition-all duration-300 h-full ${
           isCollapsed ? 'w-20' : 'w-72'
@@ -43,18 +43,13 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
         <Sidebar />
       </div>
       
-      {/* 手机端顶部导航区 (保留原有 Sidebar 中的顶部栏逻辑) */}
-      <div className="md:hidden print:hidden flex-none z-50">
-        <Sidebar />
-      </div>
-      
-      {/* 主内容区：独立滚动，彻底脱离原生 Body 滚动 */}
-      {/* 更改：增加了 pb-[80px] 为底部的 MobileNavigation 留出空间，防止遮挡内容 */}
-      <main className="flex-1 w-full h-full overflow-y-auto overflow-x-hidden md:pt-0 pt-[72px] pb-[80px] md:pb-0 overscroll-none print:h-auto print:overflow-visible print:block print:pt-0">
+      {/* Main Content Area */}
+      {/* Removed mobile top nav/sidebar and removed top padding to match */}
+      <main className="flex-1 w-full h-full overflow-y-auto overflow-x-hidden pb-[80px] md:pb-0 overscroll-none print:h-auto print:overflow-visible print:block print:pt-0">
         {children}
       </main>
 
-      {/* 手机端独有的底部导航栏 */}
+      {/* Mobile Bottom Navigation */}
       <MobileNavigation />
       
     </div>
@@ -62,7 +57,7 @@ function LayoutContent({ children }: { children: React.ReactNode }) {
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // 注册 Service Worker 以激活 PWA 安装功能
+  // Register Service Worker for PWA
   useEffect(() => {
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
@@ -78,7 +73,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     }
   }, []);
 
-  // 原生 App 体验优化：强制禁用双指缩放和双击缩放
+  // Native App Experience Optimizations: Disable pinch-to-zoom and double-tap zoom
   useEffect(() => {
     const preventPinchZoom = (e: TouchEvent) => {
       if (e.touches.length > 1) {
