@@ -14,13 +14,15 @@ import {
   PlusCircleIcon, 
   XMarkIcon,
   ChevronDownIcon,
+  ChevronLeftIcon, // <-- FIXED: Added missing icon import for the mobile cart!
   MagnifyingGlassIcon,
   MinusIcon,
   PlusIcon,
   ShoppingCartIcon,
   UserCircleIcon,
   ClipboardDocumentListIcon,
-  ArrowPathIcon
+  ArrowPathIcon,
+  CheckIcon
 } from '@heroicons/react/24/outline';
 
 const DAYS_OF_WEEK = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -341,47 +343,38 @@ export default function NewOrderPage() {
     return matchesCat && matchesSearch;
   }).slice(0, 30), [products, activeCategory, searchTerm]);
 
-  if (loading) return <div className="p-10 flex items-center justify-center h-screen font-black text-gray-300 animate-pulse uppercase">Booting New Order Engine...</div>;
+  if (loading) return <div className="p-10 flex items-center justify-center h-screen font-black text-gray-300 animate-pulse uppercase tracking-widest">Booting New Order Engine...</div>;
 
   return (
-    <div className="p-3 md:p-8 max-w-full overflow-x-clip min-h-screen bg-gray-50/50 pb-40 md:pb-32 font-sans relative">
+    <div className="p-3 md:p-8 max-w-full overflow-x-clip min-h-[100dvh] bg-gray-50/50 pb-32 md:pb-32 font-sans relative">
       
-      <style jsx global>{`
-        input, select, textarea { font-size: 16px !important; }
-        @supports (-webkit-touch-callout: none) { .h-screen { height: -webkit-fill-available; } }
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
-      `}</style>
-
       {/* Header */}
-      <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"> 
+      <div className="mb-4 md:mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3"> 
          <div>
              <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight uppercase leading-none">Order Management</h1> 
-             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-2">Manage single-session and historical orders</p> 
+             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1.5 md:mt-2">Manage single-session and historical orders</p> 
          </div>
-         <div className="text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm">
+         <div className="hidden sm:block text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm">
              User: {currentUser || 'GUEST'}
          </div>
       </div>
 
-      {/* SUB-NAVIGATION BAR (Route-based Tabs) */}
-      <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200">
-          <Link 
-              href="/orders/new" 
-              className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/new' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
-          >
+      {/* MOBILE iOS-STYLE SEGMENTED TABS */}
+      <div className="md:hidden flex bg-gray-200/80 p-1 rounded-xl mb-4 shrink-0 shadow-inner">
+         <Link href="/orders/new" className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all text-center ${cleanPath === '/orders/new' ? 'bg-white text-green-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>New Order</Link>
+         <Link href="/orders/list" className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all text-center ${cleanPath === '/orders/list' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>History</Link>
+         <Link href="/orders/standing" className={`flex-1 py-2 text-[11px] font-bold rounded-lg transition-all text-center ${cleanPath === '/orders/standing' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>Auto-Pilot</Link>
+      </div>
+
+      {/* DESKTOP TABS */}
+      <div className="hidden md:flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-gray-200">
+          <Link href="/orders/new" className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/new' ? 'bg-green-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
               <PlusCircleIcon className="w-5 h-5" /> New Order
           </Link>
-          <Link 
-              href="/orders/list" 
-              className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
-          >
+          <Link href="/orders/list" className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/list' ? 'bg-blue-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
               <ClipboardDocumentListIcon className="w-5 h-5" /> Order History
           </Link>
-          <Link 
-              href="/orders/standing" 
-              className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/standing' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
-          >
+          <Link href="/orders/standing" className={`px-6 py-3 rounded-t-2xl font-black text-sm transition-all whitespace-nowrap flex items-center gap-2 ${cleanPath === '/orders/standing' ? 'bg-indigo-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}>
               <ArrowPathIcon className="w-5 h-5" /> Auto-Pilot
           </Link>
       </div>
@@ -389,81 +382,93 @@ export default function NewOrderPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-6 animate-in fade-in duration-300 relative items-start">
         <div className="lg:col-span-2 space-y-4 md:space-y-6">
           
-          {/* Customer Selection Box */}
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-2"> 
-            <div 
-               className="px-4 py-3.5 flex justify-between items-center cursor-pointer bg-white hover:bg-gray-50 transition-colors"
-               onClick={() => setIsCustomerBoxOpen(!isCustomerBoxOpen)}
-            >
-               <div className="flex items-center gap-3">
-                   <UserCircleIcon className="w-5 h-5 text-gray-400 shrink-0" />
-                   <div className="flex flex-col">
-                       <span className="text-sm font-semibold text-gray-800 uppercase tracking-wide">
-                           {selectedCustomerValue || 'Select Customer...'}
-                       </span>
-                       {!isCustomerBoxOpen && deliveryDate && (
-                           <span className="text-[10px] font-medium text-gray-500 mt-0.5 uppercase tracking-wider">
-                               {deliveryDate} • {deliveryMode}
-                           </span>
-                       )}
-                   </div>
-               </div>
-               <ChevronDownIcon className={`w-4 h-4 text-gray-400 transition-transform ${isCustomerBoxOpen ? 'rotate-180' : ''}`} />
-            </div>
+          {/* Unified Order Settings Card */}
+          <div className="bg-white rounded-2xl md:rounded-[2rem] border border-gray-200 shadow-sm overflow-hidden flex flex-col mx-1 md:mx-0 transition-all">
+              <div 
+                  className="px-4 py-3 md:py-4 flex justify-between items-center cursor-pointer bg-gray-50/50 hover:bg-gray-50 transition-colors border-b border-gray-100"
+                  onClick={() => setIsCustomerBoxOpen(!isCustomerBoxOpen)}
+              >
+                  <div className="flex items-center gap-3">
+                      <UserCircleIcon className="w-6 h-6 text-gray-400 shrink-0" />
+                      <div className="flex flex-col">
+                          <span className="text-sm md:text-base font-black text-gray-800 uppercase tracking-wide">
+                              {selectedCustomerValue || 'Select Customer...'}
+                          </span>
+                          {!isCustomerBoxOpen && deliveryDate && (
+                              <span className="text-[10px] font-bold text-gray-500 mt-0.5 uppercase tracking-wider">
+                                  {new Date(deliveryDate).toLocaleDateString('en-GB', {weekday:'short', day:'2-digit', month:'short'})} • {deliveryMode}
+                              </span>
+                          )}
+                      </div>
+                  </div>
+                  <ChevronDownIcon className={`w-5 h-5 text-gray-400 transition-transform duration-300 ${isCustomerBoxOpen ? 'rotate-180' : ''}`} />
+              </div>
 
-            {isCustomerBoxOpen && (
-                <div className="px-4 pb-4 bg-white animate-in slide-in-from-top-2 duration-200"> 
-                   <div className="space-y-1 mt-2">
-                      <div className="border-b border-gray-100 py-2.5">
-                         <input list="customer-list" type="text" className="w-full text-sm font-semibold text-gray-900 bg-transparent outline-none placeholder-gray-400 uppercase" value={selectedCustomerValue} onChange={handleCustomerChange} placeholder="SEARCH CUSTOMER / BRANCH..." />
-                         <datalist id="customer-list">{customers.map(c => <option key={c.id} value={c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName} />)}</datalist>
+              {isCustomerBoxOpen && (
+                  <div className="flex flex-col bg-white animate-in slide-in-from-top-2 duration-200">
+                      
+                      {/* Row 1: Customer Search */}
+                      <div className="p-3 border-b border-gray-100 bg-gray-50/30">
+                          <input 
+                              list="customer-list" 
+                              type="text" 
+                              className="w-full text-base md:text-sm font-bold text-gray-900 bg-white border border-gray-200 p-3 rounded-xl outline-none focus:ring-2 focus:ring-green-500 placeholder-gray-400 uppercase shadow-inner" 
+                              value={selectedCustomerValue} 
+                              onChange={handleCustomerChange} 
+                              placeholder="SEARCH CUSTOMER / BRANCH..." 
+                          />
+                          <datalist id="customer-list">{customers.map(c => <option key={c.id} value={c.Branch ? `${c.CompanyName} - ${c.Branch}` : c.CompanyName} />)}</datalist>
                       </div>
                       
-                      <div className="flex gap-4 border-b border-gray-100 py-2.5">
-                         <div className="flex-1 flex items-center gap-2">
-                             <span className="text-[10px] font-bold text-gray-400 w-10 uppercase">Date</span>
-                             <input type="date" className="flex-1 text-sm font-semibold text-gray-800 bg-transparent outline-none" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
-                         </div>
-                         <div className="w-[1px] bg-gray-100 my-1"></div>
-                         <div className="flex-1 flex items-center gap-2">
-                             <span className="text-[10px] font-bold text-gray-400 w-10 uppercase">Mode</span>
-                             <select className="flex-1 text-sm font-semibold text-gray-800 bg-transparent outline-none" value={deliveryMode} onChange={e => setDeliveryMode(e.target.value)}>
-                                 <option value="Driver">Driver</option>
-                                 <option value="Lalamove">Lalamove</option>
-                                 <option value="Self Pick-up">Pick-up</option>
-                             </select>
-                         </div>
+                      {/* Row 2: Mode & Date */}
+                      <div className="flex border-b border-gray-100 bg-white">
+                          <div className="flex-[1.2] flex flex-col border-r border-gray-100 p-3">
+                              <label className="text-[9px] font-black text-gray-400 uppercase px-1 mb-1">Delivery Date</label>
+                              <input type="date" className="w-full text-base md:text-sm font-bold text-gray-800 outline-none bg-transparent px-1 focus:text-green-600 transition-colors" value={deliveryDate} onChange={e => setDeliveryDate(e.target.value)} />
+                          </div>
+                          <div className="flex-1 flex flex-col border-r border-gray-100 p-3">
+                              <label className="text-[9px] font-black text-gray-400 uppercase px-1 mb-1">Mode</label>
+                              <select className="w-full text-base md:text-sm font-bold text-gray-800 outline-none bg-transparent px-0 focus:text-green-600 transition-colors" value={deliveryMode} onChange={e => setDeliveryMode(e.target.value)}>
+                                  <option value="Driver">Driver</option><option value="Lalamove">Lalamove</option><option value="Self Pick-up">Pick-up</option>
+                              </select>
+                          </div>
+                          <div className="flex-1 flex flex-col p-3">
+                              <label className="text-[9px] font-black text-gray-400 uppercase px-1 mb-1">Channel</label>
+                              <select className="w-full text-base md:text-sm font-bold text-gray-800 outline-none bg-transparent px-0 focus:text-green-600 transition-colors" value={salesChannel} onChange={(e) => setSalesChannel(e.target.value)}>
+                                  <option>Online / FnB</option><option>Wholesale</option><option>Outlet</option>
+                              </select>
+                          </div>
                       </div>
                       
-                      <div className="flex gap-4 border-b border-gray-100 py-2.5">
-                         <input type="text" className="flex-1 text-sm font-medium text-gray-800 bg-transparent outline-none placeholder-gray-400" value={custDetails.ContactPerson} onChange={(e) => handleDetailChange('ContactPerson', e.target.value)} placeholder="Contact Person" />
-                         <div className="w-[1px] bg-gray-100 my-1"></div>
-                         <input type="text" className="flex-1 text-sm font-medium text-gray-800 bg-transparent outline-none placeholder-gray-400" value={custDetails.ContactNumber} onChange={(e) => handleDetailChange('ContactNumber', e.target.value)} placeholder="Phone Number" />
+                      {/* Row 3: Contact & Phone */}
+                      <div className="flex border-b border-gray-100 bg-white">
+                          <div className="flex-1 flex flex-col border-r border-gray-100 p-3">
+                              <label className="text-[9px] font-black text-gray-400 uppercase px-1 mb-1">Contact Person</label>
+                              <input type="text" className="w-full text-base md:text-sm font-medium text-gray-800 outline-none bg-transparent px-1 placeholder-gray-300 focus:text-green-600 transition-colors" value={custDetails.ContactPerson} onChange={(e) => handleDetailChange('ContactPerson', e.target.value)} placeholder="Name..." />
+                          </div>
+                          <div className="flex-1 flex flex-col p-3">
+                              <label className="text-[9px] font-black text-gray-400 uppercase px-1 mb-1">Phone Number</label>
+                              <input type="tel" className="w-full text-base md:text-sm font-medium text-gray-800 outline-none bg-transparent px-1 placeholder-gray-300 focus:text-green-600 transition-colors" value={custDetails.ContactNumber} onChange={(e) => handleDetailChange('ContactNumber', e.target.value)} placeholder="012-345..." />
+                          </div>
                       </div>
 
-                      <div className="border-b border-gray-100 py-2.5">
-                         <input type="text" className="w-full text-sm font-medium text-gray-800 bg-transparent outline-none placeholder-gray-400" value={custDetails.DeliveryAddress} onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)} placeholder="Full Delivery Address..." />
+                      {/* Row 4: Address */}
+                      <div className="p-3 bg-white">
+                          <label className="text-[9px] font-black text-gray-400 uppercase px-1 mb-1 block">Full Delivery Address</label>
+                          <input type="text" className="w-full text-base md:text-sm font-medium text-gray-800 outline-none bg-transparent px-1 placeholder-gray-300 focus:text-green-600 transition-colors" value={custDetails.DeliveryAddress} onChange={(e) => handleDetailChange('DeliveryAddress', e.target.value)} placeholder="Street, City, Postal Code..." />
                       </div>
-
-                      <div className="flex items-center gap-3 py-2.5">
-                         <span className="text-[10px] font-bold text-gray-400 uppercase w-16">Channel</span>
-                         <select className="flex-1 text-sm font-semibold text-gray-800 bg-transparent outline-none" value={salesChannel} onChange={(e) => setSalesChannel(e.target.value)}>
-                             <option>Online / FnB</option><option>Wholesale</option><option>Outlet</option>
-                         </select>
-                      </div>
-                   </div>
-                </div>
-            )}
+                  </div>
+              )}
           </div>
 
           {/* Quick Add Items */}
           {selectedCustomerValue && quickAddItems.length > 0 && (
-             <div className="animate-in slide-in-from-left-4 duration-500">
-                <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1 custom-scrollbar snap-x">
+             <div className="animate-in slide-in-from-left-4 duration-500 mx-1 md:mx-0">
+                <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar snap-x">
                     {quickAddItems.map(p => (
-                        <button key={p.ProductCode} onClick={() => addToCart(p, 1)} className="snap-start shrink-0 bg-white border border-orange-200 p-2.5 rounded-xl shadow-sm flex flex-col items-center gap-1.5 hover:border-orange-400 active:scale-95 transition-all w-24 group">
-                            <span className="text-[9px] font-black text-gray-800 uppercase line-clamp-2 text-center h-6 leading-tight group-hover:text-orange-600 transition-colors">{p.ProductName}</span>
-                            <div className="text-[8px] text-gray-400 font-bold">{p.BaseUOM}</div>
+                        <button key={p.ProductCode} onClick={() => addToCart(p, 1)} className="snap-start shrink-0 bg-white border border-green-200 p-3 rounded-2xl shadow-sm flex flex-col items-center justify-center gap-1.5 hover:border-green-400 active:scale-95 transition-all w-[100px] h-[80px] group">
+                            <span className="text-[9px] font-black text-gray-800 uppercase line-clamp-2 text-center leading-tight group-hover:text-green-600 transition-colors">{p.ProductName}</span>
+                            <div className="text-[8px] text-gray-400 font-bold mt-auto bg-gray-50 px-2 py-0.5 rounded-md border border-gray-100">{p.BaseUOM}</div>
                         </button>
                     ))}
                 </div>
@@ -471,36 +476,87 @@ export default function NewOrderPage() {
           )}
 
           {/* Product Catalog & Search */}
-          <div className="space-y-3">
-             <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1 custom-scrollbar">
-                {categories.map(cat => (
-                    <button key={cat} onClick={() => setActiveCategory(cat)} className={`shrink-0 px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all ${activeCategory === cat ? 'bg-gray-800 text-white border-gray-800 shadow-md' : 'bg-white text-gray-400 border-gray-100 hover:border-gray-400'}`}>{cat}</button>
-                ))}
-             </div>
-
-             <div className="sticky top-0 md:top-[72px] z-10 bg-gray-50/90 backdrop-blur-md py-2 -mx-3 px-3 md:mx-0 md:px-0">
-                <div className="relative shadow-sm rounded-xl overflow-hidden">
-                    <input type="text" placeholder="Search catalog..." className="w-full pl-10 p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 text-base md:text-sm font-bold bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-                    <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+          <div className="space-y-3 mx-1 md:mx-0 relative z-0">
+             
+             {/* FIXED: Sticky Search Header (top-0 with z-40 so it stays above product cards) */}
+             <div className="sticky top-0 z-[40] bg-gray-50/95 backdrop-blur-md py-3 -mx-2 px-2 md:mx-0 md:px-0 shadow-sm md:shadow-none">
+                <div className="flex flex-col gap-3">
+                    <div className="relative shadow-sm md:shadow-none rounded-xl overflow-hidden">
+                        <input type="text" placeholder="Search catalog..." className="w-full pl-11 p-3.5 md:p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-green-500 text-base md:text-sm font-bold bg-white outline-none" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+                    </div>
+                    {/* Category Pills */}
+                    <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
+                        {categories.map(cat => (
+                            <button key={cat} onClick={() => setActiveCategory(cat)} className={`shrink-0 px-4 py-2 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-widest border transition-all active:scale-95 ${activeCategory === cat ? 'bg-[#0f172a] text-white border-[#0f172a] shadow-md' : 'bg-white text-gray-500 border-gray-200 hover:border-gray-400 shadow-sm'}`}>{cat}</button>
+                        ))}
+                    </div>
                 </div>
              </div>
              
-             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-6 md:pb-0">
+             {/* Product Grid */}
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 md:gap-4 pb-6 md:pb-0">
                 {filteredProducts.map(p => {
                     const inputs = productInputs[p.ProductCode] || {};
                     const uoms = Array.from(new Set(p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()) : [p.BaseUOM]));
                     return (
-                      <div key={p.ProductCode} className="bg-white p-3 rounded-2xl border border-gray-200 shadow-sm relative group active:scale-[0.98] flex flex-col justify-between hover:border-green-400 transition-all">
-                          <div className={`absolute top-0 right-0 px-3 py-1 rounded-bl-2xl text-[8px] font-black uppercase ${getStockColor(p.StockBalance)}`}>BAL: {p.StockBalance || '0'} {p.BaseUOM}</div>
-                          <div className="pr-12 mb-2"><h3 className="font-black text-gray-800 text-xs uppercase leading-tight line-clamp-2">{p.ProductName}</h3><p className="text-[9px] text-gray-400 font-mono mt-0.5 tracking-widest">{p.ProductCode}</p></div>
-                          <div className="flex gap-2 mb-2 bg-gray-50 p-1.5 rounded-xl border border-gray-100">
-                              <select className="bg-white border border-gray-200 rounded-lg text-sm p-1.5 flex-1 font-black uppercase outline-none focus:ring-1 focus:ring-green-500" value={inputs.uom || p.SalesUOM || p.BaseUOM} onChange={(e) => handleProductInputChange(p.ProductCode, 'uom', e.target.value)}>{uoms.map(u => <option key={u} value={u}>{u}</option>)}</select>
-                              <input type="number" placeholder="QTY" className="w-14 border border-gray-200 bg-white rounded-lg text-sm p-1.5 font-black text-center outline-none focus:ring-2 focus:ring-green-500" value={inputs.qty || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'qty', e.target.value)} />
+                      <div key={p.ProductCode} className="bg-white p-3 md:p-4 rounded-2xl border border-gray-200 shadow-sm relative group flex flex-col justify-between hover:border-green-400 transition-all z-10">
+                          <div className={`absolute top-0 right-0 px-3 py-1.5 rounded-bl-2xl rounded-tr-2xl text-[8px] font-black uppercase tracking-widest ${getStockColor(p.StockBalance)}`}>BAL: {p.StockBalance || '0'} {p.BaseUOM}</div>
+                          
+                          <div className="pr-16 mb-3">
+                              <h3 className="font-black text-gray-800 text-sm uppercase leading-tight line-clamp-2">{p.ProductName}</h3>
+                              <p className="text-[9px] text-gray-400 font-mono mt-1 tracking-widest bg-gray-50 w-fit px-1.5 py-0.5 rounded border border-gray-100">{p.ProductCode}</p>
                           </div>
-                          <div className="flex items-center gap-2 mt-auto">
-                              <label className="flex items-center gap-1 cursor-pointer p-1.5 bg-gray-50 rounded-lg border border-gray-100"><input type="checkbox" className="w-3.5 h-3.5 text-red-500 rounded border-gray-300" checked={inputs.replacement || false} onChange={(e) => handleProductInputChange(p.ProductCode, 'replacement', e.target.checked)} /> <span className="text-[8px] font-black text-red-500 uppercase tracking-widest">REP</span></label>
-                              <div className="flex-1 relative"><span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-gray-400">RM</span><input type="number" step="0.01" className="w-full pl-6 pr-2 py-1.5 text-sm border border-gray-200 rounded-lg text-right font-black outline-none disabled:bg-gray-100 focus:ring-2 focus:ring-green-500" disabled={inputs.replacement} value={inputs.price || ''} onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)} placeholder="0.00" /></div>
-                              <button onClick={() => addToCart(p)} className="bg-green-600 hover:bg-green-700 text-white rounded-xl w-10 h-10 flex items-center justify-center font-bold shadow-md active:scale-90 shrink-0 transition-transform"><PlusIcon className="w-5 h-5" strokeWidth={3} /></button>
+                          
+                          {/* Decoupled Controls Row */}
+                          <div className="flex flex-col gap-2 mt-auto">
+                              
+                              {/* Top row: Stepper & UOM */}
+                              <div className="flex gap-2 h-[42px] md:h-10">
+                                  {/* QTY Stepper */}
+                                  <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1 flex-[1.2]">
+                                      <button onClick={() => handleProductInputChange(p.ProductCode, 'qty', Math.max(0.1, (Number(inputs.qty) || 1) - 1).toFixed(1).replace(/\.0$/, ''))} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded-lg shadow-sm active:bg-gray-100 transition-colors shrink-0"><MinusIcon className="w-4 h-4 stroke-2"/></button>
+                                      <input type="number" step="0.1" inputMode="decimal" className="w-full text-center font-black text-base md:text-sm bg-transparent outline-none focus:ring-0 mx-1" value={inputs.qty || ''} placeholder="1" onChange={(e) => handleProductInputChange(p.ProductCode, 'qty', e.target.value)} />
+                                      <button onClick={() => handleProductInputChange(p.ProductCode, 'qty', ((Number(inputs.qty) || 1) + 1).toFixed(1).replace(/\.0$/, ''))} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded-lg shadow-sm active:bg-gray-100 transition-colors shrink-0"><PlusIcon className="w-4 h-4 stroke-2"/></button>
+                                  </div>
+                                  
+                                  {/* UOM */}
+                                  <select className="bg-white border border-gray-200 rounded-xl text-base md:text-sm px-2 flex-1 font-black uppercase outline-none focus:ring-2 focus:ring-green-500 shadow-sm" value={inputs.uom || p.SalesUOM || p.BaseUOM} onChange={(e) => handleProductInputChange(p.ProductCode, 'uom', e.target.value)}>
+                                      {uoms.map(u => <option key={u} value={u}>{u}</option>)}
+                                  </select>
+                              </div>
+
+                              {/* Bottom row: Price, Replace, Add */}
+                              <div className="flex items-center gap-2 h-[42px] md:h-10 mt-1">
+                                  {/* iOS Style Toggle Switch for Replace */}
+                                  <label className="relative inline-flex items-center cursor-pointer group bg-gray-50 px-2 rounded-xl border border-gray-100 h-full">
+                                      <input 
+                                          type="checkbox" 
+                                          className="sr-only peer" 
+                                          checked={inputs.replacement || false} 
+                                          onChange={(e) => handleProductInputChange(p.ProductCode, 'replacement', e.target.checked)} 
+                                      />
+                                      <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-[16px] peer-checked:after:border-white after:content-[''] after:absolute after:top-[12px] md:after:top-[11px] after:left-[10px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-red-500 shadow-inner"></div>
+                                      <span className="ml-1.5 text-[9px] font-black text-red-500 uppercase tracking-widest transition-colors">REP</span>
+                                  </label>
+                                  
+                                  {/* PRICE */}
+                                  <div className="flex-[1.5] relative h-full">
+                                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-gray-400 pointer-events-none">RM</span>
+                                      <input 
+                                          type="number" step="0.01" inputMode="decimal"
+                                          className="w-full h-full pl-8 pr-3 text-base md:text-sm border border-gray-200 rounded-xl text-right font-black outline-none disabled:bg-gray-100 disabled:text-gray-400 focus:ring-2 focus:ring-green-500 shadow-sm" 
+                                          disabled={inputs.replacement} 
+                                          value={inputs.price || ''} 
+                                          onChange={(e) => handleProductInputChange(p.ProductCode, 'price', e.target.value)} 
+                                          placeholder="0.00" 
+                                      />
+                                  </div>
+                                  
+                                  <button onClick={() => addToCart(p)} className="bg-[#0f172a] hover:bg-slate-800 text-white rounded-xl w-14 h-full flex items-center justify-center font-bold shadow-md active:scale-95 shrink-0 transition-transform">
+                                      <PlusIcon className="w-6 h-6 stroke-2" />
+                                  </button>
+                              </div>
                           </div>
                       </div>
                     );
@@ -520,22 +576,26 @@ export default function NewOrderPage() {
               
               <div className="flex-1 overflow-y-auto space-y-3 mb-6 custom-scrollbar pr-2 min-h-0">
                   {cart.length === 0 ? <div className="h-full flex flex-col items-center justify-center text-gray-300 italic text-sm border-2 border-dashed border-gray-100 rounded-[2rem]">Cart is empty</div> : cart.map((item) => (
-                    <div key={item.cartId} className="p-3 bg-gray-50/80 border border-gray-100 rounded-xl relative group shrink-0">
-                        <div className="flex justify-between items-start mb-1">
+                    <div key={item.cartId} className="p-4 bg-white border border-gray-100 shadow-sm rounded-2xl relative group shrink-0">
+                        <div className="flex justify-between items-start mb-2">
                             <div className="pr-6 text-[10px] font-black uppercase text-gray-800 leading-tight">{item.ProductName}</div>
-                            <button onClick={() => removeFromCart(item.cartId)} className="text-gray-400 hover:text-red-500 absolute top-2 right-2"><XMarkIcon className="w-4 h-4" /></button>
+                            <button onClick={() => removeFromCart(item.cartId)} className="text-gray-300 hover:text-red-500 absolute top-3 right-3 transition-colors"><XMarkIcon className="w-4 h-4 stroke-2" /></button>
                         </div>
-                        <div className="flex items-center justify-between mt-2">
-                             <div className="flex items-center bg-white border border-gray-200 rounded-lg p-0.5"><button onClick={() => updateCartQty(item.cartId, -1)} className="w-6 h-6 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded"><MinusIcon className="w-3 h-3"/></button><span className="w-6 text-center text-xs font-black">{item.qty}</span><button onClick={() => updateCartQty(item.cartId, 1)} className="w-6 h-6 flex items-center justify-center text-gray-500 hover:bg-gray-100 rounded"><PlusIcon className="w-3 h-3"/></button></div>
-                             <span className="text-[9px] font-black text-gray-500 ml-1 mr-auto">{item.uom}</span>
-                             {item.isReplacement ? <span className="text-[8px] font-black text-white bg-red-400 px-2 py-1 rounded shadow-sm">REP</span> : <span className="text-[10px] font-black text-gray-700 bg-white border border-gray-200 px-2 py-1 rounded">RM {(item.price || 0).toFixed(2)}</span>}
+                        <div className="flex items-center justify-between mt-3">
+                             <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1">
+                                 <button onClick={() => updateCartQty(item.cartId, -1)} className="w-7 h-7 flex items-center justify-center text-gray-500 bg-white shadow-sm hover:bg-gray-100 rounded-lg active:scale-95"><MinusIcon className="w-3 h-3 stroke-2"/></button>
+                                 <span className="w-8 text-center text-xs font-black">{item.qty}</span>
+                                 <button onClick={() => updateCartQty(item.cartId, 1)} className="w-7 h-7 flex items-center justify-center text-gray-500 bg-white shadow-sm hover:bg-gray-100 rounded-lg active:scale-95"><PlusIcon className="w-3 h-3 stroke-2"/></button>
+                             </div>
+                             <span className="text-[10px] font-black text-gray-500 ml-2 mr-auto">{item.uom}</span>
+                             {item.isReplacement ? <span className="text-[9px] font-black text-white bg-red-500 px-2 py-1 rounded shadow-sm tracking-widest">REP</span> : <span className="text-[11px] font-black text-gray-800 bg-gray-50 border border-gray-200 px-2 py-1 rounded-lg">RM {(Number(item.price || 0) * Number(item.qty || 1)).toFixed(2)}</span>}
                         </div>
                         {/* Notes Input */}
-                        <div className="mt-2 pt-2 border-t border-gray-200/50">
+                        <div className="mt-3 pt-3 border-t border-gray-50">
                             <input 
                                 type="text" 
                                 placeholder="Add note (e.g. masak sikit)..." 
-                                className="w-full bg-white border border-gray-200 text-[10px] p-2 rounded-lg outline-none focus:border-green-400 focus:ring-1 focus:ring-green-400 transition-all text-gray-700 placeholder-gray-400"
+                                className="w-full bg-gray-50 border border-gray-200 text-[11px] p-2.5 rounded-xl outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all text-gray-700 placeholder-gray-400 font-medium"
                                 value={item.notes || ''}
                                 onChange={(e) => updateCartNote(item.cartId, e.target.value)}
                             />
@@ -545,30 +605,51 @@ export default function NewOrderPage() {
               </div>
               
               <div className="mt-auto pt-4 border-t border-gray-100 space-y-4 shrink-0 bg-white">
-                  <div className="bg-indigo-50/50 border border-indigo-100 p-3 rounded-2xl">
-                      <label className="flex items-center gap-2 cursor-pointer mb-2">
-                          <input type="checkbox" className="w-4 h-4 text-indigo-600 rounded" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
-                          <span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save as Weekly Pattern</span>
+                  
+                  {/* Desktop Pattern Saving Block */}
+                  <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-2xl">
+                      {/* iOS Style Toggle Switch for Recurring */}
+                      <label className="relative flex items-center cursor-pointer group mb-1">
+                          <input 
+                              type="checkbox" 
+                              className="sr-only peer" 
+                              checked={isRecurring} 
+                              onChange={e => setIsRecurring(e.target.checked)} 
+                          />
+                          <div className="w-11 h-6 bg-indigo-200/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600 shadow-inner"></div>
+                          <span className="ml-3 text-[10px] font-black text-indigo-900 uppercase tracking-widest transition-colors">Save as Weekly Pattern</span>
                       </label>
+
                       {isRecurring && (
-                          <div className="mt-3 animate-in fade-in slide-in-from-top-1 space-y-3 border-t border-indigo-100/50 pt-3">
+                          <div className="mt-4 animate-in fade-in slide-in-from-top-1 space-y-4 border-t border-indigo-100/50 pt-4">
                               <div>
                                   <span className="text-[9px] font-bold text-indigo-500 uppercase tracking-widest ml-1">Generate On:</span>
-                                  <select className="w-full mt-1 border border-indigo-200 p-2 rounded-xl text-xs font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
+                                  <select className="w-full mt-1 border border-indigo-200 p-2.5 rounded-xl text-sm font-black bg-white text-indigo-800 outline-none focus:ring-2 focus:ring-indigo-400 shadow-sm" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
                                       {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
                                   </select>
                               </div>
                               <div>
-                                  <label className="flex items-center gap-2 cursor-pointer">
-                                      <input type="checkbox" className="w-4 h-4 text-orange-500 rounded border-orange-200 focus:ring-orange-500" checked={isConsignment} onChange={e => setIsConsignment(e.target.checked)} />
-                                      <span className="text-[9px] font-black text-orange-800 uppercase tracking-widest leading-tight">Mark as Consignment <span className="block text-[8px] font-bold text-orange-500 mt-0.5">Route Only. Skips DO Printing.</span></span>
+                                  {/* iOS Style Toggle Switch for Consignment */}
+                                  <label className="relative flex items-center cursor-pointer group">
+                                      <input 
+                                          type="checkbox" 
+                                          className="sr-only peer" 
+                                          checked={isConsignment} 
+                                          onChange={e => setIsConsignment(e.target.checked)} 
+                                      />
+                                      <div className="w-9 h-5 bg-orange-200/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-[16px] peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-500 shadow-inner shrink-0 mt-0.5"></div>
+                                      <div className="ml-2 flex flex-col">
+                                          <span className="text-[10px] font-black text-orange-900 uppercase tracking-widest leading-none">Consignment Order</span>
+                                          <span className="text-[8px] font-bold text-orange-500 mt-1">Route Only. Skips DO Printing.</span>
+                                      </div>
                                   </label>
                               </div>
                           </div>
                       )}
                   </div>
-                  <div className="flex justify-between text-xs font-black text-gray-800 px-1 uppercase tracking-widest"><span>Total Products:</span><span className="text-gray-900 text-sm">{cart.length}</span></div>
-                  <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-green-600 hover:bg-green-700 hover:shadow-green-500/30 active:scale-95'}`}>
+
+                  <div className="flex justify-between text-xs font-black text-gray-800 px-1 uppercase tracking-widest"><span>Total Products:</span><span className="text-gray-900 text-sm bg-gray-100 px-2 py-0.5 rounded border border-gray-200">{cart.length}</span></div>
+                  <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none text-gray-500' : 'bg-green-600 hover:bg-green-700 shadow-green-600/30 active:scale-95'}`}>
                       {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & ORDER' : 'CONFIRM ORDER')}
                   </button>
               </div>
@@ -576,91 +657,132 @@ export default function NewOrderPage() {
         </div>
       </div>
 
-      {/* Mobile Cart Floating Bar */}
+      {/* Mobile Cart Floating Bar - Uses bottom-[68px] to float precisely over MobileNavigation */}
       {!isMobileCartOpen && (
-          <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-[200] animate-in slide-in-from-bottom-2" style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
+          <div className="lg:hidden fixed bottom-[68px] left-0 right-0 bg-white/95 backdrop-blur-md border-t border-gray-200 p-3 shadow-[0_-10px_20px_rgba(0,0,0,0.1)] z-[50] animate-in slide-in-from-bottom-2 pb-safe">
               <div className="flex items-center justify-between gap-3 max-w-lg mx-auto">
-                  <button onClick={() => setIsMobileCartOpen(true)} className="flex items-center justify-center gap-3 bg-gray-50 px-4 py-3.5 rounded-xl border border-gray-200 flex-1 active:bg-gray-100 transition-colors">
+                  <button onClick={() => setIsMobileCartOpen(true)} className="flex items-center justify-center gap-3 bg-gray-50 px-4 py-3.5 rounded-2xl border border-gray-200 flex-1 active:bg-gray-100 transition-colors shadow-sm">
                       <div className="relative">
                           <ShoppingCartIcon className="w-6 h-6 text-gray-700" />
                           {cart.length > 0 && (
-                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full shadow-sm">
+                              <span className="absolute -top-1.5 -right-1.5 bg-green-500 text-white text-[9px] font-black w-4 h-4 flex items-center justify-center rounded-full shadow-sm ring-2 ring-white">
                                   {cart.length}
                               </span>
                           )}
                       </div>
                       <div className="flex flex-col items-start leading-none">
-                          <span className="text-[10px] font-bold text-gray-600 uppercase tracking-wide">View Cart</span>
+                          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wide">View Cart</span>
                           <span className="text-xs font-black text-gray-900 mt-1">{cart.length} Products</span>
                       </div>
                   </button>
                   <button 
                       onClick={handleSubmitOrder} 
                       disabled={submitting || cart.length === 0} 
-                      className={`text-white font-black py-3.5 px-6 rounded-xl shadow-lg transition active:scale-95 text-xs uppercase tracking-widest flex-1 ${submitting || cart.length === 0 ? 'bg-gray-300 shadow-none' : 'bg-green-600 hover:bg-green-700'}`}
+                      className={`text-white font-black py-4 px-6 rounded-2xl shadow-xl transition active:scale-95 text-xs uppercase tracking-widest flex-1 ${submitting || cart.length === 0 ? 'bg-gray-300 shadow-none text-gray-500' : 'bg-[#0f172a] shadow-[#0f172a]/30'}`}
                   >
-                      {submitting ? 'PROCESSING...' : 'CONFIRM'}
+                      {submitting ? 'PROCESSING...' : 'CONFIRM ORDER'}
                   </button>
               </div>
           </div>
       )}
 
-      {/* Mobile Cart Modal */}
+      {/* Full-Screen Mobile Cart Modal */}
       {isMobileCartOpen && (
-           <div className="lg:hidden fixed inset-0 bg-white z-[300] flex flex-col h-[100dvh] w-screen overflow-hidden animate-in slide-in-from-bottom-full duration-300">
-              <div className="flex items-center justify-between p-4 border-b border-gray-100 bg-gray-50 shrink-0" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
-                  <div className="flex items-center gap-2"><ShoppingCartIcon className="w-6 h-6 text-green-600" /><h2 className="text-base font-black text-gray-800 uppercase tracking-tight">Review Cart</h2></div>
-                  <button onClick={() => setIsMobileCartOpen(false)} className="p-2 bg-gray-200 rounded-full text-gray-600"><XMarkIcon className="w-5 h-5"/></button>
+           <div className="lg:hidden fixed inset-0 bg-gray-50 z-[300] flex flex-col h-[100dvh] w-screen overflow-hidden animate-in slide-in-from-bottom-full duration-300">
+              {/* Header */}
+              <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-white shrink-0 shadow-sm" style={{ paddingTop: 'calc(1rem + env(safe-area-inset-top))' }}>
+                  <div className="flex items-center gap-3">
+                      <button onClick={() => setIsMobileCartOpen(false)} className="p-2 bg-gray-50 rounded-full text-gray-600 active:scale-95 border border-gray-100"><ChevronLeftIcon className="w-5 h-5 stroke-2"/></button>
+                      <h2 className="text-lg font-black text-gray-800 uppercase tracking-tight flex items-center gap-2"><ShoppingCartIcon className="w-5 h-5 text-gray-400" /> Review Cart</h2>
+                  </div>
+                  <span className="bg-green-100 text-green-700 text-[10px] font-black px-3 py-1 rounded-full uppercase">{cart.length} Items</span>
               </div>
               
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-gray-100/50 custom-scrollbar pb-24">
+              {/* Cart Items */}
+              <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gray-50 custom-scrollbar pb-32">
                   {cart.map((item) => (
-                      <div key={item.cartId} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 relative">
-                          <button onClick={() => removeFromCart(item.cartId)} className="absolute top-3 right-3 text-gray-300 hover:text-red-500 p-1"><XMarkIcon className="w-4 h-4" /></button>
-                          <div className="text-xs font-black uppercase text-gray-800 pr-8 mb-3">{item.ProductName}</div>
+                      <div key={item.cartId} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 relative group">
+                          <button onClick={() => removeFromCart(item.cartId)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500 active:scale-90 transition-transform"><XMarkIcon className="w-5 h-5 stroke-2" /></button>
+                          <div className="text-xs font-black uppercase text-gray-800 pr-10 mb-4">{item.ProductName}</div>
                           <div className="flex items-center justify-between">
-                              <div className="flex items-center bg-gray-50 border border-gray-200 rounded-lg p-1">
-                                  <button onClick={() => updateCartQty(item.cartId, -1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><MinusIcon className="w-4 h-4"/></button>
-                                  <span className="w-8 text-center text-sm font-black">{item.qty}</span>
-                                  <button onClick={() => updateCartQty(item.cartId, 1)} className="w-8 h-8 flex items-center justify-center text-gray-600 bg-white rounded shadow-sm active:scale-90"><PlusIcon className="w-4 h-4"/></button>
+                              <div className="flex items-center bg-gray-50 border border-gray-200 rounded-xl p-1">
+                                  <button onClick={() => updateCartQty(item.cartId, -1)} className="w-9 h-9 flex items-center justify-center text-gray-600 bg-white rounded-lg shadow-sm active:scale-95"><MinusIcon className="w-4 h-4 stroke-2"/></button>
+                                  <span className="w-10 text-center text-base font-black">{item.qty}</span>
+                                  <button onClick={() => updateCartQty(item.cartId, 1)} className="w-9 h-9 flex items-center justify-center text-gray-600 bg-white rounded-lg shadow-sm active:scale-95"><PlusIcon className="w-4 h-4 stroke-2"/></button>
                               </div>
                               <div className="flex flex-col items-end">
                                   <span className="text-[10px] font-black text-gray-500 uppercase mx-2 mb-1">{item.uom}</span>
-                                  {item.isReplacement ? <span className="text-[9px] font-black text-white bg-red-400 px-2 py-1 rounded shadow-sm">REP</span> : <span className="text-[11px] font-black text-gray-700 bg-gray-50 border border-gray-200 px-2 py-1 rounded">RM {(item.price * item.qty).toFixed(2)}</span>}
+                                  {item.isReplacement ? <span className="text-[10px] font-black text-white bg-red-500 px-3 py-1 rounded-lg shadow-sm tracking-widest">REP</span> : <span className="text-sm font-black text-gray-800 bg-gray-50 border border-gray-200 px-3 py-1 rounded-xl">RM {(Number(item.price || 0) * Number(item.qty || 1)).toFixed(2)}</span>}
                               </div>
                           </div>
                           {/* Notes Input Mobile */}
-                          <div className="mt-3 pt-3 border-t border-gray-100">
+                          <div className="mt-4 pt-4 border-t border-gray-100">
                               <input 
                                   type="text" 
                                   placeholder="Add special note (optional)..." 
-                                  className="w-full bg-gray-50 border border-gray-200 text-xs p-2.5 rounded-xl outline-none focus:ring-2 focus:ring-green-400 transition-all text-gray-700 placeholder-gray-400 font-medium"
+                                  // text-base to prevent zoom
+                                  className="w-full bg-gray-50/80 border border-gray-200 text-base md:text-sm p-3 rounded-xl outline-none focus:bg-white focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all text-gray-700 placeholder-gray-400 font-medium"
                                   value={item.notes || ''}
                                   onChange={(e) => updateCartNote(item.cartId, e.target.value)}
                               />
                           </div>
                       </div>
                   ))}
-                  {cart.length === 0 && <div className="text-center p-10 text-gray-400 font-bold italic text-sm">Cart is empty</div>}
+                  {cart.length === 0 && <div className="text-center p-12 text-gray-400 font-bold italic text-sm border-2 border-dashed border-gray-200 rounded-3xl mx-2 mt-4 bg-white">Cart is empty. Add products to continue.</div>}
               </div>
 
-              <div className="bg-white border-t border-gray-200 shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.05)]">
-                  <div className="p-4 space-y-4" style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}>
-                      <div className="flex justify-between items-end mb-2">
-                          <div><p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Total Products</p><h3 className="text-2xl font-black text-gray-900 leading-none">{cart.length}</h3></div>
-                          <div className="bg-indigo-50 border border-indigo-100 p-2.5 rounded-xl"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" className="w-5 h-5 text-indigo-600 rounded border-gray-300 focus:ring-indigo-500" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} /><span className="text-[10px] font-black text-indigo-900 uppercase tracking-widest">Save Pattern</span></label></div>
+              {/* Mobile Cart Settings & Confirm Bar */}
+              <div className="bg-white border-t border-gray-200 shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.05)] pb-safe relative z-10">
+                  <div className="p-4 space-y-4">
+                      
+                      {/* Mobile Pattern Saving Block */}
+                      <div className="bg-indigo-50/50 border border-indigo-100 p-4 rounded-2xl">
+                          {/* iOS Style Toggle Switch for Recurring */}
+                          <label className="relative flex items-center justify-between cursor-pointer group mb-1">
+                              <span className="text-[11px] font-black text-indigo-900 uppercase tracking-widest transition-colors">Save as Weekly Pattern</span>
+                              <div className="relative">
+                                  <input 
+                                      type="checkbox" 
+                                      className="sr-only peer" 
+                                      checked={isRecurring} 
+                                      onChange={e => setIsRecurring(e.target.checked)} 
+                                  />
+                                  <div className="w-12 h-7 bg-indigo-200/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-indigo-600 shadow-inner"></div>
+                              </div>
+                          </label>
+
+                          {isRecurring && (
+                              <div className="mt-4 animate-in fade-in slide-in-from-top-1 space-y-4 border-t border-indigo-100/50 pt-4">
+                                  <div className="flex items-center justify-between gap-4">
+                                      <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-widest shrink-0">Generate On</span>
+                                      <select className="w-full flex-1 border border-indigo-200 p-3 rounded-xl text-base md:text-sm font-black bg-white text-indigo-800 outline-none focus:ring-2 focus:ring-indigo-400 shadow-sm" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>
+                                          {DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}
+                                      </select>
+                                  </div>
+                                  <div className="pt-2">
+                                      {/* iOS Style Toggle Switch for Consignment */}
+                                      <label className="relative flex items-center cursor-pointer group">
+                                          <div className="relative">
+                                              <input 
+                                                  type="checkbox" 
+                                                  className="sr-only peer" 
+                                                  checked={isConsignment} 
+                                                  onChange={e => setIsConsignment(e.target.checked)} 
+                                              />
+                                              <div className="w-10 h-6 bg-orange-200/50 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-[16px] peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-orange-500 shadow-inner shrink-0"></div>
+                                          </div>
+                                          <div className="ml-3 flex flex-col">
+                                              <span className="text-[11px] font-black text-orange-900 uppercase tracking-widest leading-none">Consignment Order</span>
+                                              <span className="text-[9px] font-bold text-orange-500 mt-1">Route Only. Skips DO Printing.</span>
+                                          </div>
+                                      </label>
+                                  </div>
+                              </div>
+                          )}
                       </div>
-                      {isRecurring && (
-                          <div className="space-y-2">
-                              <select className="w-full border border-indigo-200 p-3 rounded-xl text-base font-black bg-white text-indigo-800 outline-none" value={recurringDay} onChange={e => setRecurringDay(e.target.value)}>{DAYS_OF_WEEK.map(d => <option key={d} value={d}>{d}</option>)}</select>
-                              <label className="flex items-center gap-3 p-3 bg-orange-50 border border-orange-100 rounded-xl cursor-pointer">
-                                  <input type="checkbox" className="w-5 h-5 text-orange-600 rounded border-gray-300" checked={isConsignment} onChange={e => setIsConsignment(e.target.checked)} />
-                                  <span className="text-[10px] font-black text-orange-900 uppercase tracking-widest">Consignment (No DO)</span>
-                              </label>
-                          </div>
-                      )}
-                      <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-xl text-white font-black text-sm shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 active:scale-95'}`}>
-                          {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & SUBMIT' : 'SUBMIT ORDER')}
+
+                      <button onClick={handleSubmitOrder} disabled={submitting || cart.length === 0} className={`w-full py-4 rounded-2xl text-white font-black text-base shadow-xl transition-all flex items-center justify-center gap-2 ${submitting || cart.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none text-gray-500' : 'bg-green-600 hover:bg-green-700 shadow-green-600/30 active:scale-95'}`}>
+                          {submitting ? 'PROCESSING...' : (isRecurring ? 'SAVE PATTERN & SUBMIT' : 'CONFIRM ORDER')}
                       </button>
                   </div>
               </div>
