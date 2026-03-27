@@ -203,7 +203,7 @@ export default function UsageReportContent() {
                 style={{ width: '210mm', height: '297mm', padding: '10mm' }}> 
                 
                 {/* --- HEADER (Module 1) --- */}
-                <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-2 h-[35mm] shrink-0 report-header">
+                <div className="flex justify-between items-start mb-2 border-b-2 border-black pb-5 h-[20mm] shrink-0 report-header">
                   <div className="flex gap-4 h-full items-center">
                       <div className="w-16 h-16 relative">
                           <img src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" alt="Logo" className="w-full h-full object-contain" />

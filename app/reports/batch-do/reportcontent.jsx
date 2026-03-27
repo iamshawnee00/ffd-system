@@ -197,7 +197,7 @@ function SingleDOComponent({ orderData, items, itemsPerPage }) {
              style={{ width: '210mm', height: '297mm', padding: '10mm', boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)' }}>
           
           {/* --- HEADER SECTION --- */}
-          <div className="flex justify-between items-start mb-4 border-b-2 border-black pb-2 h-[28mm] shrink-0">
+          <div className="flex justify-between items-start mb-3 border-b-2 border-black pb-5 h-[20mm] shrink-0">
              <div className="flex gap-4 items-center h-full">
                 <img 
                   src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" 
