@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { 
   UserGroupIcon, 
@@ -10,7 +10,10 @@ import {
   PencilSquareIcon,
   TrashIcon,
   MagnifyingGlassIcon,
-  UserCircleIcon 
+  UserCircleIcon,
+  TagIcon,
+  ChevronDownIcon,
+  ChevronUpIcon
 } from '@heroicons/react/24/outline';
 
 export default function CustomerPage() {
@@ -32,6 +35,7 @@ export default function CustomerPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState({
+    BrandName: '',
     CompanyName: '',
     Branch: '',
     ContactPerson: '',
@@ -40,6 +44,14 @@ export default function CustomerPage() {
     Username: '' 
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Group Expansion State
+  const [expandedBrands, setExpandedBrands] = useState(new Set());
+
+  // --- NEW: Bulk Edit State ---
+  const [selectedCustomers, setSelectedCustomers] = useState([]);
+  const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
+  const [bulkEditData, setBulkEditData] = useState({ BrandName: '', CompanyName: '', Username: '' });
 
   // 1. Initial Load
   useEffect(() => {
@@ -139,11 +151,8 @@ export default function CustomerPage() {
         return;
     }
 
-    // REMOVED ADDRESS UNIQUENESS CHECK per user request.
-    // The system now relies on the primary key (UUID) for uniqueness.
-    // Duplicate addresses are allowed (e.g. different departments in same building).
-
     const payload = {
+        BrandName: formData.BrandName,
         CompanyName: formData.CompanyName,
         Branch: formData.Branch, 
         ContactPerson: formData.ContactPerson,
@@ -171,7 +180,7 @@ export default function CustomerPage() {
     } else {
         alert(editingId ? "Customer updated!" : "Customer added!");
         setIsModalOpen(false);
-        setFormData({ CompanyName: '', Branch: '', ContactPerson: '', ContactNumber: '', DeliveryAddress: '', Username: '' });
+        setFormData({ BrandName: '', CompanyName: '', Branch: '', ContactPerson: '', ContactNumber: '', DeliveryAddress: '', Username: '' });
         setEditingId(null);
         fetchCustomers();
         // Refresh selected customer logic
@@ -193,13 +202,15 @@ export default function CustomerPage() {
       } else {
           alert("Customer deleted.");
           if (selectedCustomer?.id === id) setSelectedCustomer(null);
+          // Also remove from selected set if bulk editing
+          setSelectedCustomers(prev => prev.filter(cId => cId !== id));
           fetchCustomers();
       }
   };
 
   const openAddModal = () => {
       setEditingId(null);
-      setFormData({ CompanyName: '', Branch: '', ContactPerson: '', ContactNumber: '', DeliveryAddress: '', Username: '' });
+      setFormData({ BrandName: '', CompanyName: '', Branch: '', ContactPerson: '', ContactNumber: '', DeliveryAddress: '', Username: '' });
       setIsModalOpen(true);
   };
 
@@ -207,6 +218,7 @@ export default function CustomerPage() {
       e.stopPropagation(); 
       setEditingId(customer.id);
       setFormData({
+          BrandName: customer.BrandName || '',
           CompanyName: customer.CompanyName,
           Branch: customer.Branch || '', 
           ContactPerson: customer.ContactPerson || '',
@@ -221,6 +233,7 @@ export default function CustomerPage() {
       e.stopPropagation();
       setEditingId(null); 
       setFormData({
+          BrandName: customer.BrandName || '',
           CompanyName: customer.CompanyName, 
           Branch: '', 
           ContactPerson: customer.ContactPerson || '', 
@@ -231,11 +244,73 @@ export default function CustomerPage() {
       setIsModalOpen(true);
   };
 
+  // --- UPGRADED: Deep Search Filter ---
   const filteredCustomers = customers.filter(c => {
-    const term = searchTerm.toLowerCase();
-    const combined = `${c.CompanyName} ${c.Branch || ''} ${c.ContactPerson || ''} ${c.Username || ''}`.toLowerCase();
-    return combined.includes(term);
+    if (!searchTerm) return true;
+    const terms = searchTerm.toLowerCase().split(' ').filter(Boolean);
+    const combined = `${c.BrandName || ''} ${c.CompanyName} ${c.Branch || ''} ${c.DeliveryAddress || ''} ${c.ContactPerson || ''} ${c.Username || ''}`.toLowerCase();
+    
+    // Returns true only if ALL typed words are found anywhere in the combined string
+    return terms.every(term => combined.includes(term));
   });
+
+  // --- Group by Brand Name ---
+  const groupedCustomers = useMemo(() => {
+    const groups = {};
+    filteredCustomers.forEach(c => {
+        // If they don't have a BrandName, group them under their CompanyName natively
+        const brand = (c.BrandName || c.CompanyName).toUpperCase().trim();
+        if (!groups[brand]) groups[brand] = [];
+        groups[brand].push(c);
+    });
+    return groups;
+  }, [filteredCustomers]);
+
+  // Auto-expand all folders if user is currently searching
+  useEffect(() => {
+      if (searchTerm.trim() !== '') {
+          setExpandedBrands(new Set(Object.keys(groupedCustomers)));
+      }
+  }, [searchTerm, groupedCustomers]);
+
+  const toggleBrandExpansion = (brand) => {
+      setExpandedBrands(prev => {
+          const next = new Set(prev);
+          if (next.has(brand)) next.delete(brand);
+          else next.add(brand);
+          return next;
+      });
+  };
+
+  // --- NEW: Bulk Edit Handlers ---
+  const toggleSelection = (id, e) => {
+      e.stopPropagation();
+      setSelectedCustomers(prev => prev.includes(id) ? prev.filter(cId => cId !== id) : [...prev, id]);
+  };
+
+  const handleBulkEditSave = async () => {
+      const updates = {};
+      if (bulkEditData.BrandName !== undefined && bulkEditData.BrandName !== '') updates.BrandName = bulkEditData.BrandName;
+      if (bulkEditData.CompanyName !== undefined && bulkEditData.CompanyName !== '') updates.CompanyName = bulkEditData.CompanyName;
+      if (bulkEditData.Username !== undefined && bulkEditData.Username !== '') updates.Username = bulkEditData.Username;
+
+      if (Object.keys(updates).length === 0) return alert("Please fill in at least one field to bulk update.");
+      if (!confirm(`Apply changes to ${selectedCustomers.length} selected customers?`)) return;
+
+      setIsSubmitting(true);
+      const { error } = await supabase.from('Customers').update(updates).in('id', selectedCustomers);
+
+      if (error) {
+          alert("Bulk update failed: " + error.message);
+      } else {
+          alert("Bulk update successful!");
+          setIsBulkEditOpen(false);
+          setSelectedCustomers([]);
+          setBulkEditData({ BrandName: '', CompanyName: '', Username: '' });
+          fetchCustomers();
+      }
+      setIsSubmitting(false);
+  };
 
   if (loading) return <div className="p-10 flex h-screen items-center justify-center bg-gray-50/50 text-gray-400 font-black tracking-widest uppercase animate-pulse">Loading Customers...</div>;
 
@@ -245,8 +320,8 @@ export default function CustomerPage() {
       {/* Header Standardized */}
       <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
         <div>
-            <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Customer Analysis</h1>
-            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Usual usage & delivery patterns</p>
+            <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Customer Directory</h1>
+            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Manage profiles, brands, and delivery patterns</p>
         </div>
         <button 
             onClick={openAddModal}
@@ -258,55 +333,122 @@ export default function CustomerPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* LEFT COLUMN: Customer List */}
+        {/* LEFT COLUMN: Customer List (Grouped by Brand) */}
         <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 lg:col-span-1 flex flex-col h-[500px] lg:h-[calc(100vh-140px)]">
-           <div className="relative mb-6 flex-none">
-              <span className="absolute left-4 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
-              <input 
-                type="text" 
-                placeholder="Search Customer, Branch, or Username..." 
-                className="w-full pl-12 p-3.5 border border-gray-200 rounded-2xl bg-gray-50 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+           
+           {/* Search & Bulk Toolbar */}
+           <div className="flex-none mb-4 space-y-3">
+               <div className="relative">
+                  <span className="absolute left-4 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5"/></span>
+                  <input 
+                    type="text" 
+                    placeholder="Search Brand, Name, Address..." 
+                    className="w-full pl-12 p-3.5 border border-gray-200 rounded-2xl bg-gray-50 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+               </div>
+
+               {/* Bulk Actions Indicator */}
+               {selectedCustomers.length > 0 && (
+                   <div className="bg-blue-50 p-2.5 rounded-xl border border-blue-200 flex items-center justify-between shadow-sm animate-in fade-in">
+                       <span className="text-[10px] font-black uppercase text-blue-800 tracking-widest ml-2">
+                           {selectedCustomers.length} Selected
+                       </span>
+                       <div className="flex gap-2">
+                           <button onClick={() => setIsBulkEditOpen(true)} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-[9px] font-black uppercase tracking-widest transition-all shadow-sm">Bulk Edit</button>
+                           <button onClick={() => setSelectedCustomers([])} className="px-3 py-1.5 bg-white hover:bg-gray-100 text-gray-600 border border-gray-200 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all">Clear</button>
+                       </div>
+                   </div>
+               )}
            </div>
 
-           <div className="flex-1 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-              {filteredCustomers.map(c => (
-                <div 
-                  key={c.id} 
-                  onClick={() => handleSelectCustomer(c)}
-                  className={`p-4 rounded-2xl cursor-pointer border transition-all duration-200 group relative ${
-                    selectedCustomer?.id === c.id 
-                    ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400 shadow-md' 
-                    : 'bg-white border-gray-100 hover:border-blue-200 hover:shadow-sm'
-                  }`}
-                >
-                   <div className="font-black text-gray-800 text-xs uppercase pr-24 leading-tight">
-                       {c.CompanyName}
-                   </div>
-                   {c.Branch && (
-                       <div className="mt-1.5">
-                           <span className="text-blue-600 font-black bg-blue-100 px-2 py-0.5 rounded-md text-[9px] border border-blue-200 inline-block">
-                               {c.Branch}
-                           </span>
-                       </div>
-                   )}
-                   <div className="flex justify-between items-center text-[10px] text-gray-400 font-bold mt-3">
-                      <span>{c.ContactPerson || 'No Contact'}</span>
-                      {c.Username && <span className="text-purple-500 bg-purple-50 px-2 py-0.5 rounded-md flex items-center gap-1 border border-purple-100"><UserCircleIcon className="w-3 h-3"/> {c.Username}</span>}
-                   </div>
-                   
-                   {/* Action Buttons */}
-                   <div className="absolute top-3 right-3 flex gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                       <button onClick={(e) => openEditModal(c, e)} className="p-1.5 text-gray-400 hover:text-blue-600 bg-gray-50 hover:bg-blue-100 rounded-lg transition" title="Edit"><PencilSquareIcon className="w-4 h-4 md:w-5 md:h-5" /></button>
-                       <button onClick={(e) => openAddBranchModal(c, e)} className="p-1.5 text-gray-400 hover:text-green-600 bg-gray-50 hover:bg-green-100 rounded-lg transition" title="Add Branch"><PlusIcon className="w-4 h-4 md:w-5 md:h-5" /></button>
-                       <button onClick={(e) => handleDeleteCustomer(c.id, e)} className="p-1.5 text-gray-400 hover:text-red-600 bg-gray-50 hover:bg-red-100 rounded-lg transition" title="Delete"><TrashIcon className="w-4 h-4 md:w-5 md:h-5" /></button>
-                   </div>
-                </div>
-              ))}
-              {filteredCustomers.length === 0 && (
-                  <div className="p-8 text-center text-gray-400 font-bold italic text-xs">No customers found.</div>
+           <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+              {Object.keys(groupedCustomers).sort().map(brand => {
+                 const brandCustomers = groupedCustomers[brand];
+                 const isExpanded = expandedBrands.has(brand);
+
+                 return (
+                     <div key={brand} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden transition-all duration-200">
+                        {/* Brand Folder Header */}
+                        <div 
+                           onClick={() => toggleBrandExpansion(brand)}
+                           className="p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors"
+                        >
+                           <div className="flex items-center gap-3">
+                              <div className="bg-purple-100 p-2 rounded-xl text-purple-600">
+                                  <TagIcon className="w-4 h-4" strokeWidth={2.5} />
+                              </div>
+                              <div className="flex flex-col">
+                                  <span className="font-black text-gray-800 uppercase tracking-tight text-xs md:text-sm leading-tight pr-2">{brand}</span>
+                              </div>
+                           </div>
+                           <div className="flex items-center gap-2">
+                              <span className="bg-gray-100 text-gray-600 text-[10px] font-black px-2 py-0.5 rounded-md border border-gray-200 shrink-0">
+                                  {brandCustomers.length} Outlet{brandCustomers.length > 1 ? 's' : ''}
+                              </span>
+                              {isExpanded ? <ChevronUpIcon className="w-4 h-4 text-gray-400 shrink-0" /> : <ChevronDownIcon className="w-4 h-4 text-gray-400 shrink-0" />}
+                           </div>
+                        </div>
+
+                        {/* Outlet Cards Inside the Brand */}
+                        {isExpanded && (
+                           <div className="px-3 pb-3 space-y-2 bg-gray-50/50 pt-2 border-t border-gray-100">
+                              {brandCustomers.map(c => {
+                                  const isSelected = selectedCustomer?.id === c.id;
+                                  const isChecked = selectedCustomers.includes(c.id);
+                                  return (
+                                      <div 
+                                          key={c.id} 
+                                          onClick={() => handleSelectCustomer(c)}
+                                          className={`p-4 rounded-xl cursor-pointer border transition-all duration-200 group relative flex gap-3 items-start ${
+                                            isSelected 
+                                            ? 'bg-blue-50 border-blue-400 ring-1 ring-blue-400 shadow-md' 
+                                            : isChecked ? 'bg-blue-50/30 border-blue-200' : 'bg-white border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                                          }`}
+                                        >
+                                           <div className="pt-0.5 shrink-0" onClick={e => e.stopPropagation()}>
+                                                <input 
+                                                    type="checkbox" 
+                                                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-gray-300 cursor-pointer" 
+                                                    checked={isChecked} 
+                                                    onChange={(e) => toggleSelection(c.id, e)} 
+                                                />
+                                           </div>
+                                           <div className="flex-1 min-w-0">
+                                               <div className="font-black text-gray-800 text-xs uppercase pr-24 leading-tight truncate whitespace-normal">
+                                                   {c.CompanyName}
+                                               </div>
+                                               {c.Branch && (
+                                                   <div className="mt-1.5">
+                                                       <span className="text-blue-600 font-black bg-blue-50 px-2 py-0.5 rounded-md text-[9px] border border-blue-100 inline-block">
+                                                           {c.Branch}
+                                                       </span>
+                                                   </div>
+                                               )}
+                                               <div className="flex justify-between items-center text-[10px] text-gray-400 font-bold mt-3">
+                                                  <span className="truncate pr-2">{c.ContactPerson || 'No Contact'}</span>
+                                                  {c.Username && <span className="text-purple-500 bg-purple-50 px-2 py-0.5 rounded-md flex items-center gap-1 border border-purple-100 shrink-0"><UserCircleIcon className="w-3 h-3"/> {c.Username}</span>}
+                                               </div>
+                                           </div>
+                                           
+                                           {/* Action Buttons */}
+                                           <div className="absolute top-3 right-3 flex gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
+                                               <button onClick={(e) => openEditModal(c, e)} className="p-1.5 text-gray-400 hover:text-blue-600 bg-gray-50 hover:bg-blue-100 rounded-lg transition" title="Edit"><PencilSquareIcon className="w-4 h-4 md:w-5 md:h-5" /></button>
+                                               <button onClick={(e) => openAddBranchModal(c, e)} className="p-1.5 text-gray-400 hover:text-green-600 bg-gray-50 hover:bg-green-100 rounded-lg transition" title="Add Branch"><PlusIcon className="w-4 h-4 md:w-5 md:h-5" /></button>
+                                               <button onClick={(e) => handleDeleteCustomer(c.id, e)} className="p-1.5 text-gray-400 hover:text-red-600 bg-gray-50 hover:bg-red-100 rounded-lg transition" title="Delete"><TrashIcon className="w-4 h-4 md:w-5 md:h-5" /></button>
+                                           </div>
+                                        </div>
+                                  );
+                              })}
+                           </div>
+                        )}
+                     </div>
+                 );
+              })}
+
+              {Object.keys(groupedCustomers).length === 0 && (
+                  <div className="p-8 text-center text-gray-400 font-bold italic text-xs">No matching brands or customers found.</div>
               )}
            </div>
         </div>
@@ -318,9 +460,17 @@ export default function CustomerPage() {
                 {/* 1. Customer Profile Card */}
                 <div className="bg-white p-5 md:p-6 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col md:flex-row justify-between gap-4">
                    <div className="flex-1">
-                      <h2 className="text-xl md:text-2xl font-black text-gray-800 uppercase leading-none mb-1">
-                          {selectedCustomer.CompanyName}
-                      </h2>
+                      <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <h2 className="text-xl md:text-2xl font-black text-gray-800 uppercase leading-none">
+                              {selectedCustomer.CompanyName}
+                          </h2>
+                          {selectedCustomer.BrandName && (
+                              <span className="text-[10px] font-black text-purple-600 bg-purple-50 px-2 py-1 rounded border border-purple-200 uppercase tracking-widest flex items-center gap-1">
+                                  <TagIcon className="w-3 h-3" /> {selectedCustomer.BrandName}
+                              </span>
+                          )}
+                      </div>
+
                       {selectedCustomer.Branch && <span className="text-xs text-blue-600 font-black bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md mt-1 mb-2 inline-block">Branch: {selectedCustomer.Branch}</span>}
                       
                       <div className="flex flex-wrap gap-2 md:gap-4 mt-3 text-[10px] md:text-xs font-bold text-gray-500 uppercase tracking-wide">
@@ -429,6 +579,65 @@ export default function CustomerPage() {
 
       </div>
 
+      {/* BULK EDIT MODAL */}
+      {isBulkEditOpen && (
+          <div className="fixed inset-0 bg-black/60 z-[110] flex items-center justify-center p-4 backdrop-blur-sm overflow-hidden animate-in fade-in duration-200">
+            <div className="bg-white rounded-[2.5rem] w-full max-w-lg shadow-2xl flex flex-col animate-in zoom-in duration-200 border border-gray-100 max-h-[90vh] overflow-hidden">
+                <div className="flex justify-between items-center p-6 border-b border-gray-100 shrink-0 bg-white">
+                    <div>
+                        <h2 className="text-lg md:text-xl font-black text-gray-800 uppercase tracking-tight">Bulk Edit Customers</h2>
+                        <p className="text-[10px] md:text-xs text-gray-400 font-bold mt-1">Applying to <span className="text-blue-600">{selectedCustomers.length}</span> outlets.</p>
+                    </div>
+                    <button onClick={() => setIsBulkEditOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                </div>
+                
+                <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0 custom-scrollbar bg-white">
+                    <div className="bg-purple-50/50 p-4 rounded-2xl border border-purple-100">
+                        <label className="block text-[10px] font-black text-purple-600 uppercase tracking-widest mb-2">Override Brand Name</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-3 border border-purple-200 bg-white rounded-xl outline-none font-black text-base md:text-xs uppercase focus:ring-2 focus:ring-purple-500 placeholder-gray-300" 
+                            value={bulkEditData.BrandName} 
+                            onChange={e => setBulkEditData({...bulkEditData, BrandName: e.target.value})} 
+                            placeholder="-- LEAVE BLANK TO KEEP CURRENT --" 
+                        />
+                    </div>
+                    <div className="bg-green-50/50 p-4 rounded-2xl border border-green-100">
+                        <label className="block text-[10px] font-black text-green-600 uppercase tracking-widest mb-2">Override Company Name</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-3 border border-green-200 bg-white rounded-xl outline-none font-black text-base md:text-xs uppercase focus:ring-2 focus:ring-green-500 placeholder-gray-300" 
+                            value={bulkEditData.CompanyName} 
+                            onChange={e => setBulkEditData({...bulkEditData, CompanyName: e.target.value})} 
+                            placeholder="-- LEAVE BLANK TO KEEP CURRENT --" 
+                        />
+                    </div>
+                    <div className="bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+                        <label className="block text-[10px] font-black text-blue-600 uppercase tracking-widest mb-2">Override Portal Username</label>
+                        <input 
+                            type="text" 
+                            className="w-full p-3 border border-blue-200 bg-white rounded-xl outline-none font-black text-base md:text-xs focus:ring-2 focus:ring-blue-500 placeholder-gray-300" 
+                            value={bulkEditData.Username} 
+                            onChange={e => setBulkEditData({...bulkEditData, Username: e.target.value})} 
+                            placeholder="-- LEAVE BLANK TO KEEP CURRENT --" 
+                        />
+                    </div>
+                </div>
+                
+                <div className="flex justify-end gap-3 p-5 border-t border-gray-100 shrink-0 bg-gray-50">
+                    <button onClick={() => setIsBulkEditOpen(false)} className="flex-1 sm:flex-none px-6 py-4 sm:py-3 bg-white border border-gray-200 text-gray-600 font-bold rounded-xl hover:bg-gray-100 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
+                    <button 
+                        onClick={handleBulkEditSave} 
+                        disabled={isSubmitting} 
+                        className="flex-1 sm:flex-none px-8 py-4 sm:py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg hover:bg-blue-700 transition-all active:scale-95 disabled:opacity-50 disabled:scale-100 text-xs uppercase tracking-widest"
+                    >
+                        {isSubmitting ? 'Saving...' : `Apply to ${selectedCustomers.length}`}
+                    </button>
+                </div>
+            </div>
+          </div>
+      )}
+
       {/* ADD / EDIT CUSTOMER MODAL */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in zoom-in duration-200">
@@ -441,6 +650,19 @@ export default function CustomerPage() {
                 </div>
                 
                 <form onSubmit={handleSubmit} className="space-y-4 overflow-y-auto pr-1 custom-scrollbar">
+                    
+                    {/* Brand Name Input */}
+                    <div className="bg-purple-50/50 p-4 rounded-2xl border border-purple-100 mb-2">
+                        <label className="block text-[10px] font-black text-purple-600 uppercase tracking-widest mb-1.5 ml-1">Brand Name (Optional)</label>
+                        <input 
+                            className="w-full p-3.5 border border-purple-200 rounded-xl text-xs font-black uppercase focus:ring-2 focus:ring-purple-500 outline-none bg-white transition-all placeholder-purple-200"
+                            value={formData.BrandName}
+                            onChange={(e) => setFormData({...formData, BrandName: e.target.value})}
+                            placeholder="e.g. CHAPANDA"
+                        />
+                        <p className="text-[9px] text-purple-500 mt-2 font-bold leading-tight">Use this to easily group and search for multiple outlets under the same brand umbrella.</p>
+                    </div>
+
                     <div>
                         <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Company Name</label>
                         <input 
