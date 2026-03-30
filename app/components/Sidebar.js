@@ -5,19 +5,20 @@ import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../lib/supabaseClient';
 import { useSidebar } from '../context/SidebarContext';
 import { 
-  HomeIcon, 
-  ShoppingCartIcon,
-  ShoppingBagIcon, 
-  ClipboardDocumentListIcon, 
+  HomeIcon,
+  PlusCircleIcon,
+  ShoppingBagIcon,
+  ClipboardDocumentListIcon,
   TruckIcon,
   ChartBarIcon,
   CubeIcon,
-  ArrowPathIcon,
-  UserGroupIcon,
+  ArrowsRightLeftIcon,
+  UsersIcon,
   PresentationChartLineIcon,
+  ArrowRightOnRectangleIcon,
   Bars3Icon,
   XMarkIcon,
-  PlusCircleIcon
+  DocumentTextIcon
 } from '@heroicons/react/24/outline';
 
 export default function Sidebar() {
@@ -47,9 +48,10 @@ export default function Sidebar() {
     { name: 'Quick Paste Order', path: '/orders/quick-paste', icon: ClipboardDocumentListIcon },
     { name: 'Delivery / Reports', path: '/delivery', icon: TruckIcon },
     { name: 'Price Trend', path: '/price-trend', icon: ChartBarIcon },
+    { name: 'Price List Gen', path: '/pricelist', icon: DocumentTextIcon },
     { name: 'Products', path: '/products', icon: CubeIcon },
-    { name: 'Stock Adjust', path: '/stock', icon: ArrowPathIcon },
-    { name: 'Customers', path: '/customers', icon: UserGroupIcon },
+    { name: 'Stock Adjust', path: '/stock', icon: ArrowsRightLeftIcon },
+    { name: 'Customers', path: '/customers', icon: UsersIcon },
     { name: 'Business Insights', path: '/insights', icon: PresentationChartLineIcon },
   ];
 
