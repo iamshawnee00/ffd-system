@@ -1,10 +1,14 @@
 /** @type {import('next').NextConfig} */
+
+// 智能判断：如果当前是在 Vercel 环境中部署，则为 true
+const isVercel = process.env.VERCEL === '1';
+
 const nextConfig = {
-  // Capacitor 需要纯静态的 HTML/CSS/JS 文件
-  output: 'export', 
+  // Vercel 部署时需要支持后端的 Shipday API，所以不能用 export。
+  // 本地使用 Capacitor 打包 App 时，自动开启 'export' 生成纯静态文件。
+  output: isVercel ? undefined : 'export', 
   
   // 解决静态导出后，客户端路由请求 RSC Payload (.txt 文件) 报 404 的问题
-  // 这会强制生成规范的文件夹结构 (e.g., /route/index.html)
   trailingSlash: true,
   
   images: {
@@ -14,44 +18,3 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
-
-// Injected content via Sentry wizard below
-
-const { withSentryConfig } = require("@sentry/nextjs");
-
-module.exports = withSentryConfig(module.exports, {
-  // For all available options, see:
-  // https://www.npmjs.com/package/@sentry/webpack-plugin#options
-
-  org: "duhlab",
-  project: "javascript-nextjs",
-
-  // Only print logs for uploading source maps in CI
-  silent: !process.env.CI,
-
-  // For all available options, see:
-  // https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/
-
-  // Upload a larger set of source maps for prettier stack traces (increases build time)
-  widenClientFileUpload: true,
-
-  // Uncomment to route browser requests to Sentry through a Next.js rewrite to circumvent ad-blockers.
-  // This can increase your server load as well as your hosting bill.
-  // Note: Check that the configured route will not match with your Next.js middleware, otherwise reporting of client-
-  // side errors will fail.
-  // tunnelRoute: "/monitoring",
-
-  webpack: {
-    // Enables automatic instrumentation of Vercel Cron Monitors. (Does not yet work with App Router route handlers.)
-    // See the following for more information:
-    // https://docs.sentry.io/product/crons/
-    // https://vercel.com/docs/cron-jobs
-    automaticVercelMonitors: true,
-
-    // Tree-shaking options for reducing bundle size
-    treeshake: {
-      // Automatically tree-shake Sentry logger statements to reduce bundle size
-      removeDebugLogging: true,
-    },
-  },
-});
