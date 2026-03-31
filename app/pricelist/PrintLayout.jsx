@@ -13,132 +13,200 @@ export default function PrintLayout({
       return !isNaN(d) ? d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : dateStr;
   };
 
+  // Partition into Left (Local/Thai/Others), Right (Import), Bottom (Vege)
+  const leftCats = {};
+  const rightCats = {};
+  const vegeCats = {};
+
+  selectedItems.forEach(item => {
+      const cat = (item.category || 'OTHERS').toUpperCase();
+      // OTHERS now joins LOCAL and THAI on the left side
+      if (cat.includes('LOCAL') || cat.includes('THAI') || cat.includes('OTHER')) {
+          if (!leftCats[cat]) leftCats[cat] = [];
+          leftCats[cat].push(item);
+      } else if (cat.includes('IMPORT')) {
+          if (!rightCats[cat]) rightCats[cat] = [];
+          rightCats[cat].push(item);
+      } else {
+          // VEGE falls here
+          if (!vegeCats[cat]) vegeCats[cat] = [];
+          vegeCats[cat].push(item);
+      }
+  });
+
+  // Helper to render independent compact tables per category
+  const renderTableContent = (catGroup) => {
+      const sortedCategories = Object.keys(catGroup).sort((a, b) => a.localeCompare(b));
+      
+      return sortedCategories.map(cat => {
+          // Sort products alphabetically within the category
+          const products = catGroup[cat].sort((a, b) => a.productName.localeCompare(b.productName));
+          
+          return (
+              <table key={cat} className="w-full border-collapse border border-gray-400 table-fixed mb-2 break-inside-avoid">
+                  {/* The <colgroup> strictly enforces widths regardless of colSpans in the headers */}
+                  <colgroup>
+                      <col style={{ width: '8%' }} />
+                      <col style={{ width: '54%' }} />
+                      <col style={{ width: '19%' }} />
+                      <col style={{ width: '19%' }} />
+                  </colgroup>
+                  <thead>
+                      <tr className="bg-gray-100 border-b border-gray-400">
+                          <th colSpan="4" className="py-1 px-2 text-left font-black text-black uppercase tracking-widest text-[9px]">
+                              {cat}
+                          </th>
+                      </tr>
+                      <tr className="bg-gray-50 border-b border-gray-400 text-black uppercase font-black text-[8px]">
+                          <th className="py-0.5 px-0.5 text-center border-r border-gray-300">No</th>
+                          <th className="py-0.5 px-1 text-left border-r border-gray-300">Description</th>
+                          <th className="py-0.5 px-1 text-center border-r border-gray-300">UOM</th>
+                          <th className="py-0.5 px-1 text-right">Price</th>
+                      </tr>
+                  </thead>
+                  <tbody className="font-bold">
+                      {products.map((prod, pIdx) => {
+                          const activeUoms = [];
+                          const activePrices = [];
+                          
+                          // Safely parse the new nested prices object
+                          if (prod.allowedUoms && prod.prices) {
+                              prod.allowedUoms.forEach(u => {
+                                  const pVal = prod.prices[u];
+                                  if (pVal !== '' && pVal !== undefined && pVal !== null) {
+                                      activeUoms.push(u);
+                                      activePrices.push(Number(pVal).toFixed(2));
+                                  }
+                              });
+                          }
+
+                          let uomStr = '';
+                          let priceStr = '';
+                          if (activeUoms.length > 0) {
+                              uomStr = activeUoms.join(' / ');
+                              priceStr = activePrices.join(' / ');
+                          } else {
+                              const placeholders = prod.allowedUoms ? prod.allowedUoms.slice(0, 2) : ['UOM'];
+                              uomStr = placeholders.join(' / ');
+                              priceStr = placeholders.map(() => 'TBA').join(' / ');
+                          }
+
+                          return (
+                              <tr key={`prod-${pIdx}`} className="border-b border-gray-300 h-[16px] break-inside-avoid">
+                                  <td className="py-0.5 px-0.5 text-center border-r border-gray-300 text-[8px] text-gray-500 align-top">
+                                      {pIdx + 1}
+                                  </td>
+                                  <td className="py-0.5 px-1 border-r border-gray-300 uppercase text-[8px] leading-tight whitespace-normal break-words text-gray-800 align-top">
+                                      {prod.productName}
+                                  </td>
+                                  <td className="py-0.5 px-1 text-center border-r border-gray-300 uppercase text-[7px] tracking-wider align-top">
+                                      {uomStr}
+                                  </td>
+                                  <td className="py-0.5 px-1 text-right font-black text-black text-[8px] tracking-wide align-top">
+                                      {priceStr}
+                                  </td>
+                              </tr>
+                          );
+                      })}
+                  </tbody>
+              </table>
+          );
+      });
+  };
+
+  // Reusable tight header
+  const PrintHeader = () => (
+      <div className="shrink-0 mb-3">
+        <div className="flex justify-between items-start mb-1.5 border-b-2 border-black pb-1.5">
+            <div className="flex gap-2 items-center h-full">
+                <img 
+                  src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" 
+                  alt="Logo" 
+                  className="w-10 h-10 object-contain" 
+                />
+                <div>
+                    <h1 className="text-base font-black uppercase tracking-tight leading-none mb-0.5">FRESHER FARM DIRECT SDN BHD</h1>
+                    <div className="text-[7px] leading-tight text-gray-700 font-bold uppercase">
+                        <p>Reg No: 200701010054 | TIN No: C20176000020</p>
+                        <p>Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, Selangor</p>
+                        <p>Tel: 011-2862 8667 | Email: fresherfarmdirect2.0@gmail.com</p>
+                    </div>
+                </div>
+            </div>
+            <div className="text-right self-center">
+                <h2 className="text-xl font-black uppercase tracking-tighter leading-none">PRICE<br/>LIST</h2>
+            </div>
+        </div>
+
+        <div className="flex justify-between items-end border-b border-gray-300 pb-1.5">
+            <div className="text-left w-2/3">
+                <p className="text-[7px] text-gray-500 font-black uppercase tracking-widest mb-0.5">Prepared For</p>
+                <p className="text-xs font-black uppercase leading-tight">{selectedCustomer === 'GENERAL' ? 'Valued Customer' : selectedCustomer}</p>
+            </div>
+            <div className="text-right border-l-2 border-black pl-3 flex gap-4">
+                <div>
+                    <p className="text-[7px] text-gray-500 font-black uppercase tracking-widest mb-0.5">Effective</p>
+                    <p className="text-xs font-black leading-tight">{formatDateLabel(effectiveDate)}</p>
+                </div>
+                <div>
+                    <p className="text-[7px] text-gray-500 font-black uppercase tracking-widest mb-0.5">Valid Until</p>
+                    <p className="text-xs font-black leading-tight">{formatDateLabel(validUntil)}</p>
+                </div>
+            </div>
+        </div>
+      </div>
+  );
+
   return (
-    <div className="hidden print:block text-black font-sans text-xs bg-white">
+    <div className="hidden print:block text-black font-sans bg-white">
         <style dangerouslySetInnerHTML={{__html: `
             @media print {
-                @page { size: A4; margin: 0; }
+                @page { size: A4 portrait; margin: 10mm; }
                 html, body, main { background: white !important; margin: 0 !important; padding: 0 !important; -webkit-print-color-adjust: exact; }
                 main { padding-top: 0 !important; }
-                
-                /* Force Tailwind's print:hidden utility to completely eradicate the navigation from print */
                 .print\\:hidden { display: none !important; } 
                 
-                /* Force table headers to repeat on new pages */
-                thead { display: table-header-group; } 
-                tr { page-break-inside: avoid; }
+                /* Keep categories together and avoid splitting rows */
+                table { break-inside: avoid; page-break-inside: avoid; }
+                tr { break-inside: avoid; page-break-inside: avoid; }
+                .break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
             }
         `}} />
 
-        <div className="mx-auto bg-white mb-0 flex flex-col box-border" style={{ width: '210mm', minHeight: '297mm', padding: '15mm' }}> 
+        <div className="box-border relative">
+            <PrintHeader />
             
-            {/* --- HEADER --- */}
-            <div className="flex justify-between items-start mb-6 border-b-2 border-black pb-4 shrink-0">
-                <div className="flex gap-4 h-full items-center">
-                    <div className="w-20 h-20 relative">
-                        <img src="https://ik.imagekit.io/dymeconnect/fresherfarmdirect_logo-removebg-preview.png?updatedAt=1760444368116" alt="Logo" className="w-full h-full object-contain" />
+            {/* TOP SECTION: FRUITS (Left = Local/Thai/Others, Right = Import) */}
+            { (Object.keys(leftCats).length > 0 || Object.keys(rightCats).length > 0) && (
+                <div className="flex items-start gap-4">
+                    {/* Left Column: Local & Thai & Others */}
+                    <div className="w-1/2">
+                        {Object.keys(leftCats).length > 0 
+                            ? renderTableContent(leftCats) 
+                            : <div className="text-[9px] text-gray-400 italic font-bold">No Local/Thai Fruits</div>}
                     </div>
-                    <div>
-                        <h1 className="text-2xl font-black uppercase tracking-tight mb-1">FRESHER FARM DIRECT SDN BHD</h1>
-                        <div className="text-[10px] leading-tight text-gray-800 font-bold uppercase">
-                            <p>Reg No: 200701010054 | TIN No: C20176000020 | MSIC Code: 46319</p>
-                            <p>Address: Lot 18 & 19, Kompleks Selayang, Batu 8-1/2, Jalan Ipoh, 68100 Batu Caves, Selangor</p>
-                            <p>Tel: 011-2862 8667 | Email: fresherfarmdirect2.0@gmail.com</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* --- TITLE & METADATA --- */}
-            <div className="mb-6 flex justify-between items-end shrink-0">
-                <div className="text-left w-2/3">
-                    <h2 className="text-4xl font-black uppercase tracking-widest leading-none mb-4 text-blue-900">PRICE LIST</h2>
-                    <div className="bg-gray-100 p-3 rounded-lg border border-gray-300 inline-block w-full">
-                        <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">Prepared For</p>
-                        <p className="text-lg font-black uppercase">{selectedCustomer === 'GENERAL' ? 'Valued Customer' : selectedCustomer}</p>
+                    
+                    {/* Right Column: Imports */}
+                    <div className="w-1/2">
+                        {Object.keys(rightCats).length > 0 
+                            ? renderTableContent(rightCats) 
+                            : <div className="text-[9px] text-gray-400 italic font-bold">No Import Fruits</div>}
                     </div>
                 </div>
-                <div className="text-right border-l-2 border-black pl-4">
-                    <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">Effective Date</p>
-                    <p className="text-lg font-black">{formatDateLabel(effectiveDate)}</p>
-                    <p className="text-[10px] text-gray-500 font-black uppercase tracking-widest mt-2 mb-1">Valid Until</p>
-                    <p className="text-lg font-black">{formatDateLabel(validUntil)}</p>
+            )}
+
+            {/* BOTTOM SECTION: VEGE (Using super compact CSS multi-columns with 10px spacing above) */}
+            { Object.keys(vegeCats).length > 0 && (
+                <div className="mt-[10px]">
+                    {/* CSS 'columns-2' will automatically flow the Vege tables cleanly across two side-by-side columns to save maximum space */}
+                    <div className="columns-2 gap-4">
+                        {renderTableContent(vegeCats)}
+                    </div>
                 </div>
-            </div>
+            )}
 
-            {/* --- ITEMS TABLE (GROUPED UOMS & PRICES) --- */}
-            <div className="flex-grow relative mt-2">
-                <table className="w-full border-collapse text-xs">
-                    <thead>
-                        <tr className="border-b-2 border-t-2 border-black text-black uppercase font-black bg-gray-100/50">
-                            <th className="py-2 px-2 text-center w-12 border-r border-gray-300">No</th>
-                            <th className="py-2 px-3 text-left border-r border-gray-300">Product Description</th>
-                            <th className="py-2 px-2 text-center w-32 border-r border-gray-300">UOM</th>
-                            <th className="py-2 px-3 text-right w-40">Price (RM)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {/* Group by Category -> then by Product */}
-                        {(() => {
-                            const grouped = {};
-                            selectedItems.forEach(item => {
-                                if (!grouped[item.category]) grouped[item.category] = {};
-                                if (!grouped[item.category][item.productCode]) {
-                                    grouped[item.category][item.productCode] = {
-                                        productName: item.productName,
-                                        uoms: [],
-                                        prices: []
-                                    };
-                                }
-                                grouped[item.category][item.productCode].uoms.push(item.uom);
-                                grouped[item.category][item.productCode].prices.push(item.price ? Number(item.price).toFixed(2) : 'TBA');
-                            });
-                            
-                            const sortedCategories = Object.keys(grouped).sort((a, b) => {
-                                if (a === 'VEGE') return -1;
-                                if (b === 'VEGE') return 1;
-                                return a.localeCompare(b);
-                            });
-
-                            let globalIndex = 1;
-                            const rows = [];
-
-                            sortedCategories.forEach(cat => {
-                                // Category Header Row
-                                rows.push(
-                                    <tr key={`cat-${cat}`} className="border-b border-gray-300 bg-gray-50">
-                                        <td colSpan="4" className="py-2 px-3 font-black text-blue-900 uppercase tracking-widest text-[10px]">
-                                            {cat}
-                                        </td>
-                                    </tr>
-                                );
-                                
-                                // Product Rows (Combining multiple UOMs / Prices)
-                                const productsInCat = Object.values(grouped[cat]).sort((a, b) => a.productName.localeCompare(b.productName));
-                                
-                                productsInCat.forEach((prod, pIdx) => {
-                                    const uomStr = prod.uoms.join(' / ');
-                                    const priceStr = prod.prices.map(p => p === 'TBA' ? 'TBA' : `RM ${p}`).join(' / ');
-
-                                    rows.push(
-                                        <tr key={`prod-${cat}-${pIdx}`} className="border-b border-gray-200 h-8">
-                                            <td className="py-1 px-2 text-center border-r border-gray-200 font-bold text-gray-500">{globalIndex++}</td>
-                                            <td className="py-1 px-3 border-r border-gray-200 font-black uppercase text-gray-800">{prod.productName}</td>
-                                            <td className="py-1 px-2 text-center border-r border-gray-200 font-bold uppercase">{uomStr}</td>
-                                            <td className="py-1 px-3 text-right font-black text-black text-sm">{priceStr}</td>
-                                        </tr>
-                                    );
-                                });
-                            });
-                            
-                            return rows;
-                        })()}
-                    </tbody>
-                </table>
-            </div>
-
-            {/* Footer Note */}
-            <div className="mt-8 pt-4 border-t border-gray-300 text-center text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+            {/* Unified Footer Note at the very bottom */}
+            <div className="mt-2 pt-2 border-t border-gray-300 text-center text-[7px] font-bold text-gray-500 uppercase tracking-widest">
                 Subject to stock availability. Please contact us to confirm your order.
             </div>
         </div>

@@ -17,7 +17,8 @@ import {
   UserCircleIcon, 
   CheckCircleIcon,
   SparklesIcon,
-  CloudArrowUpIcon
+  CloudArrowUpIcon,
+  CloudArrowDownIcon
 } from '@heroicons/react/24/outline';
 
 const getLocalDateString = (date) => {
@@ -33,8 +34,8 @@ export default function PricelistPage() {
   const [currentUser, setCurrentUser] = useState('');
 
   // Data States
-  const [allCustomers, setAllCustomers] = useState([]); // Raw list of all DB customers
-  const [brandList, setBrandList] = useState([]); // Unique Brands (fallback to CompanyName)
+  const [allCustomers, setAllCustomers] = useState([]); 
+  const [brandList, setBrandList] = useState([]); 
   const [products, setProducts] = useState([]);
   
   // Form States
@@ -47,8 +48,10 @@ export default function PricelistPage() {
   });
   
   // List States
-  const [selectedItems, setSelectedItems] = useState([]); // { id, productCode, productName, category, uom, price }
+  // Structure: { productCode, productName, category, allowedUoms: [], prices: { UOM1: '', UOM2: '' } }
+  const [selectedItems, setSelectedItems] = useState([]); 
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All'); // NEW: Category Filter State
   const [isSmartLoading, setIsSmartLoading] = useState(false);
   const [isSavingDB, setIsSavingDB] = useState(false);
 
@@ -73,10 +76,8 @@ export default function PricelistPage() {
           if (custRes.error) throw custRes.error;
           if (prodRes.error) throw prodRes.error;
 
-          // 1. Save all raw customers for mapping later
           setAllCustomers(custRes.data || []);
 
-          // 2. Extract Unique Brands (Fallback to CompanyName if BrandName is empty)
           const uniqueBrands = Array.from(new Set(
               (custRes.data || []).map(c => (c.BrandName || c.CompanyName).toUpperCase().trim())
           )).filter(Boolean).sort();
@@ -96,48 +97,41 @@ export default function PricelistPage() {
   // --- ACTIONS ---
 
   const handleAddProduct = (prod) => {
-      const defaultUom = prod.SalesUOM || prod.BaseUOM || 'KG';
+      if (selectedItems.find(i => i.productCode === prod.ProductCode)) return; 
       
-      // Determine which UOM to add next if they click multiple times
-      const existingUoms = selectedItems.filter(i => i.productCode === prod.ProductCode).map(i => i.uom);
-      const allAllowed = Array.from(new Set([prod.BaseUOM, ...(prod.AllowedUOMs ? prod.AllowedUOMs.split(',').map(u=>u.trim().toUpperCase()) : [])])).filter(Boolean);
-      
-      let uomToAdd = defaultUom;
-      
-      if (existingUoms.includes(defaultUom)) {
-          // If default is already in the list, find the next available UOM
-          const nextUom = allAllowed.find(u => !existingUoms.includes(u));
-          if (!nextUom) return; // All possible UOMs are already added!
-          uomToAdd = nextUom;
-      }
+      const allowed = Array.from(new Set([prod.BaseUOM, ...(prod.AllowedUOMs ? prod.AllowedUOMs.split(',').map(u=>u.trim().toUpperCase()) : [])])).filter(Boolean);
+      const pricesObj = {};
+      allowed.forEach(u => pricesObj[u] = '');
       
       setSelectedItems(prev => [...prev, {
-          id: Date.now() + Math.random(),
           productCode: prod.ProductCode,
           productName: prod.ProductName,
           category: prod.Category || 'OTHERS',
-          uom: uomToAdd,
-          price: '' 
+          allowedUoms: allowed,
+          prices: pricesObj
       }]);
       setSearchTerm('');
   };
 
   const handleAddAllProducts = () => {
-      if (!confirm("Are you sure you want to add ALL products (default UOM) to the price list?")) return;
+      if (!confirm(`Are you sure you want to add ALL currently filtered products (${filteredProducts.length}) to the price list?`)) return;
       
+      const currentCodes = new Set(selectedItems.map(i => i.productCode));
       const newItems = [];
-      products.forEach((prod, idx) => {
-          const defaultUom = prod.SalesUOM || prod.BaseUOM || 'KG';
-          // Only add if not already present with this UOM
-          const exists = selectedItems.find(i => i.productCode === prod.ProductCode && i.uom === defaultUom);
-          if (!exists) {
+      
+      // Only add from the currently filtered list
+      filteredProducts.forEach((prod) => {
+          if (!currentCodes.has(prod.ProductCode)) {
+              const allowed = Array.from(new Set([prod.BaseUOM, ...(prod.AllowedUOMs ? prod.AllowedUOMs.split(',').map(u=>u.trim().toUpperCase()) : [])])).filter(Boolean);
+              const pricesObj = {};
+              allowed.forEach(u => pricesObj[u] = '');
+              
               newItems.push({
-                  id: Date.now() + idx + Math.random(),
                   productCode: prod.ProductCode,
                   productName: prod.ProductName,
                   category: prod.Category || 'OTHERS',
-                  uom: defaultUom,
-                  price: ''
+                  allowedUoms: allowed,
+                  prices: pricesObj
               });
           }
       });
@@ -145,72 +139,88 @@ export default function PricelistPage() {
       setSelectedItems(prev => [...prev, ...newItems]);
   };
 
+  const handleUpdatePrice = (productCode, uom, value) => {
+      setSelectedItems(prev => prev.map(item => {
+          if (item.productCode === productCode) {
+              return { ...item, prices: { ...item.prices, [uom]: value } };
+          }
+          return item;
+      }));
+  };
+
+  const handleRemoveItem = (productCode) => {
+      setSelectedItems(prev => prev.filter(item => item.productCode !== productCode));
+  };
+
+  const handleClearList = () => {
+      if (confirm("Clear all items from the list?")) setSelectedItems([]);
+  };
+
+  // --- DB LOGIC ---
+
+  // 1. SMART LOAD FROM HISTORICAL ORDERS
   const handleSmartLoad = async () => {
       if (selectedCustomer === 'GENERAL') return alert("Please select a specific brand to load their usual items.");
       setIsSmartLoading(true);
 
       try {
-          // 1. Find all CompanyNames that belong to this selected Brand (or CompanyName fallback)
           const matchingCompanies = Array.from(new Set(
               allCustomers
                   .filter(c => (c.BrandName || c.CompanyName).toUpperCase().trim() === selectedCustomer)
                   .map(c => c.CompanyName)
           ));
 
-          // 2. Fetch a large chunk of recent orders
           const { data } = await supabase.from('Orders')
               .select('"Product Code", "Order Items", UOM, Price, "Delivery Date", "Customer Name"')
               .order('Timestamp', { ascending: false })
               .limit(5000); 
 
-          // 3. Filter orders in memory to match ANY of the companies under this brand
           const matchedData = (data || []).filter(row => {
               const rowCustName = (row["Customer Name"] || '').toUpperCase();
               return matchingCompanies.some(cn => rowCustName.includes(cn.toUpperCase()));
           });
 
           if (matchedData.length > 0) {
-              const freqMap = {};
+              const freqMap = {}; // Group by Product Code
               matchedData.forEach(row => {
                   const code = row["Product Code"];
-                  const uom = row.UOM || 'KG';
+                  const uom = (row.UOM || 'KG').toUpperCase();
                   if (!code) return;
                   
-                  // Group by Product Code AND UOM so we can load multiple pricing tiers (e.g. CTN vs PKT)
-                  const mapKey = `${code}_${uom}`;
-                  
-                  if (!freqMap[mapKey]) {
-                      freqMap[mapKey] = { 
+                  if (!freqMap[code]) {
+                      const masterProd = products.find(p => p.ProductCode === code);
+                      const allowed = masterProd ? Array.from(new Set([masterProd.BaseUOM, ...(masterProd.AllowedUOMs ? masterProd.AllowedUOMs.split(',').map(u=>u.trim().toUpperCase()) : [])])).filter(Boolean) : [uom];
+                      const pricesObj = {};
+                      allowed.forEach(u => pricesObj[u] = '');
+                      
+                      freqMap[code] = { 
                           productCode: code, 
                           productName: row["Order Items"], 
-                          uom: uom, 
-                          price: Number(row.Price) || '', 
+                          category: masterProd?.Category || 'OTHERS',
+                          allowedUoms: allowed,
+                          prices: pricesObj,
                           count: 0 
                       };
                   }
-                  freqMap[mapKey].count++;
+                  
+                  // Only capture the latest price for each UOM encountered (since it's sorted desc)
+                  if (!freqMap[code].prices[uom] && row.Price > 0) {
+                      // Safety check if order UOM wasn't in masterlist
+                      if(!freqMap[code].allowedUoms.includes(uom)) freqMap[code].allowedUoms.push(uom);
+                      freqMap[code].prices[uom] = row.Price;
+                  }
+                  freqMap[code].count++;
               });
 
-              const currentMapKeys = new Set(selectedItems.map(i => `${i.productCode}_${i.uom}`));
+              const currentCodes = new Set(selectedItems.map(i => i.productCode));
               const topItems = Object.values(freqMap)
-                  .filter(item => !currentMapKeys.has(`${item.productCode}_${item.uom}`))
+                  .filter(item => !currentCodes.has(item.productCode))
                   .sort((a, b) => b.count - a.count)
-                  .slice(0, 40) // Top 40 most frequent items
-                  .map((item, idx) => {
-                      const masterProd = products.find(p => p.ProductCode === item.productCode);
-                      return {
-                          id: Date.now() + idx + Math.random(),
-                          productCode: item.productCode,
-                          productName: item.productName,
-                          category: masterProd?.Category || 'OTHERS',
-                          uom: item.uom,
-                          price: item.price
-                      };
-                  });
+                  .slice(0, 40); 
 
               if (topItems.length > 0) {
                   setSelectedItems(prev => [...prev, ...topItems]);
-                  alert(`Successfully loaded ${topItems.length} frequent item/UOM variants with their last sold prices!`);
+                  alert(`Successfully loaded ${topItems.length} frequent products with their last sold prices!`);
               } else {
                   alert("No new historical items found for this brand.");
               }
@@ -225,60 +235,126 @@ export default function PricelistPage() {
       }
   };
 
-  const handleUpdateItem = (id, field, value) => {
-      setSelectedItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
+  // 2. LOAD SAVED PRICELIST FROM DATABASE
+  const handleLoadSavedPrices = async () => {
+      setIsSmartLoading(true); // Re-use loading visual
+
+      try {
+          const { data, error } = await supabase
+              .from('CustomerPrices')
+              .select('*')
+              .eq('CustomerName', selectedCustomer);
+
+          if (error) throw error;
+
+          if (data && data.length > 0) {
+              // Restore the saved dates
+              if (data[0].ValidUntil) setValidUntil(data[0].ValidUntil);
+              if (data[0].EffectiveDate) {
+                  setEffectiveDate(data[0].EffectiveDate);
+              } else if (data[0].created_at) {
+                  // Fallback for older saves before the EffectiveDate column was added
+                  setEffectiveDate(data[0].created_at.substring(0, 10));
+              }
+
+              const prodMap = {};
+              data.forEach(row => {
+                  if (!prodMap[row.ProductCode]) {
+                      const masterProd = products.find(p => p.ProductCode === row.ProductCode);
+                      const allowed = masterProd ? Array.from(new Set([masterProd.BaseUOM, ...(masterProd.AllowedUOMs ? masterProd.AllowedUOMs.split(',').map(u=>u.trim().toUpperCase()) : [])])).filter(Boolean) : [row.UOM];
+                      const pricesObj = {};
+                      allowed.forEach(u => pricesObj[u] = '');
+                      
+                      prodMap[row.ProductCode] = {
+                          productCode: row.ProductCode,
+                          productName: row.ProductName,
+                          category: masterProd?.Category || 'OTHERS',
+                          allowedUoms: allowed,
+                          prices: pricesObj
+                      };
+                  }
+                  
+                  if (row.Price > 0) {
+                      // Append UOM if it wasn't in the default allowed list
+                      if (!prodMap[row.ProductCode].allowedUoms.includes(row.UOM)) {
+                          prodMap[row.ProductCode].allowedUoms.push(row.UOM);
+                      }
+                      prodMap[row.ProductCode].prices[row.UOM] = row.Price;
+                  }
+              });
+
+              setSelectedItems(Object.values(prodMap));
+              alert(`Successfully retrieved the saved price list for ${selectedCustomer}.`);
+          } else {
+              alert(`No saved price list found for ${selectedCustomer}.`);
+          }
+      } catch (err) {
+          console.error("Error loading saved prices:", err);
+          alert("Error retrieving saved prices.");
+      } finally {
+          setIsSmartLoading(false);
+      }
   };
 
-  const handleRemoveItem = (id) => {
-      setSelectedItems(prev => prev.filter(item => item.id !== id));
-  };
-
-  const handleClearList = () => {
-      if (confirm("Clear all items from the list?")) setSelectedItems([]);
-  };
-
-  // --- EXPORT & DB LOGIC ---
-
+  // 3. SAVE TO DATABASE
   const handleSaveToDB = async () => {
-      if (selectedCustomer === 'GENERAL') return alert("Cannot save special prices for 'GENERAL'. Please select a specific brand.");
       if (selectedItems.length === 0) return alert("The price list is empty.");
 
       setIsSavingDB(true);
 
       try {
-          // 1. Find all specific CompanyNames associated with this Brand
-          const companyNamesToUpdate = Array.from(new Set(
-              allCustomers
-                  .filter(c => (c.BrandName || c.CompanyName).toUpperCase().trim() === selectedCustomer)
-                  .map(c => c.CompanyName)
-          ));
+          let companyNamesToUpdate = [];
+          
+          // Allow saving GENERAL price list
+          if (selectedCustomer === 'GENERAL') {
+              companyNamesToUpdate = ['GENERAL'];
+          } else {
+              companyNamesToUpdate = Array.from(new Set(
+                  allCustomers
+                      .filter(c => (c.BrandName || c.CompanyName).toUpperCase().trim() === selectedCustomer)
+                      .map(c => c.CompanyName)
+              ));
 
-          // 2. Delete old prices for ALL these specific companies to ensure a clean slate
+              // Ensure we at least save for the Brand Name if no sub-branches exist
+              if (companyNamesToUpdate.length === 0) {
+                  companyNamesToUpdate.push(selectedCustomer);
+              }
+          }
+
+          // Delete old prices to ensure clean slate
           await supabase.from('CustomerPrices').delete().in('CustomerName', companyNamesToUpdate);
 
-          // 3. Create price rows duplicated for EVERY specific company under the brand
           const rows = [];
           companyNamesToUpdate.forEach(cName => {
               selectedItems.forEach(item => {
-                  rows.push({
-                      CustomerName: cName,
-                      ProductCode: item.productCode,
-                      ProductName: item.productName,
-                      UOM: item.uom,
-                      Price: Number(item.price) || 0,
-                      ValidUntil: validUntil,
-                      LoggedBy: currentUser
+                  Object.entries(item.prices).forEach(([uom, priceVal]) => {
+                      if (priceVal !== '' && priceVal !== undefined) {
+                          rows.push({
+                              CustomerName: cName,
+                              ProductCode: item.productCode,
+                              ProductName: item.productName,
+                              UOM: uom,
+                              Price: Number(priceVal) || 0,
+                              ValidUntil: validUntil,
+                              EffectiveDate: effectiveDate, 
+                              LoggedBy: currentUser
+                          });
+                      }
                   });
               });
           });
 
-          // 4. Insert new prices into the database
+          if (rows.length === 0) {
+              setIsSavingDB(false);
+              return alert("No valid prices entered to save. Please enter at least one price.");
+          }
+
           const { error } = await supabase.from('CustomerPrices').insert(rows);
 
           if (error) {
               alert("Database Error: " + error.message);
           } else {
-              alert(`Success! Saved ${selectedItems.length} prices across ${companyNamesToUpdate.length} outlets for ${selectedCustomer}. They will now auto-fill in new orders!`);
+              alert(`Success! Saved pricing for ${selectedCustomer} (Applies to ${companyNamesToUpdate.length} outlets). They will now auto-fill in orders!`);
           }
       } catch (error) {
           console.error("Save error:", error);
@@ -288,29 +364,25 @@ export default function PricelistPage() {
       }
   };
 
+  const formatDateLabel = (dateStr) => {
+      if (!dateStr) return '';
+      const d = new Date(dateStr);
+      return !isNaN(d) ? d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : dateStr;
+  };
+
   const copyToWhatsApp = () => {
       if (selectedItems.length === 0) return alert("The list is empty.");
 
       const custName = selectedCustomer === 'GENERAL' ? 'Valued Customer' : selectedCustomer;
       
-      let text = `*FRESHER FARM DIRECT SDN BHD*\n`;
-      text += `Special Weekly Price List\n`;
+      let text = `*Fresher Farm Direct* Pricelist\n`;
       text += `For: *${custName}*\n`;
-      text += `Effective: ${effectiveDate.split('-').reverse().join('/')}\n\n`;
+      text += `Effective: ${formatDateLabel(effectiveDate)} to ${formatDateLabel(validUntil)}\n\n`;
 
-      // Group by Category -> then by Product Code to combine UOMs/Prices in WhatsApp
       const grouped = {};
       selectedItems.forEach(item => {
-          if (!grouped[item.category]) grouped[item.category] = {};
-          if (!grouped[item.category][item.productCode]) {
-              grouped[item.category][item.productCode] = {
-                  productName: item.productName,
-                  uoms: [],
-                  prices: []
-              };
-          }
-          grouped[item.category][item.productCode].uoms.push(item.uom);
-          grouped[item.category][item.productCode].prices.push(item.price ? `RM ${Number(item.price).toFixed(2)}` : 'TBA');
+          if (!grouped[item.category]) grouped[item.category] = [];
+          grouped[item.category].push(item);
       });
 
       const sortedCategories = Object.keys(grouped).sort((a, b) => {
@@ -321,12 +393,13 @@ export default function PricelistPage() {
 
       sortedCategories.forEach(cat => {
           text += `📦 *${cat}*\n`;
-          // Sort items alphabetically
-          const productsInCat = Object.values(grouped[cat]).sort((a, b) => a.productName.localeCompare(b.productName));
-          productsInCat.forEach(prod => {
-              const uomStr = prod.uoms.join(' / ');
-              const priceStr = prod.prices.join(' / ');
-              text += `• ${prod.productName} (${uomStr}): ${priceStr}\n`;
+          grouped[cat].sort((a, b) => a.productName.localeCompare(b.productName)).forEach(item => {
+              const activeUoms = item.allowedUoms.filter(u => item.prices[u] !== '' && item.prices[u] !== undefined);
+              if (activeUoms.length > 0) {
+                  const uomStr = activeUoms.join(' / ');
+                  const priceStr = activeUoms.map(u => `RM ${Number(item.prices[u]).toFixed(2)}`).join(' / ');
+                  text += `• ${item.productName} (${uomStr}): ${priceStr}\n`;
+              }
           });
           text += `\n`;
       });
@@ -341,20 +414,33 @@ export default function PricelistPage() {
   };
 
   // --- FILTERS ---
+  const uniqueCategories = useMemo(() => {
+      const cats = new Set(products.map(p => p.Category).filter(Boolean));
+      return ['All', ...Array.from(cats).sort()];
+  }, [products]);
+
   const filteredProducts = products.filter(p => {
-      if (!searchTerm) return true;
+      const matchesCategory = selectedCategory === 'All' || p.Category === selectedCategory;
+      if (!searchTerm) return matchesCategory;
+      
       const terms = searchTerm.toLowerCase().split(' ').filter(Boolean);
       const str = `${p.ProductName} ${p.ProductCode}`.toLowerCase();
-      return terms.every(t => str.includes(t));
+      return matchesCategory && terms.every(t => str.includes(t));
   });
 
   if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse uppercase">Loading Intelligence...</div>;
 
   return (
     <>
-      {/* ==========================================
-          INTERACTIVE UI (HIDDEN DURING PRINT)
-          ========================================== */}
+      {/* Aggressive Global Print Fix for escaping Mobile Navigation Bars */}
+      <style dangerouslySetInnerHTML={{__html: `
+          @media print {
+              nav, aside, footer { display: none !important; }
+              div[class*="fixed bottom-0"], div[class*="fixed"][class*="bottom-0"] { display: none !important; }
+              .md\\:hidden { display: none !important; }
+          }
+      `}} />
+
       <div className="print:hidden p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32 animate-in fade-in duration-300">
           
           <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
@@ -412,62 +498,80 @@ export default function PricelistPage() {
                           </div>
                       </div>
 
-                      {/* Smart Load Action */}
-                      {selectedCustomer !== 'GENERAL' && (
+                      {/* Load Actions */}
+                      <div className="flex gap-2 pt-2">
                           <button 
-                              onClick={handleSmartLoad}
+                              onClick={handleLoadSavedPrices}
                               disabled={isSmartLoading}
-                              className="w-full bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-black py-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-xs uppercase tracking-widest active:scale-95 disabled:opacity-50"
+                              className="flex-1 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-black py-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest active:scale-95 disabled:opacity-50"
                           >
-                              <SparklesIcon className={`w-5 h-5 ${isSmartLoading ? 'animate-pulse' : ''}`} /> 
-                              {isSmartLoading ? 'Analyzing Outlets...' : 'Smart Load Usual Items'}
+                              <CloudArrowDownIcon className={`w-4 h-4 ${isSmartLoading ? 'animate-bounce' : ''}`} /> 
+                              Load Saved
                           </button>
-                      )}
+                          
+                          {selectedCustomer !== 'GENERAL' && (
+                              <button 
+                                  onClick={handleSmartLoad}
+                                  disabled={isSmartLoading}
+                                  className="flex-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 font-black py-3 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest active:scale-95 disabled:opacity-50"
+                              >
+                                  <SparklesIcon className={`w-4 h-4 ${isSmartLoading ? 'animate-pulse' : ''}`} /> 
+                                  Smart Guess
+                              </button>
+                          )}
+                      </div>
                   </div>
 
                   {/* Catalog Search */}
                   <div className="flex-1 flex flex-col overflow-hidden pt-4 border-t border-gray-100">
                       <div className="flex justify-between items-center mb-3">
                           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Product Catalog</label>
-                          <button onClick={handleAddAllProducts} className="text-[9px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded transition-colors uppercase">Add All</button>
+                          <button onClick={handleAddAllProducts} className="text-[9px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded transition-colors uppercase">Add All Filtered</button>
                       </div>
-                      <div className="relative mb-3 flex-none">
-                          <span className="absolute left-3 top-3 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4" /></span>
-                          <input 
-                              type="text"
-                              placeholder="Search to add products..."
-                              className="w-full pl-9 p-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm"
-                              value={searchTerm}
-                              onChange={e => setSearchTerm(e.target.value)}
-                          />
+                      
+                      <div className="flex flex-col gap-2 mb-3 flex-none">
+                          <select
+                              className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer text-gray-700 uppercase"
+                              value={selectedCategory}
+                              onChange={e => setSelectedCategory(e.target.value)}
+                          >
+                              {uniqueCategories.map(c => (
+                                  <option key={c} value={c}>{c}</option>
+                              ))}
+                          </select>
+                          <div className="relative">
+                              <span className="absolute left-3 top-3 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4" /></span>
+                              <input 
+                                  type="text"
+                                  placeholder="Search to add products..."
+                                  className="w-full pl-9 p-2.5 bg-white border border-gray-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all shadow-sm"
+                                  value={searchTerm}
+                                  onChange={e => setSearchTerm(e.target.value)}
+                              />
+                          </div>
                       </div>
                       
                       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-1.5">
                           {filteredProducts.map(p => {
-                              const addedUoms = selectedItems.filter(i => i.productCode === p.ProductCode).map(i => i.uom);
-                              const allAllowed = Array.from(new Set([p.BaseUOM, ...(p.AllowedUOMs ? p.AllowedUOMs.split(',').map(u=>u.trim().toUpperCase()) : [])])).filter(Boolean);
-                              const isAllAdded = addedUoms.length > 0 && addedUoms.length >= allAllowed.length;
-
+                              const isAdded = selectedItems.some(i => i.productCode === p.ProductCode);
                               return (
                                   <div 
                                       key={p.ProductCode} 
                                       onClick={() => handleAddProduct(p)}
-                                      className={`p-3 rounded-xl border flex justify-between items-center transition-all ${isAllAdded ? 'bg-gray-50 border-gray-200 opacity-50 cursor-not-allowed' : 'bg-white border-gray-200 cursor-pointer hover:border-blue-300 hover:shadow-sm group'}`}
+                                      className={`p-3 rounded-xl border flex justify-between items-center transition-all ${isAdded ? 'bg-gray-50 border-gray-200 opacity-50 cursor-not-allowed' : 'bg-white border-gray-200 cursor-pointer hover:border-blue-300 hover:shadow-sm group'}`}
                                   >
                                       <div>
                                           <div className="font-bold text-xs uppercase leading-tight text-gray-800 group-hover:text-blue-700">{p.ProductName}</div>
-                                          <div className="flex gap-2 items-center mt-0.5">
-                                              <span className="text-[9px] font-mono text-gray-400">{p.ProductCode}</span>
-                                              {addedUoms.length > 0 && (
-                                                  <span className="text-[8px] font-black text-blue-500 bg-blue-50 px-1 rounded uppercase tracking-widest">{addedUoms.join(', ')} added</span>
-                                              )}
-                                          </div>
+                                          <div className="text-[9px] font-mono text-gray-400 mt-0.5">{p.ProductCode}</div>
                                       </div>
-                                      {!isAllAdded && <PlusIcon className="w-5 h-5 text-gray-300 group-hover:text-blue-500 transition-colors shrink-0" />}
-                                      {isAllAdded && <CheckCircleIcon className="w-5 h-5 text-green-500 shrink-0" />}
+                                      {!isAdded && <PlusIcon className="w-5 h-5 text-gray-300 group-hover:text-blue-500 transition-colors shrink-0" />}
+                                      {isAdded && <CheckCircleIcon className="w-5 h-5 text-green-500 shrink-0" />}
                                   </div>
                               );
                           })}
+                          {filteredProducts.length === 0 && (
+                              <div className="text-center py-6 text-gray-400 italic text-xs font-bold">No products found.</div>
+                          )}
                       </div>
                   </div>
               </div>
@@ -480,7 +584,7 @@ export default function PricelistPage() {
                               <DocumentTextIcon className="w-6 h-6 text-blue-600" /> Active Price List
                           </h2>
                           <p className="text-[10px] md:text-xs text-gray-500 font-bold uppercase mt-1">
-                              {selectedItems.length} Entries included
+                              {selectedItems.length} Products included
                           </p>
                       </div>
                       <div className="flex flex-wrap gap-2 w-full sm:w-auto">
@@ -498,54 +602,47 @@ export default function PricelistPage() {
                           <div className="h-full flex flex-col items-center justify-center text-gray-300 p-8 text-center">
                               <DocumentTextIcon className="w-16 h-16 mb-4 opacity-20" />
                               <p className="font-bold text-sm">Your price list is empty.</p>
-                              <p className="text-xs mt-1 max-w-xs">Select a customer and click "Smart Load", or manually add products from the catalog on the left.</p>
+                              <p className="text-xs mt-1 max-w-xs">Select a customer and load prices, or manually add products from the catalog on the left.</p>
                           </div>
                       ) : (
-                          <table className="w-full text-left whitespace-nowrap min-w-[500px]">
+                          <table className="w-full text-left whitespace-nowrap min-w-[600px]">
                               <thead className="bg-gray-50 text-[10px] font-black text-gray-400 uppercase tracking-widest sticky top-0 z-10 shadow-sm border-b border-gray-100">
                                   <tr>
                                       <th className="p-4 pl-6">Product</th>
-                                      <th className="p-4 text-center w-28">UOM</th>
-                                      <th className="p-4 text-right w-40">Selling Price (RM)</th>
+                                      <th className="p-4 text-right">Pricing Setup (RM)</th>
                                       <th className="p-4 text-center w-16 pr-6"></th>
                                   </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-50 text-sm font-bold text-gray-700">
-                                  {selectedItems.map((item, idx) => (
-                                      <tr key={item.id} className="hover:bg-blue-50/30 transition-colors group/row">
-                                          <td className="p-3 pl-6">
+                                  {selectedItems.map((item) => (
+                                      <tr key={item.productCode} className="hover:bg-blue-50/30 transition-colors group/row">
+                                          <td className="p-4 pl-6 align-middle">
                                               <div className="font-black text-gray-800 uppercase leading-tight truncate max-w-[250px]">{item.productName}</div>
                                               <div className="flex gap-2 items-center mt-1">
                                                   <span className="text-[9px] font-mono text-gray-400 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">{item.productCode}</span>
                                                   <span className="text-[8px] font-black text-blue-500 uppercase tracking-widest">{item.category}</span>
                                               </div>
                                           </td>
-                                          <td className="p-3 text-center">
-                                              <select 
-                                                  className="bg-gray-100 text-gray-600 px-3 py-1 rounded-lg text-xs font-black uppercase border border-gray-200 outline-none focus:ring-2 focus:ring-blue-500 w-full"
-                                                  value={item.uom}
-                                                  onChange={(e) => handleUpdateItem(item.id, 'uom', e.target.value)}
-                                              >
-                                                  {(() => {
-                                                      const prod = products.find(p => p.ProductCode === item.productCode);
-                                                      const allowed = prod?.AllowedUOMs ? prod.AllowedUOMs.split(',').map(u=>u.trim().toUpperCase()) : [];
-                                                      const allUoms = Array.from(new Set([prod?.BaseUOM || item.uom, ...allowed])).filter(Boolean);
-                                                      return allUoms.map(u => <option key={u} value={u}>{u}</option>);
-                                                  })()}
-                                              </select>
+                                          <td className="p-3 align-middle">
+                                              {/* MULTIPLE UOMs DISPLAYED SIDE-BY-SIDE */}
+                                              <div className="flex flex-wrap gap-3 justify-end">
+                                                  {item.allowedUoms.map(uom => (
+                                                      <div key={uom} className="flex items-center gap-2 bg-blue-50/50 border border-blue-100 rounded-xl p-1.5 shadow-sm w-[130px] md:w-[140px]">
+                                                          <span className="text-[10px] font-black text-blue-800 w-10 text-center uppercase tracking-widest">{uom}</span>
+                                                          <input 
+                                                              type="number" 
+                                                              step="0.01" 
+                                                              className="w-full p-2 bg-white border border-blue-200 rounded-lg text-right font-black text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder-gray-300"
+                                                              placeholder="TBA"
+                                                              value={item.prices[uom] || ''}
+                                                              onChange={(e) => handleUpdatePrice(item.productCode, uom, e.target.value)}
+                                                          />
+                                                      </div>
+                                                  ))}
+                                              </div>
                                           </td>
-                                          <td className="p-3 text-right">
-                                              <input 
-                                                  type="number" 
-                                                  step="0.01" 
-                                                  className="w-full max-w-[120px] p-2.5 bg-blue-50 border border-blue-200 rounded-xl text-right font-black text-blue-900 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ml-auto shadow-sm"
-                                                  placeholder="0.00"
-                                                  value={item.price}
-                                                  onChange={(e) => handleUpdateItem(item.id, 'price', e.target.value)}
-                                              />
-                                          </td>
-                                          <td className="p-3 text-center pr-6">
-                                              <button onClick={() => handleRemoveItem(item.id)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                                          <td className="p-3 text-center pr-6 align-middle">
+                                              <button onClick={() => handleRemoveItem(item.productCode)} className="p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors">
                                                   <TrashIcon className="w-5 h-5" />
                                               </button>
                                           </td>
