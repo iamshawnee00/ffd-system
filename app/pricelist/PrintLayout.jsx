@@ -20,7 +20,6 @@ export default function PrintLayout({
 
   selectedItems.forEach(item => {
       const cat = (item.category || 'OTHERS').toUpperCase();
-      // OTHERS now joins LOCAL and THAI on the left side
       if (cat.includes('LOCAL') || cat.includes('THAI') || cat.includes('OTHER')) {
           if (!leftCats[cat]) leftCats[cat] = [];
           leftCats[cat].push(item);
@@ -28,7 +27,6 @@ export default function PrintLayout({
           if (!rightCats[cat]) rightCats[cat] = [];
           rightCats[cat].push(item);
       } else {
-          // VEGE falls here
           if (!vegeCats[cat]) vegeCats[cat] = [];
           vegeCats[cat].push(item);
       }
@@ -39,12 +37,10 @@ export default function PrintLayout({
       const sortedCategories = Object.keys(catGroup).sort((a, b) => a.localeCompare(b));
       
       return sortedCategories.map(cat => {
-          // Sort products alphabetically within the category
           const products = catGroup[cat].sort((a, b) => a.productName.localeCompare(b.productName));
           
           return (
               <table key={cat} className="w-full border-collapse border border-gray-400 table-fixed mb-2 break-inside-avoid">
-                  {/* The <colgroup> strictly enforces widths regardless of colSpans in the headers */}
                   <colgroup>
                       <col style={{ width: '8%' }} />
                       <col style={{ width: '54%' }} />
@@ -69,7 +65,6 @@ export default function PrintLayout({
                           const activeUoms = [];
                           const activePrices = [];
                           
-                          // Safely parse the new nested prices object
                           if (prod.allowedUoms && prod.prices) {
                               prod.allowedUoms.forEach(u => {
                                   const pVal = prod.prices[u];
@@ -92,12 +87,17 @@ export default function PrintLayout({
                           }
 
                           return (
-                              <tr key={`prod-${pIdx}`} className="border-b border-gray-300 h-[16px] break-inside-avoid">
+                              <tr key={`prod-${pIdx}`} className="border-b border-gray-300 break-inside-avoid">
                                   <td className="py-0.5 px-0.5 text-center border-r border-gray-300 text-[8px] text-gray-500 align-top">
                                       {pIdx + 1}
                                   </td>
                                   <td className="py-0.5 px-1 border-r border-gray-300 uppercase text-[8px] leading-tight whitespace-normal break-words text-gray-800 align-top">
-                                      {prod.productName}
+                                      <div className="font-bold">{prod.productName}</div>
+                                      {prod.chineseName && (
+                                          <div className="font-medium text-gray-500 text-[7px] mt-[1px] tracking-wide">
+                                              {prod.chineseName}
+                                          </div>
+                                      )}
                                   </td>
                                   <td className="py-0.5 px-1 text-center border-r border-gray-300 uppercase text-[7px] tracking-wider align-top">
                                       {uomStr}
@@ -114,7 +114,6 @@ export default function PrintLayout({
       });
   };
 
-  // Reusable tight header
   const PrintHeader = () => (
       <div className="shrink-0 mb-3">
         <div className="flex justify-between items-start mb-1.5 border-b-2 border-black pb-1.5">
@@ -165,8 +164,6 @@ export default function PrintLayout({
                 html, body, main { background: white !important; margin: 0 !important; padding: 0 !important; -webkit-print-color-adjust: exact; }
                 main { padding-top: 0 !important; }
                 .print\\:hidden { display: none !important; } 
-                
-                /* Keep categories together and avoid splitting rows */
                 table { break-inside: avoid; page-break-inside: avoid; }
                 tr { break-inside: avoid; page-break-inside: avoid; }
                 .break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
@@ -176,17 +173,13 @@ export default function PrintLayout({
         <div className="box-border relative">
             <PrintHeader />
             
-            {/* TOP SECTION: FRUITS (Left = Local/Thai/Others, Right = Import) */}
             { (Object.keys(leftCats).length > 0 || Object.keys(rightCats).length > 0) && (
                 <div className="flex items-start gap-4">
-                    {/* Left Column: Local & Thai & Others */}
                     <div className="w-1/2">
                         {Object.keys(leftCats).length > 0 
                             ? renderTableContent(leftCats) 
                             : <div className="text-[9px] text-gray-400 italic font-bold">No Local/Thai Fruits</div>}
                     </div>
-                    
-                    {/* Right Column: Imports */}
                     <div className="w-1/2">
                         {Object.keys(rightCats).length > 0 
                             ? renderTableContent(rightCats) 
@@ -195,17 +188,14 @@ export default function PrintLayout({
                 </div>
             )}
 
-            {/* BOTTOM SECTION: VEGE (Using super compact CSS multi-columns with 10px spacing above) */}
             { Object.keys(vegeCats).length > 0 && (
                 <div className="mt-[10px]">
-                    {/* CSS 'columns-2' will automatically flow the Vege tables cleanly across two side-by-side columns to save maximum space */}
                     <div className="columns-2 gap-4">
                         {renderTableContent(vegeCats)}
                     </div>
                 </div>
             )}
 
-            {/* Unified Footer Note at the very bottom */}
             <div className="mt-2 pt-2 border-t border-gray-300 text-center text-[7px] font-bold text-gray-500 uppercase tracking-widest">
                 Subject to stock availability. Please contact us to confirm your order.
             </div>
