@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useSearchParams } from 'next/navigation';
 
@@ -9,6 +9,11 @@ export default function RouteReportContent() {
 
   const [routeData, setRouteData] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // --- DRAG AND DROP STATES ---
+  const dragItem = useRef(null);
+  const dragOverItem = useRef(null);
+  const [draggingRowId, setDraggingRowId] = useState(null);
 
   useEffect(() => {
     async function fetchAndMapRoutes() {
@@ -105,6 +110,47 @@ export default function RouteReportContent() {
     fetchAndMapRoutes();
   }, [date]);
 
+  // --- DRAG AND DROP HANDLERS ---
+  const handleDragStart = (e, groupIndex, itemIndex) => {
+      dragItem.current = { groupIndex, itemIndex };
+      setDraggingRowId(`${groupIndex}-${itemIndex}`);
+      // Slight delay to allow the drag ghost to render properly
+      setTimeout(() => { e.target.style.opacity = '0.5'; }, 0);
+  };
+
+  const handleDragEnter = (e, groupIndex, itemIndex) => {
+      dragOverItem.current = { groupIndex, itemIndex };
+  };
+
+  const handleDragEnd = (e) => {
+      e.target.style.opacity = '1';
+      setDraggingRowId(null);
+
+      if (!dragItem.current || !dragOverItem.current) return;
+
+      const sourceGroup = dragItem.current.groupIndex;
+      const sourceItem = dragItem.current.itemIndex;
+      const targetGroup = dragOverItem.current.groupIndex;
+      const targetItem = dragOverItem.current.itemIndex;
+
+      // Ignore if dropped in the exact same spot
+      if (sourceGroup === targetGroup && sourceItem === targetItem) return;
+
+      const newData = [...routeData];
+      const draggedOrder = newData[sourceGroup].orders[sourceItem];
+
+      // Remove from source array
+      newData[sourceGroup].orders.splice(sourceItem, 1);
+      
+      // Insert into target array
+      newData[targetGroup].orders.splice(targetItem, 0, draggedOrder);
+
+      setRouteData(newData);
+
+      dragItem.current = null;
+      dragOverItem.current = null;
+  };
+
   if (loading) return <div className="p-10 text-white text-center font-bold tracking-widest uppercase animate-pulse">Calculating Route Sequences...</div>;
   if (!date) return <div className="p-10 text-center text-slate-400">Please provide a date parameter.</div>;
   if (routeData.length === 0) return <div className="p-10 text-center text-slate-400">No scheduled routes found for this date.</div>;
@@ -193,7 +239,12 @@ export default function RouteReportContent() {
          </button>
       </div>
 
-      {routeData.map((group) => (
+      {/* Helper text for users in browser view */}
+      <div className="print-hidden mb-6 bg-blue-50 border border-blue-200 text-blue-800 text-xs font-bold p-3 rounded-lg flex items-center gap-2 uppercase tracking-widest">
+         <span>💡</span> You can drag and drop the rows below to rearrange stops before printing. You can even drag an order to a different driver!
+      </div>
+
+      {routeData.map((group, groupIndex) => (
          <div key={group.driver} className="mb-12 print:mb-10 break-inside-avoid">
             {/* DRIVER HEADER */}
             <div className="border-b-2 border-black pb-2 mb-4 flex justify-between items-end">
@@ -209,24 +260,47 @@ export default function RouteReportContent() {
             <table className="w-full text-xs border-collapse border-2 border-black">
                 <thead>
                     <tr className="bg-gray-100 border-b-2 border-black text-[10px] uppercase font-black">
-                        <th className="py-1.5 px-2 text-center w-10 border-r border-black">Stop</th>
+                        <th className="py-1.5 px-2 text-center w-14 border-r border-black">Stop</th>
                         <th className="py-1.5 px-2 text-left w-28 border-r border-black">DO Number</th>
                         <th className="py-1.5 px-2 text-left border-r border-black">Customer</th>
                         <th className="py-1.5 px-2 text-center w-12 border-r border-black">Final</th>
                         <th className="py-1.5 px-2 text-center w-12">Load</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody 
+                    // Optional: add a min-height or pad the body so you can drag into an empty driver list easily
+                    onDragOver={(e) => e.preventDefault()}
+                >
+                    {group.orders.length === 0 && (
+                        <tr>
+                            <td colSpan="5" className="text-center p-4 text-gray-400 italic">No orders assigned. Drag orders here.</td>
+                        </tr>
+                    )}
                     {group.orders.map((o, i) => {
                         const isConsignment = String(o.DONumber).startsWith('CSGN');
+                        const isDragging = draggingRowId === `${groupIndex}-${i}`;
+                        
                         return (
-                        <tr key={o.DONumber} className="border-b border-black break-inside-avoid">
-                            <td className="py-1 px-2 text-center border-r border-black bg-white align-middle font-black text-sm">{i + 1}</td>
+                        <tr 
+                            key={o.DONumber} 
+                            className={`border-b border-black break-inside-avoid print:!break-inside-avoid bg-white hover:bg-gray-50 transition-colors cursor-move ${isDragging ? 'bg-orange-50' : ''}`}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, groupIndex, i)}
+                            onDragEnter={(e) => handleDragEnter(e, groupIndex, i)}
+                            onDragEnd={handleDragEnd}
+                            onDragOver={(e) => e.preventDefault()}
+                        >
+                            <td className="py-1 px-2 text-center border-r border-black align-middle">
+                                <div className="flex items-center justify-center gap-1.5">
+                                    <span className="print-hidden text-gray-400 text-lg font-bold select-none" title="Drag to reorder">☰</span>
+                                    <div className="w-5 h-5 border-2 border-gray-300 rounded-sm bg-gray-50"></div>
+                                </div>
+                            </td>
                             <td className="py-1 px-2 border-r border-black align-middle">
                                 <div className="font-mono font-black text-xs leading-none">{o.DONumber}</div>
                             </td>
                             <td className="py-2 px-3 border-r border-black align-middle">
-                                <div className="flex justify-between items-center gap-2">
+                                <div className="flex justify-between items-center gap-2 pointer-events-none">
                                     <div>
                                         <div className="font-black uppercase text-[12.5px] leading-tight text-black">{o["Customer Name"]}</div>
                                         {isConsignment && <div className="text-[8px] font-black text-orange-600 uppercase tracking-widest mt-0.5">Consignment Drop (No DO)</div>}

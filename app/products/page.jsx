@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import { 
   MagnifyingGlassIcon, 
@@ -10,13 +10,38 @@ import {
   CubeIcon,
   CheckIcon,
   XMarkIcon,
-  ArrowDownTrayIcon
+  ArrowDownTrayIcon,
+  ArrowUpTrayIcon,
+  ArrowsRightLeftIcon
 } from '@heroicons/react/24/outline';
 
 // ==========================================
 // HELPERS
 // ==========================================
 const generateId = () => Date.now().toString(36) + Math.random().toString(36).substr(2);
+
+const parseCSVRow = (str) => {
+    const result = [];
+    let cur = '';
+    let inQuotes = false;
+    for (let i = 0; i < str.length; i++) {
+        if (str[i] === '"') {
+            if (inQuotes && str[i+1] === '"') {
+                cur += '"';
+                i++;
+            } else {
+                inQuotes = !inQuotes;
+            }
+        } else if (str[i] === ',' && !inQuotes) {
+            result.push(cur.trim());
+            cur = '';
+        } else {
+            cur += str[i];
+        }
+    }
+    result.push(cur.trim());
+    return result;
+};
 
 export default function ProductManagementPage() {
   const [products, setProducts] = useState([]);
@@ -39,19 +64,32 @@ export default function ProductManagementPage() {
 
   // Form State
   const [formData, setFormData] = useState({
-    ProductCode: '', ProductName: '', Category: '', origin: '', 
+    ProductCode: '', ProductName: '', ChineseName: '', Category: '', origin: '', 
     AllowedUOMs: 'KG', BaseUOM: 'KG', SalesUOM: 'KG', PurchaseUOM: 'KG'      
   });
 
   const [conversionFactors, setConversionFactors] = useState({});
 
   // ==========================================
-  // BULK ACTIONS & EXPORT STATE
+  // BULK ACTIONS & EXPORT/IMPORT STATE
   // ==========================================
   const [selectedProducts, setSelectedProducts] = useState([]);
   const [isBulkEditOpen, setIsBulkEditOpen] = useState(false);
   const [bulkEditData, setBulkEditData] = useState({ Category: '', origin: '' });
   const [isExporting, setIsExporting] = useState(false);
+  
+  // Import CSV States
+  const fileInputRef = useRef(null);
+  const [importSummary, setImportSummary] = useState(null);
+  const [isImporting, setIsImporting] = useState(false);
+
+  // Migrate Code States
+  const [isMigrateModalOpen, setIsMigrateModalOpen] = useState(false);
+  const [migrateOldProduct, setMigrateOldProduct] = useState(null);
+  const [migrateSearchTerm, setMigrateSearchTerm] = useState('');
+  const [isMigrateSearchOpen, setIsMigrateSearchOpen] = useState(false);
+  const [migrateNewCode, setMigrateNewCode] = useState('');
+  const [isMigrating, setIsMigrating] = useState(false);
 
   // ==========================================
   // CALENDAR STATES & CLOUD LOGIC
@@ -63,14 +101,14 @@ export default function ProductManagementPage() {
   // Drag-to-Select State
   const [isDragging, setIsDragging] = useState(false);
   const [dragTargetValue, setDragTargetValue] = useState(false);
-  const [dragActiveRow, setDragActiveRow] = useState(null); // { gIdx, oIdx }
+  const [dragActiveRow, setDragActiveRow] = useState(null); 
 
   // 1. Initial Load from Supabase
   async function loadAllData() {
     setLoading(true);
     
-    // Fetch Products
-    const { data: prodData } = await supabase.from('ProductMaster').select('*').order('ProductName');
+    // Fetch Products (Including ChineseName) - Limit increased to 5000 to prevent Ghost Data
+    const { data: prodData } = await supabase.from('ProductMaster').select('*').order('ProductName').limit(5000);
     setProducts(prodData || []);
 
     // Fetch Calendar from Supabase
@@ -106,7 +144,6 @@ export default function ProductManagementPage() {
   useEffect(() => {
     loadAllData();
 
-    // Global mouse up listener to stop dragging
     const handleGlobalMouseUp = () => {
         setIsDragging(false);
         setDragActiveRow(null);
@@ -143,6 +180,7 @@ export default function ProductManagementPage() {
         ...formData,
         ProductCode: formData.ProductCode.toUpperCase().trim(),
         ProductName: formData.ProductName.toUpperCase().trim(),
+        ChineseName: formData.ChineseName ? formData.ChineseName.trim() : '',
         Category: formData.Category.toUpperCase().trim(),
         origin: formData.origin ? formData.origin.toUpperCase().trim() : '',
         AllowedUOMs: cleanedAllowed,
@@ -152,6 +190,12 @@ export default function ProductManagementPage() {
     };
 
     if (editingProduct) {
+      // Check if the user is changing the Product Code
+      if (cleanedData.ProductCode !== editingProduct.ProductCode) {
+          const { data: existing } = await supabase.from('ProductMaster').select('ProductCode').eq('ProductCode', cleanedData.ProductCode).single();
+          if (existing) { alert('Error: The NEW Product Code already exists in the system!'); return; }
+      }
+
       const { error } = await supabase.from('ProductMaster').update(cleanedData).eq('ProductCode', editingProduct.ProductCode);
       if (error) { alert('Error updating: ' + error.message); return; }
     } else {
@@ -161,15 +205,23 @@ export default function ProductManagementPage() {
       if (error) { alert('Error adding: ' + error.message); return; }
     }
 
-    await supabase.from('UOM_Conversions').delete().eq('ProductCode', formData.ProductCode);
+    // Safely delete old conversions using the original code, then insert the new ones
+    const codeToClear = editingProduct ? editingProduct.ProductCode : formData.ProductCode;
+    await supabase.from('UOM_Conversions').delete().eq('ProductCode', codeToClear);
+    
     const otherUOMs = getUOMOptions().filter(u => u !== formData.BaseUOM);
     const conversionRows = otherUOMs.map(uom => ({
-        "ProductCode": formData.ProductCode, "BaseUOM": formData.BaseUOM, "ConversionUOM": uom, "Factor": conversionFactors[uom] || 0
+        "ProductCode": cleanedData.ProductCode, 
+        "BaseUOM": formData.BaseUOM, 
+        "ConversionUOM": uom, 
+        "Factor": conversionFactors[uom] || 0
     }));
+    
     if (conversionRows.length > 0) {
         const { error: convError } = await supabase.from('UOM_Conversions').insert(conversionRows);
         if (convError) console.error("Error saving conversions:", convError);
     }
+    
     alert('Product & Conversions saved successfully!');
     closeModal();
     loadAllData();
@@ -187,11 +239,87 @@ export default function ProductManagementPage() {
     }
   };
 
-  // CSV EXPORT LOGIC
+  // ==========================================
+  // GLOBAL MIGRATE PRODUCT CODE LOGIC
+  // ==========================================
+  const handleGlobalCodeMigration = async (e) => {
+      e.preventDefault();
+      if (!migrateOldProduct) return alert("Please select a product to migrate.");
+
+      const oldCode = migrateOldProduct.ProductCode.toUpperCase().trim();
+      const newCode = migrateNewCode.toUpperCase().trim();
+
+      if (!newCode) return alert("Please provide the new product code.");
+      if (oldCode === newCode) return alert("The old code and new code are identical.");
+
+      setIsMigrating(true);
+
+      try {
+          // 1. Check if the New Code already exists in the masterlist
+          const { data: existingNewCode } = await supabase.from('ProductMaster').select('ProductCode').eq('ProductCode', newCode).single();
+          if (existingNewCode) {
+              alert(`Error: The code "${newCode}" is already taken by another product in the masterlist. Migration aborted to prevent data merging conflicts.`);
+              setIsMigrating(false);
+              return;
+          }
+
+          // 2. Cascade updates across all relevant tables
+          // A. ProductMaster
+          const { error: masterErr } = await supabase.from('ProductMaster').update({ ProductCode: newCode }).eq('ProductCode', oldCode);
+          if (masterErr) throw new Error(`ProductMaster Update Failed: ${masterErr.message}`);
+
+          // B. UOM_Conversions
+          await supabase.from('UOM_Conversions').update({ ProductCode: newCode }).eq('ProductCode', oldCode);
+
+          // C. Purchase History
+          await supabase.from('Purchase').update({ ProductCode: newCode }).eq('ProductCode', oldCode);
+
+          // D. Orders (Historical & Active)
+          await supabase.from('Orders').update({ "Product Code": newCode }).eq('Product Code', oldCode);
+
+          // E. CustomerPrices (Special Saved Price Lists)
+          await supabase.from('CustomerPrices').update({ ProductCode: newCode }).eq('ProductCode', oldCode);
+
+          // F. StockAdjustments
+          await supabase.from('StockAdjustments').update({ ProductCode: newCode }).eq('ProductCode', oldCode);
+
+          // G. StandingOrders (JSON Items Array)
+          const { data: standingOrders } = await supabase.from('StandingOrders').select('id, Items');
+          if (standingOrders && standingOrders.length > 0) {
+              for (const so of standingOrders) {
+                  let changed = false;
+                  const newItems = (so.Items || []).map(item => {
+                      if (item.ProductCode === oldCode) {
+                          changed = true;
+                          return { ...item, ProductCode: newCode };
+                      }
+                      return item;
+                  });
+                  if (changed) {
+                      await supabase.from('StandingOrders').update({ Items: newItems }).eq('id', so.id);
+                  }
+              }
+          }
+
+          alert(`Success! All historical and active records for "${oldCode}" have been globally migrated to "${newCode}".`);
+          setIsMigrateModalOpen(false);
+          setMigrateOldProduct(null);
+          setMigrateNewCode('');
+          setMigrateSearchTerm('');
+          loadAllData(); // Refresh UI
+      } catch (err) {
+          console.error("Migration Error:", err);
+          alert(err.message);
+      }
+      setIsMigrating(false);
+  };
+
+  // ==========================================
+  // EXPORT & IMPORT LOGIC
+  // ==========================================
   const handleExportCSV = async () => {
     setIsExporting(true);
     try {
-        // Fetch all UOM conversions to map them cleanly
         const { data: convData, error } = await supabase.from('UOM_Conversions').select('*');
         if (error) throw error;
 
@@ -203,7 +331,6 @@ export default function ProductManagementPage() {
             });
         }
 
-        // Prepare CSV Headers
         const headers = [
             'Product Code', 'Product Name', 'Chinese Name', 'Category', 'Origin', 
             'Base UOM', 'Sales UOM', 'Purchase UOM', 'Allowed UOMs', 'Conversions', 
@@ -212,10 +339,8 @@ export default function ProductManagementPage() {
         
         const csvRows = [headers.join(',')];
 
-        // Format CSV Rows from currently filtered items
         filteredAndSortedProducts.forEach(p => {
             const conversionsStr = convMap[p.ProductCode] ? convMap[p.ProductCode].join(' | ') : '';
-            
             const dStr = p.updated_at || p.created_at || p.Timestamp;
             let formattedDate = '';
             if (dStr) {
@@ -223,7 +348,6 @@ export default function ProductManagementPage() {
                 if (!isNaN(d)) formattedDate = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute:'2-digit' });
             }
 
-            // Function to wrap values in quotes safely for CSV rendering
             const escapeCSV = (str) => `"${String(str || '').replace(/"/g, '""')}"`;
 
             const row = [
@@ -240,11 +364,9 @@ export default function ProductManagementPage() {
                 escapeCSV(p.StockBalance || 0),
                 escapeCSV(formattedDate)
             ];
-            
             csvRows.push(row.join(','));
         });
 
-        // Add BOM \uFEFF to force Excel to read the file as UTF-8 (Supports Chinese characters perfectly)
         const csvContent = '\uFEFF' + csvRows.join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         
@@ -266,9 +388,129 @@ export default function ProductManagementPage() {
     }
   };
 
+  const handleFileUpload = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+          const text = event.target.result;
+          const cleanText = text.replace(/^\uFEFF/, ''); // Strip BOM if exists
+          const lines = cleanText.split('\n').filter(l => l.trim() !== '');
+          
+          if (lines.length < 2) return alert("Invalid CSV file (no data).");
+
+          const headers = parseCSVRow(lines[0]);
+          
+          // Map column indices intelligently
+          const colMap = {
+              code: headers.findIndex(h => h.includes('Product Code')),
+              name: headers.findIndex(h => h.includes('Product Name')),
+              chinese: headers.findIndex(h => h.includes('Chinese Name')),
+              cat: headers.findIndex(h => h.includes('Category')),
+              origin: headers.findIndex(h => h.includes('Origin')),
+              baseUom: headers.findIndex(h => h.includes('Base UOM')),
+              salesUom: headers.findIndex(h => h.includes('Sales UOM')),
+              purcUom: headers.findIndex(h => h.includes('Purchase UOM')),
+              allowed: headers.findIndex(h => h.includes('Allowed UOMs')),
+              convs: headers.findIndex(h => h.includes('Conversions'))
+          };
+
+          if (colMap.code === -1 || colMap.name === -1) {
+              return alert("Invalid CSV format. Must contain at least 'Product Code' and 'Product Name' columns.");
+          }
+
+          const adds = [];
+          const updates = [];
+
+          for (let i = 1; i < lines.length; i++) {
+              const row = parseCSVRow(lines[i]);
+              if (row.length < 2 || !row[colMap.code]) continue;
+
+              const code = row[colMap.code].toUpperCase().trim();
+              const existing = products.find(p => p.ProductCode === code);
+
+              const item = {
+                  ProductCode: code,
+                  ProductName: row[colMap.name]?.toUpperCase().trim() || '',
+                  ChineseName: colMap.chinese > -1 ? row[colMap.chinese]?.trim() : '',
+                  Category: colMap.cat > -1 ? row[colMap.cat]?.toUpperCase().trim() : 'OTHERS',
+                  origin: colMap.origin > -1 ? row[colMap.origin]?.toUpperCase().trim() : '',
+                  BaseUOM: colMap.baseUom > -1 ? row[colMap.baseUom]?.toUpperCase().trim() : 'KG',
+                  SalesUOM: colMap.salesUom > -1 ? row[colMap.salesUom]?.toUpperCase().trim() : 'KG',
+                  PurchaseUOM: colMap.purcUom > -1 ? row[colMap.purcUom]?.toUpperCase().trim() : 'KG',
+                  AllowedUOMs: colMap.allowed > -1 ? row[colMap.allowed]?.toUpperCase().trim() : 'KG',
+                  rawConversions: colMap.convs > -1 ? row[colMap.convs] : '',
+                  StockBalance: existing ? existing.StockBalance : 0 // Preserve existing stock balance
+              };
+
+              if (existing) updates.push(item);
+              else adds.push(item);
+          }
+
+          setImportSummary({ adds, updates });
+          e.target.value = null; // reset file input
+      };
+      reader.readAsText(file);
+  };
+
+  const confirmImport = async () => {
+      setIsImporting(true);
+      try {
+          const allItems = [...importSummary.adds, ...importSummary.updates];
+          
+          // 1. Prepare Master Rows (Upserting protects existing stock balances based on our mapping above)
+          const masterRows = allItems.map(({ rawConversions, ...item }) => ({
+              ...item,
+              updated_at: new Date().toISOString()
+          }));
+
+          // Direct Upsert (Relies on ProductCode being unique constraint in DB)
+          const { error: masterErr } = await supabase.from('ProductMaster').upsert(masterRows, { onConflict: 'ProductCode' });
+          if (masterErr) throw masterErr;
+
+          // 2. Map and Overwrite Conversions
+          const codes = allItems.map(i => i.ProductCode);
+          await supabase.from('UOM_Conversions').delete().in('ProductCode', codes);
+
+          const convRows = [];
+          allItems.forEach(item => {
+              if (item.rawConversions) {
+                  // e.g. "1 CTN = 15 KG | 1 PCS = 0.3 KG"
+                  const parts = item.rawConversions.split('|');
+                  parts.forEach(part => {
+                      const match = part.match(/1\s+([A-Z]+)\s*=\s*([\d.]+)\s+([A-Z]+)/i);
+                      if (match) {
+                          convRows.push({
+                              ProductCode: item.ProductCode,
+                              ConversionUOM: match[1].toUpperCase(),
+                              Factor: Number(match[2]),
+                              BaseUOM: match[3].toUpperCase()
+                          });
+                      }
+                  });
+              }
+          });
+
+          if (convRows.length > 0) {
+              const { error: convErr } = await supabase.from('UOM_Conversions').insert(convRows);
+              if (convErr) console.error("Error inserting conversions:", convErr);
+          }
+
+          alert(`Import successful!\n\nAdded: ${importSummary.adds.length}\nUpdated: ${importSummary.updates.length}`);
+          setImportSummary(null);
+          loadAllData(); // Refresh UI
+      } catch (err) {
+          console.error(err);
+          alert("Error during import: " + err.message);
+      } finally {
+          setIsImporting(false);
+      }
+  };
+
   const openAddModal = () => {
     setEditingProduct(null);
-    setFormData({ ProductCode: '', ProductName: '', Category: '', origin: '', AllowedUOMs: 'KG', BaseUOM: 'KG', SalesUOM: 'KG', PurchaseUOM: 'KG' });
+    setFormData({ ProductCode: '', ProductName: '', ChineseName: '', Category: '', origin: '', AllowedUOMs: 'KG', BaseUOM: 'KG', SalesUOM: 'KG', PurchaseUOM: 'KG' });
     setConversionFactors({});
     setIsModalOpen(true);
   };
@@ -278,6 +520,7 @@ export default function ProductManagementPage() {
     setFormData({
       ProductCode: product.ProductCode, 
       ProductName: product.ProductName, 
+      ChineseName: product.ChineseName || '',
       Category: product.Category || 'VEGE',
       origin: product.origin || '',
       AllowedUOMs: product.AllowedUOMs || 'KG', 
@@ -306,7 +549,6 @@ export default function ProductManagementPage() {
 
   const uniqueOrigins = useMemo(() => {
       const orgs = new Set(products.map(p => p.origin).filter(Boolean));
-      // Fallback defaults if empty
       ['MALAYSIA', 'CHINA', 'THAILAND', 'AUSTRALIA', 'SPAIN', 'SOUTH AFRICA'].forEach(o => orgs.add(o));
       return Array.from(orgs).sort();
   }, [products]);
@@ -321,7 +563,7 @@ export default function ProductManagementPage() {
   const filteredAndSortedProducts = useMemo(() => {
       let filtered = products.filter(p => {
           const searchTerms = searchTerm.toLowerCase().split(' ').filter(t => t);
-          const productString = `${p.ProductName || ''} ${p.ProductCode || ''}`.toLowerCase();
+          const productString = `${p.ProductName || ''} ${p.ChineseName || ''} ${p.ProductCode || ''}`.toLowerCase();
           const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => productString.includes(term));
           const matchesCategory = selectedCategory === 'All' || p.Category === selectedCategory;
           const matchesColCode = !columnFilters.code || (p.ProductCode || '').toLowerCase().includes(columnFilters.code.toLowerCase());
@@ -331,7 +573,6 @@ export default function ProductManagementPage() {
           const matchesColBase = !columnFilters.baseUom || (p.BaseUOM || '').toLowerCase().includes(columnFilters.baseUom.toLowerCase());
           const matchesColAllow = !columnFilters.allowedUoms || (p.AllowedUOMs || '').toLowerCase().includes(columnFilters.allowedUoms.toLowerCase());
 
-          // Filter Logic for Date
           let matchesColLastUpdate = true;
           if (columnFilters.lastUpdate) {
               const dStr = p.updated_at || p.created_at || p.Timestamp;
@@ -468,7 +709,6 @@ export default function ProductManagementPage() {
       setIsCalendarEditMode(false);
   };
 
-  // --- DRAG-TO-SELECT LOGIC ---
   const handleCellMouseDown = (gIdx, oIdx, wIdx) => {
       if (!isCalendarEditMode) return;
       const currentValue = calendarData[gIdx].origins[oIdx].data[wIdx];
@@ -478,7 +718,6 @@ export default function ProductManagementPage() {
       setDragTargetValue(targetValue);
       setDragActiveRow({ gIdx, oIdx });
       
-      // Update the first cell clicked
       const newData = [...calendarData];
       const newWeeks = [...newData[gIdx].origins[oIdx].data];
       newWeeks[wIdx] = targetValue;
@@ -488,11 +727,10 @@ export default function ProductManagementPage() {
 
   const handleCellMouseEnter = (gIdx, oIdx, wIdx) => {
       if (!isDragging || !isCalendarEditMode) return;
-      // Lock drag to the same origin row
       if (dragActiveRow?.gIdx !== gIdx || dragActiveRow?.oIdx !== oIdx) return;
 
       const newData = [...calendarData];
-      if (newData[gIdx].origins[oIdx].data[wIdx] === dragTargetValue) return; // No change needed
+      if (newData[gIdx].origins[oIdx].data[wIdx] === dragTargetValue) return;
 
       const newWeeks = [...newData[gIdx].origins[oIdx].data];
       newWeeks[wIdx] = dragTargetValue;
@@ -544,6 +782,8 @@ export default function ProductManagementPage() {
       setCalendarData(newData);
   };
 
+  if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse uppercase">Loading Masterlist...</div>;
+
   return (
     <div className="p-3 md:p-8 max-w-full overflow-x-hidden min-h-screen bg-gray-50/50 pb-32 animate-in fade-in duration-300">
         
@@ -556,11 +796,24 @@ export default function ProductManagementPage() {
           {activeTab === 'masterlist' && (
             <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 <button 
+                  onClick={() => setIsMigrateModalOpen(true)}
+                  className="w-full sm:w-auto bg-orange-50 hover:bg-orange-100 text-orange-600 border border-orange-200 font-black py-3 px-4 rounded-2xl shadow-sm transform transition active:scale-95 flex items-center justify-center gap-2 text-xs uppercase tracking-widest"
+                >
+                  <ArrowsRightLeftIcon className="w-5 h-5" strokeWidth={3} /> Migrate Code
+                </button>
+                <input type="file" accept=".csv" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full sm:w-auto bg-purple-50 hover:bg-purple-100 text-purple-600 border border-purple-200 font-black py-3 px-4 rounded-2xl shadow-sm transform transition active:scale-95 flex items-center justify-center gap-2 text-xs uppercase tracking-widest"
+                >
+                  <ArrowUpTrayIcon className="w-5 h-5" strokeWidth={3} /> Import CSV
+                </button>
+                <button 
                   onClick={handleExportCSV}
                   disabled={isExporting}
-                  className="w-full sm:w-auto bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 font-black py-3 px-6 rounded-2xl shadow-sm transform transition active:scale-95 flex items-center justify-center gap-2 text-xs uppercase tracking-widest disabled:opacity-50"
+                  className="w-full sm:w-auto bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 font-black py-3 px-4 rounded-2xl shadow-sm transform transition active:scale-95 flex items-center justify-center gap-2 text-xs uppercase tracking-widest disabled:opacity-50"
                 >
-                  <ArrowDownTrayIcon className={`w-5 h-5 ${isExporting ? 'animate-bounce' : ''}`} strokeWidth={3} /> {isExporting ? 'Exporting...' : 'Export CSV'}
+                  <ArrowDownTrayIcon className={`w-5 h-5 ${isExporting ? 'animate-bounce' : ''}`} strokeWidth={3} /> {isExporting ? 'Exporting...' : 'Export'}
                 </button>
                 <button 
                   onClick={openAddModal}
@@ -656,7 +909,10 @@ export default function ProductManagementPage() {
                             <input type="checkbox" className="w-4 h-4 rounded text-green-600 focus:ring-green-500 border-gray-300 cursor-pointer" checked={isSelected} onChange={() => toggleProductSelection(p.ProductCode)} />
                         </td>
                         <td className="p-4"><span className="font-mono text-[10px] font-black text-gray-500 bg-gray-100 px-2.5 py-1 rounded border border-gray-200">{p.ProductCode}</span></td>
-                        <td className="p-4 font-black text-gray-800 uppercase">{p.ProductName}</td>
+                        <td className="p-4">
+                            <div className="font-black text-gray-800 uppercase leading-tight">{p.ProductName}</div>
+                            {p.ChineseName && <div className="text-[10px] font-medium text-gray-500 mt-1 tracking-wide">{p.ChineseName}</div>}
+                        </td>
                         <td className="p-4"><span className="text-[9px] font-black px-2.5 py-1 rounded-md uppercase bg-blue-50 text-blue-600 border border-blue-100 tracking-widest">{p.Category}</span></td>
                         <td className="p-4 font-medium text-gray-600 uppercase text-xs">{p.origin || '-'}</td>
                         <td className="p-4 text-center font-black text-gray-700">{p.BaseUOM}</td>
@@ -673,7 +929,7 @@ export default function ProductManagementPage() {
         )}
 
         {/* ==========================================
-            TAB 2: AVAILABILITY CALENDAR (DATABASE SYNC + DRAG SUPPORT)
+            TAB 2: AVAILABILITY CALENDAR 
             ========================================== */}
         {activeTab === 'calendar' && (
         <div className="bg-white p-4 md:p-6 rounded-[2rem] shadow-xl border border-gray-100 flex flex-col h-[calc(100vh-180px)] min-h-[500px] animate-in fade-in select-none">
@@ -828,7 +1084,141 @@ export default function ProductManagementPage() {
           </div>
         )}
 
-        {/* MODAL (MASTERLIST) */}
+        {/* IMPORT SUMMARY MODAL */}
+        {importSummary && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in zoom-in duration-200">
+             <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl w-full max-w-lg border border-gray-100">
+                 <h2 className="text-2xl font-black text-gray-800 uppercase tracking-tight mb-2">Review Import</h2>
+                 <p className="text-sm font-bold text-gray-500 mb-6">Please review the detected changes from your CSV file.</p>
+                 
+                 <div className="space-y-3 mb-8">
+                     <div className="bg-green-50 text-green-700 p-5 rounded-2xl border border-green-200 flex justify-between items-center font-black uppercase tracking-widest shadow-sm">
+                         <span>New Products to Add:</span>
+                         <span className="text-2xl">{importSummary.adds.length}</span>
+                     </div>
+                     <div className="bg-blue-50 text-blue-700 p-5 rounded-2xl border border-blue-200 flex justify-between items-center font-black uppercase tracking-widest shadow-sm">
+                         <span>Existing Products to Update:</span>
+                         <span className="text-2xl">{importSummary.updates.length}</span>
+                     </div>
+                 </div>
+
+                 <div className="flex justify-end gap-3 pt-2">
+                     <button onClick={() => setImportSummary(null)} disabled={isImporting} className="px-6 py-4 bg-gray-100 text-gray-600 font-black uppercase tracking-widest rounded-2xl hover:bg-gray-200 transition-all active:scale-95 text-xs">Cancel</button>
+                     <button onClick={confirmImport} disabled={isImporting} className="flex-1 px-8 py-4 bg-green-600 text-white font-black uppercase tracking-widest rounded-2xl shadow-xl hover:bg-green-700 transition-all active:scale-95 text-xs flex justify-center items-center gap-2">
+                         {isImporting ? 'Processing...' : 'Confirm & Import'}
+                     </button>
+                 </div>
+             </div>
+          </div>
+        )}
+
+        {/* GLOBAL MIGRATE CODE MODAL */}
+        {isMigrateModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in zoom-in duration-200">
+             <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl w-full max-w-lg border border-gray-100 flex flex-col max-h-[95vh]">
+                 <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4 shrink-0">
+                     <h2 className="text-xl md:text-2xl font-black text-gray-800 uppercase tracking-tight flex items-center gap-2">
+                         <ArrowsRightLeftIcon className="w-6 h-6 text-orange-500" /> Migrate Code
+                     </h2>
+                     <button onClick={() => { setIsMigrateModalOpen(false); setMigrateOldProduct(null); setMigrateNewCode(''); setMigrateSearchTerm(''); }} className="text-gray-400 hover:text-red-500 text-3xl font-bold bg-gray-50 hover:bg-red-50 w-10 h-10 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                 </div>
+                 
+                 <div className="overflow-y-auto custom-scrollbar pr-1 mb-6">
+                     <p className="text-xs font-bold text-gray-500 mb-6 bg-orange-50 text-orange-700 p-4 rounded-xl border border-orange-100 leading-relaxed">
+                         Changing a product code here will globally update all historical orders, purchases, stock adjustments, special price lists, and unit conversions across the entire system.
+                     </p>
+
+                     <div className="space-y-4">
+                         <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                             <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Select Product to Migrate</label>
+                             {migrateOldProduct ? (
+                                 <div className="bg-white border border-blue-200 p-3.5 rounded-xl shadow-sm flex justify-between items-center relative overflow-hidden group">
+                                     <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-blue-500"></div>
+                                     <div className="pl-3">
+                                         <div className="font-black text-gray-800 text-sm uppercase">{migrateOldProduct.ProductName}</div>
+                                         <div className="text-[10px] font-mono text-gray-500 mt-1 font-bold">Current Code: <span className="text-blue-600">{migrateOldProduct.ProductCode}</span></div>
+                                     </div>
+                                     <button onClick={() => setMigrateOldProduct(null)} className="text-gray-400 hover:text-red-500 bg-gray-50 hover:bg-red-50 p-2 rounded-lg transition-colors">
+                                         <XMarkIcon className="w-5 h-5" />
+                                     </button>
+                                 </div>
+                             ) : (
+                                 <div className="relative w-full">
+                                     <div className="relative">
+                                         <span className="absolute left-3.5 top-3.5 text-gray-400"><MagnifyingGlassIcon className="w-4 h-4"/></span>
+                                         <input
+                                             type="text"
+                                             placeholder="Search product name or code..."
+                                             className="w-full pl-10 p-3.5 border border-gray-300 rounded-xl text-xs font-black uppercase focus:ring-2 focus:ring-orange-500 outline-none bg-white transition-all shadow-sm"
+                                             value={migrateSearchTerm}
+                                             onChange={(e) => { setMigrateSearchTerm(e.target.value); setIsMigrateSearchOpen(true); }}
+                                             onFocus={() => setIsMigrateSearchOpen(true)}
+                                         />
+                                     </div>
+                                     {isMigrateSearchOpen && (
+                                         <>
+                                             <div className="fixed inset-0 z-40" onClick={() => setIsMigrateSearchOpen(false)}></div>
+                                             <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-xl max-h-48 overflow-y-auto custom-scrollbar">
+                                                 {products.filter(p => {
+                                                     if (!migrateSearchTerm) return true;
+                                                     const terms = migrateSearchTerm.toLowerCase().split(' ').filter(Boolean);
+                                                     const str = `${p.ProductName} ${p.ProductCode}`.toLowerCase();
+                                                     return terms.every(t => str.includes(t));
+                                                 }).slice(0, 50).map(p => (
+                                                     <div 
+                                                         key={p.ProductCode}
+                                                         className="p-3 hover:bg-orange-50 cursor-pointer border-b border-gray-50 last:border-0"
+                                                         onClick={() => {
+                                                             setMigrateOldProduct(p);
+                                                             setMigrateSearchTerm('');
+                                                             setIsMigrateSearchOpen(false);
+                                                         }}
+                                                     >
+                                                         <div className="font-black text-gray-800 text-xs uppercase">{p.ProductName}</div>
+                                                         <div className="text-[10px] font-mono text-gray-400 mt-0.5">{p.ProductCode}</div>
+                                                     </div>
+                                                 ))}
+                                                 {products.filter(p => {
+                                                     if (!migrateSearchTerm) return true;
+                                                     const terms = migrateSearchTerm.toLowerCase().split(' ').filter(Boolean);
+                                                     const str = `${p.ProductName} ${p.ProductCode}`.toLowerCase();
+                                                     return terms.every(t => str.includes(t));
+                                                 }).length === 0 && (
+                                                     <div className="p-4 text-center text-xs text-gray-400 italic font-bold">No products found</div>
+                                                 )}
+                                             </div>
+                                         </>
+                                     )}
+                                 </div>
+                             )}
+                         </div>
+
+                         <div className="flex justify-center"><ArrowDownTrayIcon className="w-6 h-6 text-gray-300" /></div>
+
+                         <div className="bg-orange-50/50 p-4 rounded-2xl border border-orange-200">
+                             <label className="block text-[10px] font-black text-orange-600 uppercase tracking-widest mb-1.5 ml-1">New Product Code</label>
+                             <input 
+                                 type="text"
+                                 className="w-full p-3.5 border border-orange-300 rounded-xl text-xs font-black uppercase focus:ring-2 focus:ring-orange-500 outline-none bg-white transition-all shadow-sm placeholder-orange-200"
+                                 value={migrateNewCode}
+                                 onChange={(e) => setMigrateNewCode(e.target.value)}
+                                 placeholder="e.g. NEW-456"
+                             />
+                         </div>
+                     </div>
+                 </div>
+
+                 <div className="flex justify-end gap-3 pt-4 border-t border-gray-100 mt-auto shrink-0">
+                     <button onClick={() => { setIsMigrateModalOpen(false); setMigrateOldProduct(null); setMigrateNewCode(''); setMigrateSearchTerm(''); }} className="flex-1 py-4 bg-gray-100 text-gray-600 font-black rounded-2xl hover:bg-gray-200 transition-all active:scale-95 text-xs uppercase tracking-widest">Cancel</button>
+                     <button onClick={handleGlobalCodeMigration} disabled={isMigrating || !migrateOldProduct || !migrateNewCode} className="flex-[2] py-4 bg-orange-500 text-white font-black rounded-2xl shadow-xl hover:bg-orange-600 active:scale-95 text-xs uppercase tracking-widest disabled:opacity-50 disabled:scale-100 flex justify-center items-center gap-2">
+                         {isMigrating ? 'MIGRATING DATABASE...' : 'RUN GLOBAL MIGRATION'}
+                     </button>
+                 </div>
+             </div>
+          </div>
+        )}
+
+        {/* MODAL (MASTERLIST - ADD/EDIT PRODUCT) */}
         {isModalOpen && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[110] p-4 animate-in zoom-in duration-200">
             <div className="bg-white p-8 rounded-[2.5rem] shadow-2xl w-full max-w-3xl overflow-y-auto max-h-[95vh] border border-gray-100 flex flex-col">
@@ -840,8 +1230,28 @@ export default function ProductManagementPage() {
                 <div className="space-y-4">
                     <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-widest border-b border-gray-50 pb-2">Basic Information</h3>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="col-span-1"><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Code</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 bg-gray-50 font-mono text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all font-bold" value={formData.ProductCode} onChange={(e) => setFormData({...formData, ProductCode: e.target.value})} required disabled={!!editingProduct} placeholder="e.g. A001" /></div>
-                        <div className="col-span-1 md:col-span-2"><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Product Name</label><input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black text-gray-800 uppercase focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.ProductName} onChange={(e) => setFormData({...formData, ProductName: e.target.value})} required placeholder="e.g. AUSTRALIAN CARROTS" /></div>
+                        <div className="col-span-1">
+                            <label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Code</label>
+                            {/* Input field is NO LONGER disabled when editing */}
+                            <input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 bg-gray-50 font-mono text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all font-bold" value={formData.ProductCode} onChange={(e) => setFormData({...formData, ProductCode: e.target.value})} required placeholder="e.g. A001" />
+                        </div>
+                        <div className="col-span-1 md:col-span-2">
+                            <label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Product Name</label>
+                            <input type="text" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black text-gray-800 uppercase focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.ProductName} onChange={(e) => setFormData({...formData, ProductName: e.target.value})} required placeholder="e.g. AUSTRALIAN CARROTS" />
+                        </div>
+                    </div>
+                    {/* Chinese Name Field */}
+                    <div className="grid grid-cols-1 gap-4">
+                        <div>
+                            <label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Chinese Name (Optional)</label>
+                            <input 
+                                type="text" 
+                                className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" 
+                                value={formData.ChineseName} 
+                                onChange={(e) => setFormData({...formData, ChineseName: e.target.value})} 
+                                placeholder="e.g. 澳洲胡萝卜" 
+                            />
+                        </div>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div><label className="block text-[10px] font-black text-gray-500 mb-1.5 uppercase tracking-widest ml-1">Category</label><input type="text" list="modal-categories" className="w-full border border-gray-200 rounded-xl p-3.5 text-xs font-black uppercase bg-white focus:outline-none focus:ring-2 focus:ring-green-500 transition-all" value={formData.Category} onChange={(e) => setFormData({...formData, Category: e.target.value})} placeholder="CATEGORY..." required /><datalist id="modal-categories">{uniqueCategories.map(c => <option key={c} value={c} />)}</datalist></div>
