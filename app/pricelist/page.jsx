@@ -18,7 +18,8 @@ import {
   CheckCircleIcon,
   SparklesIcon,
   CloudArrowUpIcon,
-  CloudArrowDownIcon
+  CloudArrowDownIcon,
+  XMarkIcon
 } from '@heroicons/react/24/outline';
 
 const getLocalDateString = (date) => {
@@ -73,6 +74,10 @@ export default function PricelistPage() {
   const [selectedCategory, setSelectedCategory] = useState('All'); 
   const [isSmartLoading, setIsSmartLoading] = useState(false);
   const [isSavingDB, setIsSavingDB] = useState(false);
+
+  // Custom Product States (NEW)
+  const [isCustomProductModalOpen, setIsCustomProductModalOpen] = useState(false);
+  const [customProductData, setCustomProductData] = useState({ name: '', chineseName: '', category: 'OTHERS', uoms: 'KG' });
 
   useEffect(() => {
     async function loadData() {
@@ -216,7 +221,7 @@ export default function PricelistPage() {
           prices: pricesObj,
           referencePrices: refPricesObj
       }]);
-      setSearchTerm('');
+      // Removed setSearchTerm(''); so the search term remains after adding
   };
 
   const handleAddAllProducts = () => {
@@ -269,6 +274,36 @@ export default function PricelistPage() {
           setSelectedItems([]);
           setActiveSearchTerm(''); // Clear search on empty list
       }
+  };
+
+  const handleAddCustomProduct = (e) => {
+      e.preventDefault();
+      if (!customProductData.name) return;
+      
+      const uoms = customProductData.uoms.split(',').map(u => u.trim().toUpperCase()).filter(Boolean);
+      if (uoms.length === 0) uoms.push('KG');
+
+      const pricesObj = {};
+      const refPricesObj = {};
+      uoms.forEach(u => {
+          pricesObj[u] = '';
+          refPricesObj[u] = ''; 
+      });
+
+      const customCode = `CUST-${Date.now().toString().slice(-6)}`;
+
+      setSelectedItems(prev => [...prev, {
+          productCode: customCode,
+          productName: customProductData.name.toUpperCase(),
+          chineseName: customProductData.chineseName || '',
+          category: customProductData.category.toUpperCase(),
+          allowedUoms: uoms,
+          prices: pricesObj,
+          referencePrices: refPricesObj
+      }]);
+
+      setIsCustomProductModalOpen(false);
+      setCustomProductData({ name: '', chineseName: '', category: 'OTHERS', uoms: 'KG' });
   };
 
   // --- DB LOGIC ---
@@ -513,6 +548,7 @@ export default function PricelistPage() {
   };
 
   const handleSaveToDB = async () => {
+      if (!selectedCustomer || selectedCustomer.trim() === '') return alert("Please specify a target brand/customer.");
       if (selectedItems.length === 0) return alert("The price list is empty.");
 
       setIsSavingDB(true);
@@ -691,16 +727,19 @@ export default function PricelistPage() {
                           <label className="block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1.5">Target Brand / Customer</label>
                           <div className="relative">
                               <UserCircleIcon className="w-5 h-5 text-gray-400 absolute left-3 top-3.5" />
-                              <select 
-                                  className="w-full pl-10 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-black uppercase text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-pointer"
+                              <input 
+                                  list="brand-options"
+                                  className="w-full pl-10 p-3.5 bg-gray-50 border border-gray-200 rounded-2xl text-xs font-black uppercase text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                                   value={selectedCustomer}
-                                  onChange={e => setSelectedCustomer(e.target.value)}
-                              >
+                                  onChange={e => setSelectedCustomer(e.target.value.toUpperCase())}
+                                  placeholder="TYPE OR SELECT BRAND..."
+                              />
+                              <datalist id="brand-options">
                                   <option value="GENERAL">-- GENERAL PRICE LIST --</option>
                                   {brandList.map(brand => (
                                       <option key={brand} value={brand}>{brand}</option>
                                   ))}
-                              </select>
+                              </datalist>
                           </div>
                       </div>
 
@@ -762,7 +801,10 @@ export default function PricelistPage() {
                   <div className="flex-1 flex flex-col overflow-hidden pt-4 border-t border-gray-100">
                       <div className="flex justify-between items-center mb-3">
                           <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Product Catalog</label>
-                          <button onClick={handleAddAllProducts} className="text-[9px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded transition-colors uppercase">Add All Filtered</button>
+                          <div className="flex gap-1.5">
+                              <button onClick={() => setIsCustomProductModalOpen(true)} className="text-[9px] font-black bg-blue-50 hover:bg-blue-100 text-blue-600 px-2 py-1 rounded transition-colors uppercase">+ Custom Item</button>
+                              <button onClick={handleAddAllProducts} className="text-[9px] font-black bg-gray-100 hover:bg-gray-200 text-gray-600 px-2 py-1 rounded transition-colors uppercase">Add All</button>
+                          </div>
                       </div>
                       
                       <div className="flex flex-col gap-2 mb-3 flex-none">
@@ -935,6 +977,47 @@ export default function PricelistPage() {
           validUntil={validUntil}
           selectedItems={sortedSelectedItems}
       />
+
+      {/* CUSTOM PRODUCT MODAL */}
+      {isCustomProductModalOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in zoom-in duration-200">
+              <div className="bg-white rounded-[2.5rem] w-full max-w-md p-6 shadow-2xl flex flex-col border border-gray-100">
+                  <div className="flex justify-between items-center mb-6 border-b border-gray-100 pb-4">
+                      <h3 className="text-xl font-black text-gray-800 uppercase tracking-tight">Add Custom Item</h3>
+                      <button onClick={() => setIsCustomProductModalOpen(false)} className="text-gray-400 hover:text-red-500 text-2xl font-bold bg-gray-50 hover:bg-red-50 w-8 h-8 rounded-full flex items-center justify-center transition-all pb-1">×</button>
+                  </div>
+                  <form onSubmit={handleAddCustomProduct} className="space-y-4">
+                      <div>
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Product Name *</label>
+                          <input required type="text" className="w-full p-3 border border-gray-200 rounded-xl text-xs font-black uppercase focus:ring-2 focus:ring-blue-500 bg-gray-50" value={customProductData.name} onChange={e => setCustomProductData({...customProductData, name: e.target.value})} placeholder="e.g. SPECIAL TRUFFLE OIL" />
+                      </div>
+                      <div>
+                          <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Chinese Name (Optional)</label>
+                          <input type="text" className="w-full p-3 border border-gray-200 rounded-xl text-xs font-black bg-gray-50 focus:ring-2 focus:ring-blue-500" value={customProductData.chineseName} onChange={e => setCustomProductData({...customProductData, chineseName: e.target.value})} placeholder="e.g. 松露油" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                          <div>
+                              <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 ml-1">Category</label>
+                              <select className="w-full p-3 border border-gray-200 rounded-xl text-xs font-black uppercase focus:ring-2 focus:ring-blue-500 bg-gray-50 cursor-pointer" value={customProductData.category} onChange={e => setCustomProductData({...customProductData, category: e.target.value})}>
+                                  <option value="VEGE">VEGE</option>
+                                  <option value="LOCAL FRUITS">LOCAL FRUITS</option>
+                                  <option value="IMPORT FRUITS">IMPORT FRUITS</option>
+                                  <option value="OTHERS">OTHERS</option>
+                              </select>
+                          </div>
+                          <div>
+                              <label className="block text-[10px] font-black text-gray-500 uppercase tracking-widest mb-1.5 ml-1">UOMs (Comma separated)</label>
+                              <input required type="text" className="w-full p-3 border border-gray-200 rounded-xl text-xs font-black uppercase focus:ring-2 focus:ring-blue-500 bg-gray-50" value={customProductData.uoms} onChange={e => setCustomProductData({...customProductData, uoms: e.target.value})} placeholder="e.g. KG, CTN" />
+                          </div>
+                      </div>
+                      <div className="pt-4 border-t border-gray-100 mt-4 flex gap-3">
+                          <button type="button" onClick={() => setIsCustomProductModalOpen(false)} className="flex-1 py-3 bg-gray-100 text-gray-600 font-black rounded-xl hover:bg-gray-200 transition-all text-xs uppercase tracking-widest">Cancel</button>
+                          <button type="submit" className="flex-[2] py-3 bg-blue-600 text-white font-black rounded-xl shadow-md hover:bg-blue-700 transition-all text-xs uppercase tracking-widest active:scale-95">Add to List</button>
+                      </div>
+                  </form>
+              </div>
+          </div>
+      )}
     </>
   );
 }
