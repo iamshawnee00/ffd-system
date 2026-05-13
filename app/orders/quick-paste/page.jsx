@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../../lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import { 
@@ -224,17 +224,15 @@ export default function QuickPastePage() {
   const [newCustPhone, setNewCustPhone] = useState('');
   const [newCustAddress, setNewCustAddress] = useState('');
 
-  // Price Paste State
-  const [priceRawText, setPriceRawText] = useState('');
-  const [selectedSupplier, setSelectedSupplier] = useState('');
-  const [priceDate, setPriceDate] = useState('');
-  const [parsedPriceItems, setParsedPriceItems] = useState([]);
-  const [isSubmittingPrice, setIsSubmittingPrice] = useState(false);
-
-  // Price Compare State
-  const [compareSearchText, setCompareSearchText] = useState('');
-  const [compareResults, setCompareResults] = useState([]);
-  const [isComparing, setIsComparing] = useState(false);
+  // Supplier Price Matrix State — temporary, in-memory comparison only
+  const [matrixSupplierName, setMatrixSupplierName] = useState('');
+  const [matrixRawText, setMatrixRawText] = useState('');
+  const [supplierPriceLists, setSupplierPriceLists] = useState([]);
+  const [matrixSearchTerm, setMatrixSearchTerm] = useState('');
+  const [matrixCategoryFilter, setMatrixCategoryFilter] = useState('all');
+  const [matrixViewFilter, setMatrixViewFilter] = useState('all'); // all, comparable, spread
+  const [matrixSortBy, setMatrixSortBy] = useState('category'); // category, spread, lowest, name
+  const [matrixNotice, setMatrixNotice] = useState('');
 
   useEffect(() => {
     async function loadData() {
@@ -257,7 +255,6 @@ export default function QuickPastePage() {
       setLoading(false);
       
       setDeliveryDate(calculateDefaultDate());
-      setPriceDate(getLocalDateString(new Date())); 
     }
     loadData();
   }, [router]);
@@ -580,78 +577,512 @@ export default function QuickPastePage() {
   };
 
   // ==========================================
-  // 2. SUPPLIER PRICE PARSING
+  // 2. SUPPLIER PRICE MATRIX LOGIC
   // ==========================================
-  const handleParsePrice = () => {
-      if (!priceRawText.trim()) return;
+  const normalizeMultiplierSymbols = (value = '') => {
+      return String(value)
+          .replace(/[ⅹ×✕✖＊]/g, 'x')
+          .replace(/\*/g, 'x');
+  };
 
-      const lines = priceRawText.split('\n').map(l => l.trim()).filter(l => l !== '');
-      const newItems = [];
-      const uomPattern = KNOWN_UOMS.join('|');
-      const uomRegex = new RegExp(`(\\d+(?:\\.\\d+)?\\s*(?:${uomPattern})(?:\\s*[xX\\*]\\s*\\d+\\s*[a-zA-Z]+)?)`, 'i');
+  const normalizeMatrixKeyPart = (value = '') => {
+      return normalizeMultiplierSymbols(value)
+          .toLowerCase()
+          .replace(/\s+/g, '')
+          .replace(/[^\w\u4e00-\u9fff#/-]/g, '');
+  };
 
-      lines.forEach((line, i) => {
-          if (line.startsWith('*') || line.toLowerCase().includes('price:')) return;
+  // Supplier pricelists often use a leading "A" as a list marker, for example:
+  // A北葱 / A冬瓜 / A螺丝椒. We strip that marker only for comparison purposes.
+  const normalizeChineseProductKey = (value = '') => {
+      const cleaned = normalizeMatrixKeyPart(value);
+      return cleaned.replace(/^[a-z](?=[\u4e00-\u9fff])/i, '');
+  };
 
-          const match = line.match(uomRegex);
-          if (match) {
-              const uomStr = match[1];
-              const namePart = line.substring(0, match.index).trim();
-              const afterPart = line.substring(match.index + uomStr.length).trim();
+  // "200gx20pkt", "200g x 20 pkt", "200gx20PACK" and "200gx20"
+  // should compare as the same quoted packaging basis.
+  // We keep the normalized comparison UOM in the matrix to make equivalent quotes line up.
+  const normalizeSupplierUom = (value = '') => {
+      let normalized = normalizeMultiplierSymbols(value)
+          .toLowerCase()
+          .replace(/\s+/g, '')
+          .replace(/pieces?/g, 'pcs')
+          .replace(/packets?/g, 'pkt')
+          .replace(/packs?/g, 'pkt');
 
-              const priceMatch = afterPart.match(/(\d+(?:\.\d+)?)/);
-              if (priceMatch) {
-                  const price = parseFloat(priceMatch[1]);
-                  const cleanName = namePart.replace(/[^\w\s\u4e00-\u9fa5]/g, '').trim();
-                  const bestProduct = findBestProductMatch(cleanName);
+      // Remove trailing package labels only when they appear after a multiplier count.
+      // Example: 200gx20pkt -> 200gx20, 1.5kgx5pkt -> 1.5kgx5.
+      normalized = normalized.replace(
+          /^(\d+(?:\.\d+)?(?:kg|g|ctn|pcs|pkt|box|tray|bunch|bag|roll|sisir|pack|btl|tin|#)?x\d+)(?:pkt|pack|pcs)$/i,
+          '$1'
+      );
 
-                  let finalUom = uomStr.toUpperCase();
-                  
-                  if (bestProduct) {
-                      const allowedUoms = bestProduct.AllowedUOMs 
-                          ? bestProduct.AllowedUOMs.split(',').map(u => u.trim().toUpperCase()).filter(Boolean)
-                          : [bestProduct.BaseUOM?.toUpperCase() || 'KG'];
-                      
-                      if (!allowedUoms.includes(finalUom)) {
-                          finalUom = bestProduct.BaseUOM || allowedUoms[0] || 'KG';
-                      }
-                  }
+      return normalized || '-';
+  };
 
-                  if (bestProduct && price > 0) {
-                      newItems.push({
-                          id: Date.now() + i,
-                          rawLine: line,
-                          productCode: bestProduct.ProductCode,
-                          productName: bestProduct.ProductName, 
-                          uom: finalUom,
-                          price: price
-                      });
-                  }
-              }
+  const normalizeEnglishProductKey = (value = '') => {
+      return normalizeMatrixKeyPart(value);
+  };
+
+  // Starter canonical alias dictionary.
+  // This is intentionally conservative: it only covers naming variants that are clearly the same produce term.
+  // Chinese-name matching remains the primary automatic resolver when a Chinese name exists.
+  const SUPPLIER_PRODUCT_ALIASES = [
+      {
+          canonicalId: 'BABY_CHOYSUM',
+          displayChineseName: '菜心仔',
+          displayName: 'Baby Choysum',
+          chineseAliases: ['菜心仔'],
+          nameAliases: [
+              'babychoysum',
+              'baby choysum',
+              'baby choy sum',
+              'babychoysam',
+              'baby choysam',
+              'baby choy sam'
+          ]
+      },
+      {
+          canonicalId: 'CHOYSUM',
+          displayChineseName: '菜心',
+          displayName: 'Choysum',
+          chineseAliases: ['菜心'],
+          nameAliases: [
+              'choysum',
+              'choy sum',
+              'choysam',
+              'choy sam'
+          ]
+      },
+      {
+          canonicalId: 'BABY_PAKCHOY',
+          displayChineseName: '青白仔',
+          displayName: 'Baby Pakchoy',
+          chineseAliases: ['青白仔'],
+          nameAliases: [
+              'babypakchoy',
+              'baby pakchoy',
+              'baby pak choy',
+              'babypakchoi',
+              'baby pakchoi',
+              'baby pak choi'
+          ]
+      },
+      {
+          canonicalId: 'BABY_KAILAN',
+          displayChineseName: '芥兰仔',
+          displayName: 'Baby Kailan',
+          chineseAliases: ['芥兰仔'],
+          nameAliases: [
+              'babykailan',
+              'baby kailan',
+              'baby kai lan'
+          ]
+      },
+      {
+          canonicalId: 'KAILAN',
+          displayChineseName: '芥兰',
+          displayName: 'Kailan',
+          chineseAliases: ['芥兰'],
+          nameAliases: [
+              'kailan',
+              'kai lan'
+          ]
+      }
+  ];
+
+  const getCanonicalAlias = ({ chineseName = '-', name = '-' }) => {
+      const chineseKey = normalizeChineseProductKey(chineseName);
+      const englishKey = normalizeEnglishProductKey(name);
+
+      return SUPPLIER_PRODUCT_ALIASES.find(alias => {
+          const chineseAliasKeys = (alias.chineseAliases || []).map(normalizeChineseProductKey);
+          const englishAliasKeys = (alias.nameAliases || []).map(normalizeEnglishProductKey);
+
+          return (
+              (chineseKey && chineseKey !== '-' && chineseAliasKeys.includes(chineseKey)) ||
+              (englishKey && englishKey !== '-' && englishAliasKeys.includes(englishKey))
+          );
+      }) || null;
+  };
+
+  const resolveCanonicalSupplierProduct = ({
+      chineseName = '-',
+      name = '-',
+      uom = '-'
+  }) => {
+      const normalizedChineseKey = normalizeChineseProductKey(chineseName);
+      const normalizedEnglishKey = normalizeEnglishProductKey(name);
+      const normalizedUom = normalizeSupplierUom(uom);
+      const normalizedUomKey = normalizeMatrixKeyPart(normalizedUom);
+
+      const alias = getCanonicalAlias({ chineseName, name });
+
+      let canonicalProductId = '';
+      let displayChineseName = chineseName || '-';
+      let displayName = name || '-';
+
+      if (alias) {
+          canonicalProductId = `ALIAS:${alias.canonicalId}`;
+          displayChineseName = alias.displayChineseName || displayChineseName;
+          displayName = alias.displayName || displayName;
+      } else if (normalizedChineseKey && normalizedChineseKey !== '-') {
+          // Chinese name is the strongest fallback signal in these supplier lists.
+          // This automatically merges rows like:
+          // 菜心仔 Baby ChoySum / 菜心仔 BabyChoysam.
+          canonicalProductId = `ZH:${normalizedChineseKey}`;
+      } else {
+          canonicalProductId = `EN:${normalizedEnglishKey || 'unknown'}`;
+      }
+
+      return {
+          canonicalProductId,
+          normalizedUom,
+          normalizedUomKey,
+          displayChineseName,
+          displayName,
+          matrixKey: `${canonicalProductId}|${normalizedUomKey || 'nouom'}`
+      };
+  };
+
+  const cleanSupplierCategory = (line = '') => {
+      return String(line)
+          .replace(/[*_]/g, '')
+          .replace(/[🇨🇳🇹🇭🇻🇳]/g, '')
+          .replace(/[🥦🥬🥗🍋🍊🍠🫚🧅🌶️🍄🌟]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+  };
+
+  const extractSupplierDate = (rawText = '') => {
+      const chineseDateMatch = String(rawText).match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+      if (chineseDateMatch) {
+          const [, year, month, day] = chineseDateMatch;
+          return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+
+      const isoDateMatch = String(rawText).match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+      if (isoDateMatch) {
+          const [, year, month, day] = isoDateMatch;
+          return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      }
+
+      return '';
+  };
+
+  const looksLikeSupplierUom = (value = '') => {
+      const normalized = normalizeMultiplierSymbols(String(value).trim());
+      return /^(\d+(?:\.\d+)?)(?:\s*(?:kg|g|ctn|pcs|pkt|box|tray|bunch|bag|roll|sisir|pack|btl|tin|#))?(?:\s*x\s*\d+(?:\s*(?:kg|g|ctn|pcs|pkt|box|tray|bunch|bag|roll|sisir|pack|btl|tin))?)?$/i.test(normalized);
+  };
+
+  const splitSupplierProductName = (rawName = '') => {
+      const cleaned = String(rawName)
+          .replace(/[🇨🇳🇹🇭🇻🇳]/g, '')
+          .replace(/[🍋🍊🥦🥬🥗🍠🫚🧅🌶️🍄🌟]/g, '')
+          .replace(/[^\w\s\u4e00-\u9fff#/-]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+      const zhMatch = cleaned.match(/^([A-Za-z]?[\u4e00-\u9fff/]+)\s*(.*)$/);
+
+      if (zhMatch) {
+          return {
+              chineseName: zhMatch[1].trim() || '-',
+              name: (zhMatch[2] || '').trim() || '-'
+          };
+      }
+
+      return {
+          chineseName: '-',
+          name: cleaned || '-'
+      };
+  };
+
+  const parseSupplierPricelist = (rawText = '') => {
+      const lines = String(rawText)
+          .split(/\r?\n/)
+          .map(line => line.trim())
+          .filter(Boolean);
+
+      const detectedDate = extractSupplierDate(rawText);
+      const items = [];
+      let currentCategory = 'Uncategorized';
+
+      const uomAtEndRegex = /((?:\d+(?:\.\d+)?)(?:\s*(?:kg|g|ctn|pcs|pkt|box|tray|bunch|bag|roll|sisir|pack|btl|tin|#))?(?:\s*[xX×ⅹ*]\s*\d+(?:\s*(?:kg|g|ctn|pcs|pkt|box|tray|bunch|bag|roll|sisir|pack|btl|tin))?)?)\s*$/i;
+
+      lines.forEach((originalLine, index) => {
+          const line = originalLine.trim();
+
+          if (!line) return;
+
+          // Skip decorative date/slogan lines.
+          if (/价目表/.test(line) || /^_.*_$/.test(line)) return;
+
+          // Category headers are usually wrapped with asterisks and do not contain a price delimiter.
+          if (line.startsWith('*') && line.endsWith('*') && !line.includes(':')) {
+              const category = cleanSupplierCategory(line);
+              if (category) currentCategory = category;
+              return;
           }
+
+          // Product rows in the shared supplier formats use the last colon as the quote separator.
+          const lastColonIndex = line.lastIndexOf(':');
+          if (lastColonIndex === -1) return;
+
+          const beforeColon = line.slice(0, lastColonIndex).trim();
+          const afterColon = line.slice(lastColonIndex + 1).trim();
+
+          let price = null;
+          let bodyForParsing = beforeColon;
+
+          const cleanPriceText = afterColon.replace(/^RM\s*/i, '').trim();
+          if (/^\d+(?:\.\d+)?$/.test(cleanPriceText)) {
+              price = Number(cleanPriceText);
+          } else if (!beforeColon.match(uomAtEndRegex) && looksLikeSupplierUom(afterColon)) {
+              // Handles rows such as "A冬瓜WinterMelon: 2.8kg" where the text after the colon behaves like UOM.
+              bodyForParsing = `${beforeColon}${afterColon}`;
+          }
+
+          const normalizedBody = normalizeMultiplierSymbols(bodyForParsing);
+          const uomMatch = normalizedBody.match(uomAtEndRegex);
+
+          let rawUom = '-';
+          let productNamePart = normalizedBody;
+
+          if (uomMatch) {
+              rawUom = normalizeMultiplierSymbols(uomMatch[1])
+                  .replace(/\s+/g, '')
+                  .toLowerCase();
+              productNamePart = normalizedBody.slice(0, uomMatch.index).trim();
+          }
+
+          const { chineseName, name } = splitSupplierProductName(productNamePart);
+
+          if (chineseName === '-' && name === '-') return;
+
+          const canonical = resolveCanonicalSupplierProduct({
+              chineseName,
+              name,
+              uom: rawUom
+          });
+
+          items.push({
+              id: `${Date.now()}-${index}`,
+              category: currentCategory,
+              chineseName: canonical.displayChineseName || chineseName,
+              name: canonical.displayName || name,
+              rawChineseName: chineseName,
+              rawName: name,
+              rawUom,
+              uom: canonical.normalizedUom,
+              price: Number.isFinite(price) ? price : null,
+              rawLine: originalLine,
+              canonicalProductId: canonical.canonicalProductId,
+              key: canonical.matrixKey
+          });
       });
 
-      setParsedPriceItems(newItems);
+      return {
+          detectedDate,
+          items,
+          totalItems: items.length,
+          pricedItems: items.filter(item => Number.isFinite(item.price)).length
+      };
   };
 
-  // ==========================================
-  // 3. PRICE COMPARISON SEARCH
-  // ==========================================
-  const handleCompareSearch = async (productCode) => {
-      if (!productCode) return;
-      setIsComparing(true);
-      const { data, error } = await supabase
-          .from('Purchase')
-          .select('Supplier, CostPrice, PurchaseUOM, Timestamp, InvoiceNumber')
-          .eq('ProductCode', productCode)
-          .order('Timestamp', { ascending: false })
-          .limit(30);
-          
-      if (!error && data) {
-          setCompareResults(data);
+  const handleAddSupplierPricelist = () => {
+      const supplierName = matrixSupplierName.trim();
+
+      if (!supplierName) {
+          alert('Please enter a supplier name first.');
+          return;
       }
-      setIsComparing(false);
+
+      if (!matrixRawText.trim()) {
+          alert('Please paste a supplier pricelist first.');
+          return;
+      }
+
+      const parsed = parseSupplierPricelist(matrixRawText);
+
+      if (parsed.items.length === 0) {
+          alert('No usable pricelist rows were detected. Please check the pasted format.');
+          return;
+      }
+
+      setSupplierPriceLists(prev => {
+          const withoutSameSupplier = prev.filter(
+              supplier => supplier.supplierName.toLowerCase() !== supplierName.toLowerCase()
+          );
+
+          return [
+              ...withoutSameSupplier,
+              {
+                  supplierName,
+                  detectedDate: parsed.detectedDate,
+                  items: parsed.items,
+                  totalItems: parsed.totalItems,
+                  pricedItems: parsed.pricedItems
+              }
+          ];
+      });
+
+      setMatrixNotice(
+          `${supplierName} added: ${parsed.pricedItems} priced items from ${parsed.totalItems} parsed rows.`
+      );
+      setMatrixSupplierName('');
+      setMatrixRawText('');
   };
+
+  const handleRemoveSupplierPricelist = (supplierName) => {
+      setSupplierPriceLists(prev =>
+          prev.filter(supplier => supplier.supplierName !== supplierName)
+      );
+  };
+
+  const handleClearSupplierMatrix = () => {
+      setSupplierPriceLists([]);
+      setMatrixNotice('');
+      setMatrixSearchTerm('');
+      setMatrixCategoryFilter('all');
+      setMatrixViewFilter('all');
+      setMatrixSortBy('category');
+  };
+
+  const supplierMatrixSupplierNames = useMemo(() => {
+      return supplierPriceLists.map(supplier => supplier.supplierName);
+  }, [supplierPriceLists]);
+
+  const supplierMatrixRows = useMemo(() => {
+      const matrixMap = new Map();
+
+      supplierPriceLists.forEach(supplierList => {
+          supplierList.items.forEach(item => {
+              if (!matrixMap.has(item.key)) {
+                  matrixMap.set(item.key, {
+                      key: item.key,
+                      category: item.category || 'Uncategorized',
+                      chineseName: item.chineseName || '-',
+                      name: item.name || '-',
+                      uom: item.uom || '-',
+                      supplierPrices: {},
+                      rawLines: {}
+                  });
+              }
+
+              const row = matrixMap.get(item.key);
+
+              if ((!row.category || row.category === 'Uncategorized') && item.category) {
+                  row.category = item.category;
+              }
+
+              row.supplierPrices[supplierList.supplierName] = item.price;
+              row.rawLines[supplierList.supplierName] = item.rawLine;
+          });
+      });
+
+      return Array.from(matrixMap.values()).map(row => {
+          const validQuotes = Object.entries(row.supplierPrices)
+              .filter(([, price]) => Number.isFinite(price));
+
+          const quotedSupplierCount = validQuotes.length;
+          const validPrices = validQuotes.map(([, price]) => Number(price));
+
+          const lowestPrice = validPrices.length > 0 ? Math.min(...validPrices) : null;
+          const highestPrice = validPrices.length > 0 ? Math.max(...validPrices) : null;
+          const spread = validPrices.length >= 2 ? highestPrice - lowestPrice : null;
+
+          const bestSuppliers = lowestPrice === null
+              ? []
+              : validQuotes
+                  .filter(([, price]) => Number(price) === lowestPrice)
+                  .map(([supplier]) => supplier);
+
+          return {
+              ...row,
+              quotedSupplierCount,
+              lowestPrice,
+              highestPrice,
+              spread,
+              bestSuppliers,
+              bestSupplierLabel: bestSuppliers.length > 0 ? bestSuppliers.join(' / ') : '-'
+          };
+      });
+  }, [supplierPriceLists]);
+
+  const supplierMatrixCategories = useMemo(() => {
+      return Array.from(
+          new Set(supplierMatrixRows.map(row => row.category).filter(Boolean))
+      ).sort((a, b) => a.localeCompare(b));
+  }, [supplierMatrixRows]);
+
+  const filteredSupplierMatrixRows = useMemo(() => {
+      const search = matrixSearchTerm.trim().toLowerCase();
+
+      const filtered = supplierMatrixRows.filter(row => {
+          const categoryPass =
+              matrixCategoryFilter === 'all' || row.category === matrixCategoryFilter;
+
+          const viewPass =
+              matrixViewFilter === 'all' ||
+              (matrixViewFilter === 'comparable' && row.quotedSupplierCount >= 2) ||
+              (matrixViewFilter === 'spread' && Number.isFinite(row.spread) && row.spread > 0);
+
+          const searchableText = [
+              row.category,
+              row.chineseName,
+              row.name,
+              row.uom
+          ].join(' ').toLowerCase();
+
+          const searchPass = !search || searchableText.includes(search);
+
+          return categoryPass && viewPass && searchPass;
+      });
+
+      filtered.sort((a, b) => {
+          if (matrixSortBy === 'spread') {
+              return (Number(b.spread) || 0) - (Number(a.spread) || 0);
+          }
+
+          if (matrixSortBy === 'lowest') {
+              const aLow = Number.isFinite(a.lowestPrice) ? a.lowestPrice : Number.POSITIVE_INFINITY;
+              const bLow = Number.isFinite(b.lowestPrice) ? b.lowestPrice : Number.POSITIVE_INFINITY;
+              return aLow - bLow;
+          }
+
+          if (matrixSortBy === 'name') {
+              return `${a.name} ${a.chineseName}`.localeCompare(`${b.name} ${b.chineseName}`);
+          }
+
+          const categoryCompare = (a.category || '').localeCompare(b.category || '');
+          if (categoryCompare !== 0) return categoryCompare;
+
+          return `${a.name} ${a.chineseName}`.localeCompare(`${b.name} ${b.chineseName}`);
+      });
+
+      return filtered;
+  }, [
+      supplierMatrixRows,
+      matrixSearchTerm,
+      matrixCategoryFilter,
+      matrixViewFilter,
+      matrixSortBy
+  ]);
+
+  const supplierMatrixSummary = useMemo(() => {
+      const comparableRows = supplierMatrixRows.filter(row => row.quotedSupplierCount >= 2);
+      const biggestSpread = comparableRows.reduce((max, row) => {
+          return Math.max(max, Number(row.spread) || 0);
+      }, 0);
+
+      return {
+          suppliersCompared: supplierPriceLists.length,
+          matrixProducts: supplierMatrixRows.length,
+          comparableProducts: comparableRows.length,
+          biggestSpread
+      };
+  }, [supplierPriceLists, supplierMatrixRows]);
 
   // ==========================================
   // DATABASE SUBMISSIONS
@@ -740,36 +1171,6 @@ export default function QuickPastePage() {
       setIsSubmittingOrder(false);
   };
 
-  const handleSubmitPrice = async () => {
-      if (!selectedSupplier) return alert("Please select a supplier.");
-      if (parsedPriceItems.length === 0) return alert("No items parsed.");
-
-      setIsSubmittingPrice(true);
-      
-      const purchaseRows = parsedPriceItems.map(item => ({
-          "Timestamp": new Date(`${priceDate}T12:00:00`), 
-          "ProductCode": item.productCode,
-          "ProductName": item.productName,
-          "Supplier": selectedSupplier,
-          "PurchaseQty": 0, 
-          "PurchaseUOM": item.uom,
-          "CostPrice": item.price,
-          "InvoiceNumber": "PRICE_LIST", 
-          "LoggedBy": currentUser
-      }));
-
-      const { error } = await supabase.from('Purchase').insert(purchaseRows);
-
-      if (error) {
-          alert("Error saving price: " + error.message);
-      } else {
-          alert("Prices Logged Successfully!");
-          setParsedPriceItems([]);
-          setPriceRawText('');
-      }
-      setIsSubmittingPrice(false);
-  };
-
   // Render Helpers
   const updateOrderItem = (id, field, value) => {
       setParsedOrderItems(prev => prev.map(item => {
@@ -795,10 +1196,7 @@ export default function QuickPastePage() {
   const removeOrderItem = (id) => setParsedOrderItems(prev => prev.filter(item => item.id !== id));
   const addBlankOrderItem = () => setParsedOrderItems(prev => [...prev, { id: Date.now(), rawLine: 'Manual Entry', qty: 1, uom: 'KG', price: 0, productCode: '', notes: '', showNotes: false, isReplacement: false }]);
   
-  const updatePriceItem = (id, field, value) => {
-      setParsedPriceItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
-  };
-  const removePriceItem = (id) => setParsedPriceItems(prev => prev.filter(item => item.id !== id));
+
 
   if (loading) return <div className="p-10 flex items-center justify-center h-screen text-gray-400 font-black tracking-widest animate-pulse">FFD SYSTEM ENGINE BOOTING...</div>;
 
@@ -822,7 +1220,7 @@ export default function QuickPastePage() {
       <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
          <div>
              <h1 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight">Quick Paste Hub</h1>
-             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Parse orders and supplier prices instantly</p>
+             <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase mt-1">Parse orders and compare supplier pricelists instantly</p>
          </div>
          <div className="text-[9px] md:text-xs font-bold text-gray-500 bg-white border border-gray-200 px-3 py-1.5 rounded-full uppercase shadow-sm hidden sm:block">
              User: {currentUser}
@@ -838,16 +1236,10 @@ export default function QuickPastePage() {
               <ClipboardDocumentCheckIcon className="w-5 h-5" /> Order Paste
           </button>
           <button 
-              onClick={() => setActiveTab('prices')} 
-              className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'prices' ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
+              onClick={() => setActiveTab('matrix')} 
+              className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'matrix' ? 'bg-purple-600 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
           >
-              <CurrencyDollarIcon className="w-5 h-5" /> Price Paste
-          </button>
-          <button 
-              onClick={() => setActiveTab('compare')} 
-              className={`px-5 py-2.5 rounded-t-xl font-bold text-sm transition-all whitespace-nowrap flex items-center gap-2 ${activeTab === 'compare' ? 'bg-orange-500 text-white shadow-md' : 'bg-white text-gray-500 hover:bg-gray-100'}`}
-          >
-              <ScaleIcon className="w-5 h-5" /> Compare Prices
+              <ScaleIcon className="w-5 h-5" /> Supplier Price Matrix
           </button>
       </div>
 
@@ -1105,203 +1497,268 @@ export default function QuickPastePage() {
       )}
 
       {/* ==========================================
-          TAB 2: PRICE PASTE
+          TAB 2: SUPPLIER PRICE MATRIX
           ========================================== */}
-      {activeTab === 'prices' && (
+      {activeTab === 'matrix' && (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start animate-in fade-in">
-          {/* LEFT: Paste Area */}
-          <div className="lg:col-span-4 bg-white p-5 rounded-3xl shadow-sm border border-purple-100 flex flex-col min-h-[300px] lg:h-[calc(100vh-180px)]">
+          {/* LEFT: Supplier Pricelist Input */}
+          <div className="lg:col-span-4 bg-white p-5 rounded-3xl shadow-sm border border-purple-100 flex flex-col min-h-[420px] lg:h-[calc(100vh-180px)]">
+              <div className="mb-4">
+                  <label className="block text-[10px] font-black text-purple-500 uppercase tracking-widest mb-1.5">
+                      Supplier Name
+                  </label>
+                  <input
+                      list="supplier-matrix-suggestions"
+                      type="text"
+                      value={matrixSupplierName}
+                      onChange={e => setMatrixSupplierName(e.target.value)}
+                      placeholder="e.g. Longxing"
+                      className="w-full border border-purple-200 bg-purple-50/40 p-3 rounded-xl text-[16px] md:text-sm font-bold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                  <datalist id="supplier-matrix-suggestions">
+                      {suppliers.map(s => (
+                          <option key={s.SupplierName} value={s.SupplierName} />
+                      ))}
+                  </datalist>
+              </div>
+
               <div className="flex justify-between items-center mb-3 flex-none">
                   <label className="text-[10px] font-black text-purple-500 uppercase tracking-widest">
-                      Paste Supplier Price List Here
+                      Paste Supplier Pricelist
                   </label>
                   <button 
                       onClick={async () => {
                           try {
                               const text = await navigator.clipboard.readText();
-                              setPriceRawText(text);
+                              setMatrixRawText(text);
                           } catch (err) {
                               alert('Unable to read clipboard. Please ensure browser permissions are granted, or paste manually using Ctrl+V or Cmd+V.');
                           }
                       }}
-                      className="text-[9px] font-black bg-purple-50/50 text-purple-600 hover:bg-purple-100 px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1 uppercase"
+                      className="text-[9px] font-black bg-purple-50 text-purple-600 hover:bg-purple-100 px-2 py-1.5 rounded-lg transition-colors flex items-center gap-1 uppercase"
                   >
                       <ClipboardDocumentIcon className="w-3 h-3" /> Paste
                   </button>
               </div>
+
               <textarea 
                   className="w-full flex-1 border border-purple-200 bg-purple-50/30 rounded-2xl p-4 text-[16px] md:text-sm font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none transition-all placeholder-purple-300"
-                  placeholder={`Example:\n*General Vegetable*\nCauliflower 12kg 30 KM\nCarrot 4.5kg 15`}
-                  value={priceRawText}
-                  onChange={e => setPriceRawText(e.target.value)}
+                  placeholder={`Example:
+*2026年05月12日价目表*
+
+*🥦通用菜CommonVege*
+西兰花Broccoli7kg:50
+白花Cauliflower12kg:70
+白萝卜LobakPutih10kg:
+
+*🥬精品菜 Longxing Premium*
+油麦菜YaoMak300gx13:45`}
+                  value={matrixRawText}
+                  onChange={e => setMatrixRawText(e.target.value)}
               />
+
               <button 
-                  onClick={handleParsePrice}
+                  onClick={handleAddSupplierPricelist}
                   className="w-full mt-4 bg-purple-600 hover:bg-purple-700 text-white font-bold py-4 rounded-xl shadow-lg active:scale-95 flex items-center justify-center gap-2 transition flex-none"
               >
-                  <CurrencyDollarIcon className="w-5 h-5" /> Auto-Parse Prices
+                  <CurrencyDollarIcon className="w-5 h-5" /> Parse & Add Supplier
               </button>
-          </div>
 
-          {/* RIGHT: Validation & Review */}
-          <div className="lg:col-span-8 bg-white p-4 md:p-6 rounded-3xl shadow-xl border border-purple-100 flex flex-col min-h-[500px] lg:h-[calc(100vh-180px)] relative">
-              <div className="flex flex-col lg:flex-row gap-4 mb-6 flex-none">
-                  <div className="flex-1">
-                      <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1.5">Select Supplier</label>
-                      <select 
-                          className={`w-full border p-3 rounded-xl text-[16px] md:text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 ${!selectedSupplier ? 'border-red-300 bg-red-50 text-red-700' : 'border-purple-200 bg-purple-50 text-purple-900'}`}
-                          value={selectedSupplier}
-                          onChange={e => setSelectedSupplier(e.target.value)}
-                      >
-                          <option value="">-- SELECT SUPPLIER --</option>
-                          {suppliers.map(s => <option key={s.SupplierName} value={s.SupplierName}>{s.SupplierName}</option>)}
-                      </select>
+              {matrixNotice && (
+                  <div className="mt-3 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-xl px-3 py-2">
+                      {matrixNotice}
                   </div>
-                  <div className="w-full lg:w-48">
-                      <label className="block text-[10px] font-black text-purple-400 uppercase tracking-widest mb-1.5">Price Date</label>
-                      <input 
-                          type="date"
-                          className="w-full border border-purple-200 bg-purple-50 p-3 rounded-xl text-[16px] md:text-sm font-bold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                          value={priceDate}
-                          onChange={e => setPriceDate(e.target.value)}
-                      />
-                  </div>
-              </div>
+              )}
 
-              <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3">
-                  {parsedPriceItems.length === 0 ? (
-                      <div className="h-full flex flex-col items-center justify-center text-purple-300 border-2 border-dashed border-purple-100 rounded-2xl min-h-[200px]">
-                          <CurrencyDollarIcon className="w-16 h-16 mb-4 opacity-20" />
-                          <p className="font-bold text-sm">Unmatched products are ignored automatically</p>
+              <div className="mt-5 pt-4 border-t border-purple-100 min-h-[120px] overflow-y-auto custom-scrollbar">
+                  <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-[10px] font-black text-purple-500 uppercase tracking-widest">
+                          Added Suppliers
+                      </h3>
+                      {supplierPriceLists.length > 0 && (
+                          <button
+                              onClick={handleClearSupplierMatrix}
+                              className="text-[9px] font-black text-gray-400 hover:text-red-500 uppercase transition"
+                          >
+                              Clear All
+                          </button>
+                      )}
+                  </div>
+
+                  {supplierPriceLists.length === 0 ? (
+                      <div className="text-xs font-bold text-gray-300 border border-dashed border-purple-100 rounded-xl p-4 text-center">
+                          Add at least two supplier lists to unlock side-by-side comparison.
                       </div>
                   ) : (
-                      <>
-                          {/* DESKTOP HEADER */}
-                          <div className="hidden lg:flex gap-2 px-3 pb-2 border-b border-purple-100 text-[9px] font-black text-purple-400 uppercase tracking-wider">
-                              <div className="w-1/4">Original Text</div>
-                              <div className="flex-1">Matched Product</div>
-                              <div className="w-24 text-center">UOM</div>
-                              <div className="w-24 text-center">Cost</div>
-                              <div className="w-8 text-right"></div>
-                          </div>
-
-                          {/* ITEMS LIST */}
-                          {parsedPriceItems.map((item) => (
-                              <div key={item.id} className="flex flex-col lg:flex-row gap-3 lg:gap-2 items-start lg:items-center bg-white p-3 rounded-xl border border-purple-100 shadow-sm hover:border-purple-300 transition">
-                                  {/* Original Text */}
-                                  <div className="w-full lg:w-1/4 text-[10px] text-gray-500 font-bold truncate" title={item.rawLine}>
-                                      "{item.rawLine}"
-                                  </div>
-                                  
-                                  {/* Product Select */}
-                                  <div className="w-full lg:flex-1">
-                                      <SearchableProductSelect 
-                                          item={item} 
-                                          products={products} 
-                                          onUpdate={(code) => updatePriceItem(item.id, 'productCode', code)} 
-                                      />
-                                  </div>
-
-                                  {/* UOM, Cost, Delete (Side-by-side on mobile) */}
-                                  <div className="flex w-full lg:w-auto gap-2 items-end lg:items-center mt-1 lg:mt-0">
-                                      <div className="flex-1 lg:w-24 text-center">
-                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1">UOM</span>
-                                          <span className="bg-purple-50 text-purple-700 font-bold text-xs px-3 py-2 rounded-lg border border-purple-100 block">{item.uom}</span>
+                      <div className="space-y-2">
+                          {supplierPriceLists.map(supplier => (
+                              <div key={supplier.supplierName} className="bg-purple-50/50 border border-purple-100 rounded-xl p-3 flex justify-between items-start gap-3">
+                                  <div className="min-w-0">
+                                      <div className="font-black text-xs text-purple-900 uppercase truncate">
+                                          {supplier.supplierName}
                                       </div>
-                                      <div className="flex-1 lg:w-24 text-center">
-                                          <span className="lg:hidden text-[9px] font-bold text-gray-400 block mb-1">COST</span>
-                                          <span className="font-black text-red-600 text-sm block py-1.5">RM {Number(item.price).toFixed(2)}</span>
-                                      </div>
-                                      <div className="w-8 flex justify-end pb-1.5 lg:pb-0">
-                                          <button onClick={() => removePriceItem(item.id)} className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition"><TrashIcon className="w-5 h-5 inline" /></button>
+                                      <div className="text-[10px] font-bold text-purple-500 mt-1">
+                                          {supplier.pricedItems} priced / {supplier.totalItems} parsed
+                                          {supplier.detectedDate ? ` • ${supplier.detectedDate}` : ''}
                                       </div>
                                   </div>
+                                  <button
+                                      onClick={() => handleRemoveSupplierPricelist(supplier.supplierName)}
+                                      className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition shrink-0"
+                                      title="Remove supplier"
+                                  >
+                                      <TrashIcon className="w-4 h-4" />
+                                  </button>
                               </div>
                           ))}
-                      </>
+                      </div>
                   )}
               </div>
-
-              <div className="mt-4 pt-4 border-t border-purple-100 flex-none flex justify-between items-center">
-                  <div className="text-xs font-bold text-gray-500">Total Valid Prices: <span className="text-purple-800 text-sm ml-1 font-black">{parsedPriceItems.length}</span></div>
-                  <button onClick={handleSubmitPrice} disabled={isSubmittingPrice || parsedPriceItems.length === 0} className={`py-3 px-8 rounded-xl font-black text-sm text-white shadow-lg transition active:scale-95 ${isSubmittingPrice || parsedPriceItems.length === 0 ? 'bg-gray-300 cursor-not-allowed shadow-none' : 'bg-purple-600 hover:bg-purple-700'}`}>
-                      {isSubmittingPrice ? 'Logging...' : 'Save to Price DB'}
-                  </button>
-              </div>
-          </div>
-      </div>
-      )}
-
-      {/* ==========================================
-          TAB 3: PRICE COMPARE
-          ========================================== */}
-      {activeTab === 'compare' && (
-      <div className="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-orange-100 h-[calc(100vh-180px)] flex flex-col animate-in fade-in">
-          <div className="flex flex-col md:flex-row gap-4 mb-8">
-              <div className="flex-1 relative">
-                  <span className="absolute left-4 top-4 text-gray-400"><MagnifyingGlassIcon className="w-5 h-5" /></span>
-                  <input 
-                      type="text"
-                      placeholder="Search product to compare prices..."
-                      className="w-full pl-12 p-4 bg-orange-50/30 border border-orange-200 rounded-2xl text-[16px] md:text-sm font-bold focus:outline-none focus:ring-2 focus:ring-orange-500 transition-all placeholder-orange-300"
-                      value={compareSearchText}
-                      onChange={e => setCompareSearchText(e.target.value)}
-                  />
-              </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 flex-1 overflow-hidden">
-              {/* LEFT: Search Results List */}
-              <div className="overflow-y-auto custom-scrollbar border border-gray-100 rounded-2xl p-2 bg-gray-50">
-                  <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest p-2 mb-2">Matching Products</div>
-                  {products.filter(p => !compareSearchText || p.ProductName.toLowerCase().includes(compareSearchText.toLowerCase()) || p.ProductCode.toLowerCase().includes(compareSearchText.toLowerCase())).slice(0,20).map(p => (
-                      <div 
-                          key={p.ProductCode} 
-                          onClick={() => handleCompareSearch(p.ProductCode)}
-                          className="p-3 mb-2 bg-white rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:border-orange-400 hover:shadow-md transition group"
-                      >
-                          <div className="font-bold text-gray-800 text-sm uppercase group-hover:text-orange-600 transition-colors">{p.ProductName}</div>
-                          <div className="text-[10px] text-gray-400 mt-1 font-mono">{p.ProductCode}</div>
+          {/* RIGHT: Supplier Matrix */}
+          <div className="lg:col-span-8 bg-white p-4 md:p-6 rounded-3xl shadow-xl border border-purple-100 flex flex-col min-h-[650px] lg:h-[calc(100vh-180px)] relative">
+              {/* Summary Cards */}
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5 flex-none">
+                  <div className="bg-purple-50 border border-purple-100 rounded-2xl p-4 text-center">
+                      <div className="text-[9px] font-black text-purple-500 uppercase tracking-widest">Suppliers</div>
+                      <div className="text-2xl font-black text-purple-900 mt-1">{supplierMatrixSummary.suppliersCompared}</div>
+                  </div>
+                  <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 text-center">
+                      <div className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Matrix Products</div>
+                      <div className="text-2xl font-black text-blue-900 mt-1">{supplierMatrixSummary.matrixProducts}</div>
+                  </div>
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 text-center">
+                      <div className="text-[9px] font-black text-emerald-500 uppercase tracking-widest">2+ Quotes</div>
+                      <div className="text-2xl font-black text-emerald-900 mt-1">{supplierMatrixSummary.comparableProducts}</div>
+                  </div>
+                  <div className="bg-orange-50 border border-orange-100 rounded-2xl p-4 text-center">
+                      <div className="text-[9px] font-black text-orange-500 uppercase tracking-widest">Biggest Spread</div>
+                      <div className="text-2xl font-black text-orange-900 mt-1">RM {Number(supplierMatrixSummary.biggestSpread || 0).toFixed(2)}</div>
+                  </div>
+              </div>
+
+              {/* Filters */}
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mb-5 flex-none">
+                  <div className="relative">
+                      <MagnifyingGlassIcon className="w-4 h-4 text-gray-400 absolute left-3 top-3.5" />
+                      <input
+                          type="text"
+                          value={matrixSearchTerm}
+                          onChange={e => setMatrixSearchTerm(e.target.value)}
+                          placeholder="Search product..."
+                          className="w-full pl-10 pr-3 py-3 bg-gray-50 border border-gray-200 rounded-xl text-[16px] md:text-xs font-bold focus:outline-none focus:ring-2 focus:ring-purple-500"
+                      />
+                  </div>
+
+                  <select
+                      value={matrixCategoryFilter}
+                      onChange={e => setMatrixCategoryFilter(e.target.value)}
+                      className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl text-[16px] md:text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                      <option value="all">All Categories</option>
+                      {supplierMatrixCategories.map(category => (
+                          <option key={category} value={category}>{category}</option>
+                      ))}
+                  </select>
+
+                  <select
+                      value={matrixViewFilter}
+                      onChange={e => setMatrixViewFilter(e.target.value)}
+                      className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl text-[16px] md:text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                      <option value="all">Show All Items</option>
+                      <option value="comparable">Only 2+ Quotes</option>
+                      <option value="spread">Only With Price Spread</option>
+                  </select>
+
+                  <select
+                      value={matrixSortBy}
+                      onChange={e => setMatrixSortBy(e.target.value)}
+                      className="w-full px-3 py-3 bg-gray-50 border border-gray-200 rounded-xl text-[16px] md:text-xs font-bold text-gray-700 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                  >
+                      <option value="category">Sort: Category</option>
+                      <option value="spread">Sort: Biggest Spread</option>
+                      <option value="lowest">Sort: Lowest Price</option>
+                      <option value="name">Sort: Product Name</option>
+                  </select>
+              </div>
+
+              {/* Matrix Table */}
+              <div className="flex-1 overflow-auto custom-scrollbar border border-purple-100 rounded-2xl">
+                  {supplierMatrixRows.length === 0 ? (
+                      <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-purple-200">
+                          <ScaleIcon className="w-16 h-16 mb-4 opacity-30" />
+                          <p className="font-bold text-sm text-purple-300">Paste supplier pricelists to build the comparison matrix</p>
                       </div>
-                  ))}
-              </div>
-
-              {/* RIGHT: Compare Results */}
-              <div className="overflow-y-auto custom-scrollbar border-l-2 border-orange-100 pl-6 relative">
-                  {isComparing ? (
-                      <div className="flex justify-center items-center h-full font-bold text-orange-400">Searching...</div>
-                  ) : compareResults.length > 0 ? (
-                      <>
-                          <h3 className="text-lg font-black text-gray-800 mb-6 sticky top-0 bg-white py-2 z-10 flex items-center gap-2">
-                              <ScaleIcon className="w-6 h-6 text-orange-500" /> Recent Price History
-                          </h3>
-                          <div className="space-y-4">
-                              {compareResults.map((res, idx) => (
-                                  <div key={idx} className={`p-4 rounded-2xl border flex justify-between items-center ${res.InvoiceNumber === 'PRICE_LIST' ? 'bg-purple-50/50 border-purple-200' : 'bg-white border-gray-200 shadow-sm'}`}>
-                                      <div>
-                                          <div className="font-black text-gray-800 text-base mb-1">{res.Supplier}</div>
-                                          <div className="flex gap-2 items-center">
-                                              <span className="text-[10px] font-bold text-gray-500 bg-gray-100 px-2 py-0.5 rounded uppercase">{new Date(res.Timestamp).toLocaleDateString('en-GB')}</span>
-                                              {res.InvoiceNumber === 'PRICE_LIST' ? (
-                                                  <span className="text-[9px] font-bold text-purple-600 bg-purple-100 px-2 py-0.5 rounded border border-purple-200">Quotation</span>
-                                              ) : (
-                                                  <span className="text-[9px] font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded border border-blue-200">Actual Buy</span>
-                                              )}
-                                          </div>
-                                      </div>
-                                      <div className="text-right">
-                                          <div className="font-black text-red-600 text-lg">RM {Number(res.CostPrice).toFixed(2)}</div>
-                                          <div className="text-[10px] font-bold text-gray-400 uppercase mt-0.5">per {res.PurchaseUOM}</div>
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
-                      </>
                   ) : (
-                      <div className="flex flex-col justify-center items-center h-full text-gray-300">
-                          <ScaleIcon className="w-16 h-16 mb-4 opacity-20" />
-                          <p className="font-bold text-sm">Select a product on the left to view comparison</p>
-                      </div>
+                      <table className="w-full text-left whitespace-nowrap min-w-max">
+                          <thead className="sticky top-0 z-20 bg-purple-50 border-b border-purple-100 text-[9px] font-black text-purple-500 uppercase tracking-wider">
+                              <tr>
+                                  <th className="p-4 pl-5">Category</th>
+                                  <th className="p-4">中文名</th>
+                                  <th className="p-4">Name</th>
+                                  <th className="p-4">UOM</th>
+                                  {supplierMatrixSupplierNames.map(supplier => (
+                                      <th key={supplier} className="p-4 text-right">{supplier}</th>
+                                  ))}
+                                  <th className="p-4 text-right text-emerald-600">Lowest</th>
+                                  <th className="p-4 text-right text-orange-600">Spread</th>
+                                  <th className="p-4 pr-5 text-right text-purple-700">Best Supplier</th>
+                              </tr>
+                          </thead>
+
+                          <tbody className="divide-y divide-purple-50 text-xs font-bold text-gray-700">
+                              {filteredSupplierMatrixRows.map(row => (
+                                  <tr key={row.key} className="hover:bg-purple-50/30 transition-colors">
+                                      <td className="p-4 pl-5">
+                                          <span className="inline-flex px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 text-[10px] font-black">
+                                              {row.category}
+                                          </span>
+                                      </td>
+                                      <td className="p-4 text-gray-600">{row.chineseName}</td>
+                                      <td className="p-4 text-gray-900 font-black">{row.name}</td>
+                                      <td className="p-4 text-gray-500">{row.uom}</td>
+
+                                      {supplierMatrixSupplierNames.map(supplier => {
+                                          const price = row.supplierPrices[supplier];
+                                          const isBest = Number.isFinite(price) && row.lowestPrice !== null && price === row.lowestPrice;
+
+                                          return (
+                                              <td
+                                                  key={`${row.key}-${supplier}`}
+                                                  className={`p-4 text-right ${isBest ? 'bg-emerald-50/60 text-emerald-700 font-black' : 'text-gray-600'}`}
+                                                  title={row.rawLines[supplier] || ''}
+                                              >
+                                                  {Number.isFinite(price) ? `RM ${Number(price).toFixed(2)}` : '—'}
+                                              </td>
+                                          );
+                                      })}
+
+                                      <td className="p-4 text-right text-emerald-700 font-black">
+                                          {row.lowestPrice !== null ? `RM ${Number(row.lowestPrice).toFixed(2)}` : '—'}
+                                      </td>
+                                      <td className="p-4 text-right text-orange-600 font-black">
+                                          {row.spread !== null ? `RM ${Number(row.spread).toFixed(2)}` : '—'}
+                                      </td>
+                                      <td className="p-4 pr-5 text-right text-purple-700 font-black">
+                                          {row.bestSupplierLabel}
+                                      </td>
+                                  </tr>
+                              ))}
+
+                              {filteredSupplierMatrixRows.length === 0 && (
+                                  <tr>
+                                      <td
+                                          colSpan={supplierMatrixSupplierNames.length + 7}
+                                          className="p-12 text-center text-gray-400 italic font-bold"
+                                      >
+                                          No matrix rows match the current filters.
+                                      </td>
+                                  </tr>
+                              )}
+                          </tbody>
+                      </table>
                   )}
               </div>
           </div>
